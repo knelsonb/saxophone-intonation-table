@@ -325,4 +325,4 @@ python -c "import sounddevice; print(sounddevice.query_devices())"
 
 ---
 
-*Developed for saxophone intonation analysis. Compatible with alto, baritone, tenor, soprano, and C instruments.*
+*Developed for saxophone intonation analysis. Compatible with alto, baritone, tenor, soprano, bass and C instruments.*
