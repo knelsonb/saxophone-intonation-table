@@ -77,6 +77,30 @@ class AppConfig:
     # the source of the GLE 0xAA busy crash on Windows.
     prefer_wdmks: bool = False
 
+    # ---- v0.5.5 session-state save-on-exit -------------------------------
+    # QMainWindow.saveGeometry/saveState return QByteArrays; we base64-
+    # encode them as plain ASCII strings so the config file round-trips
+    # through json without binary noise. Empty strings = "no saved state,
+    # use defaults" (first launch or wiped config).
+    window_geometry: str = ""
+    window_state: str = ""
+    # Horizontal splitter widths between the tuner pane (left) and the
+    # intonation table pane (right). Empty list = use built-in default.
+    splitter_sizes: list[int] = field(default_factory=list)
+    # The instrument the user last had selected, restored on the next
+    # launch so they don't redo the picker every time.
+    last_instrument_key: str = "eb_alto"
+    # The nickname text the user last typed. Persisted so the same horn
+    # keeps its tag across sessions.
+    last_nickname: str = ""
+    # 'griff' (fingered notation, default) or 'klingend' (sounding pitch).
+    last_display_mode: str = "griff"
+    # Concert-A reference frequency, 430..450 Hz.
+    last_a4_hz: int = 440
+    # UI language. 'de' or 'en'. First launch picks from the system locale;
+    # subsequent launches honor the user's last explicit choice.
+    last_lang: str = "en"
+
     def effective_log_path(self) -> Optional[Path]:
         if not self.persistence_enabled:
             return None
@@ -117,6 +141,21 @@ def _as_int(v, default: int) -> int:
         return int(v)
     except (TypeError, ValueError):
         return default
+
+
+def _as_int_list(v) -> list[int]:
+    """Coerce a JSON value into a list of ints. Anything not iterable, or
+    with non-numeric entries, degrades to an empty list (the GUI then
+    falls back to its built-in default splitter sizes)."""
+    if not isinstance(v, (list, tuple)):
+        return []
+    out: list[int] = []
+    for entry in v:
+        try:
+            out.append(int(entry))
+        except (TypeError, ValueError):
+            return []
+    return out
 
 
 def _as_str(v, default: str) -> str:
@@ -161,6 +200,16 @@ def load_config() -> AppConfig:
             data.get("audio_sr_notice_shown"), False),
         show_all_host_apis=_as_bool(data.get("show_all_host_apis"), False),
         prefer_wdmks=_as_bool(data.get("prefer_wdmks"), False),
+        window_geometry=_as_str(data.get("window_geometry"), ""),
+        window_state=_as_str(data.get("window_state"), ""),
+        splitter_sizes=_as_int_list(data.get("splitter_sizes")),
+        last_instrument_key=_as_str(
+            data.get("last_instrument_key"), "eb_alto"),
+        last_nickname=_as_str(data.get("last_nickname"), ""),
+        last_display_mode=_as_str(
+            data.get("last_display_mode"), "griff"),
+        last_a4_hz=max(430, min(450, _as_int(data.get("last_a4_hz"), 440))),
+        last_lang=_as_str(data.get("last_lang"), "en"),
     )
 
 

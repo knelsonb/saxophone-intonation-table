@@ -32,8 +32,10 @@ from PyQt6.QtWidgets import (
     QDialog, QLineEdit, QDialogButtonBox, QFormLayout,
     QStyledItemDelegate, QMenu, QCheckBox, QSpinBox, QToolButton,
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QRectF, QPointF, QLocale
-from PyQt6.QtGui import QPainter, QColor, QFont, QPen, QIcon
+from PyQt6.QtCore import (
+    Qt, QTimer, pyqtSignal, QObject, QRectF, QPointF, QLocale, QByteArray,
+)
+from PyQt6.QtGui import QPainter, QColor, QFont, QPen, QIcon, QGuiApplication
 
 from sax_intonation_log import MeasurementLog
 from sax_intonation_chart import render_intonation_chart
@@ -49,7 +51,7 @@ from sax_instruments import (
 import sax_config
 
 APP_NAME = 'Intonation Analyzer'
-APP_VERSION = '0.5.4'
+APP_VERSION = '0.5.5'
 
 # v0.5.4: AudioEngine + pitch detection + filter presets live in their own
 # module so the engine has a state machine, host-API fallback chain, and
@@ -326,6 +328,17 @@ STRINGS = {
         'audio_toast_switch':      'Wechseln',
         'audio_toast_dismiss':     'Ignorieren',
         'audio_sr_notice':         'Audio l\u00e4uft mit {sr} Hz \u2014 das Ger\u00e4t unterst\u00fctzt 44100 Hz nicht.',
+        # v0.5.5 \u2014 per-instrument range editor
+        'gear_tip':                'Erlaubte T\u00f6ne f\u00fcr dieses Instrument bearbeiten',
+        'range_editor_title':      'Tonumfang bearbeiten \u2014 {name}',
+        'range_lo_label':          'Tiefster Griff-Ton (MIDI)',
+        'range_hi_label':          'H\u00f6chster Griff-Ton (MIDI)',
+        'range_preview_fmt':       'Bereich: {lo_name} \u2013 {hi_name} ({semis} Halbt\u00f6ne, {octs:.1f} Oktaven)',
+        'range_invalid':           'Ung\u00fcltig: tief darf nicht \u00fcber hoch liegen, beide m\u00fcssen zwischen 0 und 127 sein.',
+        'range_save':              'Speichern',
+        'range_restore_default':   'Standard wiederherstellen',
+        'range_restore_fallback':  'Auf ({lo}, {hi}) zur\u00fccksetzen',
+        'range_cancel':            'Abbrechen',
     },
     'en': {
         'window_title': 'Intonation Analyzer',
@@ -556,6 +569,17 @@ STRINGS = {
         'audio_toast_switch':      'Switch',
         'audio_toast_dismiss':     'Dismiss',
         'audio_sr_notice':         'Running at {sr} Hz \u2014 this device does not support 44100 Hz.',
+        # v0.5.5 \u2014 per-instrument range editor
+        'gear_tip':                'Edit allowed notes for this instrument',
+        'range_editor_title':      'Edit range \u2014 {name}',
+        'range_lo_label':          'Lowest fingered note (MIDI)',
+        'range_hi_label':          'Highest fingered note (MIDI)',
+        'range_preview_fmt':       'Range: {lo_name} \u2013 {hi_name} ({semis} semitones, {octs:.1f} octaves)',
+        'range_invalid':           'Invalid: low must not exceed high, and both must be 0\u2013127.',
+        'range_save':              'Save',
+        'range_restore_default':   'Restore Default',
+        'range_restore_fallback':  'Restore to ({lo}, {hi})',
+        'range_cancel':            'Cancel',
     },
 }
 
@@ -1731,6 +1755,148 @@ class AudioPickerDialog(QDialog):
 
 
 # =============================================================================
+# Per-instrument range editor (v0.5.5)
+# =============================================================================
+class RangeEditorDialog(QDialog):
+    """Modal editor for the (lo, hi) fingered-MIDI range of one
+    instrument. Persists to ~/.intonation_analyzer/instrument_ranges.json
+    via sax_instruments.save_range_override / clear_range_override.
+
+    The dialog owns no policy: the caller (MainWindow) refreshes its
+    table after accept() so the new range takes effect immediately."""
+
+    def __init__(self, parent, t, instrument_key: str,
+                 display_name: str, current_lo: int, current_hi: int,
+                 baked_lo: int, baked_hi: int, has_baked: bool):
+        super().__init__(parent)
+        self._t = t
+        self._key = instrument_key
+        self._baked = (baked_lo, baked_hi)
+        self._has_baked = has_baked
+        self.setWindowTitle(self._t('range_editor_title', name=display_name))
+        self.setModal(True)
+        self.setMinimumWidth(380)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+        form = QFormLayout()
+        form.setSpacing(8)
+        self._lo_spin = QSpinBox()
+        self._lo_spin.setRange(0, 127)
+        self._lo_spin.setValue(int(current_lo))
+        self._hi_spin = QSpinBox()
+        self._hi_spin.setRange(0, 127)
+        self._hi_spin.setValue(int(current_hi))
+        spin_css = (
+            'QSpinBox{background:#1e1e2e;color:#ddd;border:1px solid #444;'
+            'border-radius:5px;padding:3px 6px;font-size:13px;min-width:90px;}'
+        )
+        self._lo_spin.setStyleSheet(spin_css)
+        self._hi_spin.setStyleSheet(spin_css)
+        form.addRow(self._t('range_lo_label'), self._lo_spin)
+        form.addRow(self._t('range_hi_label'), self._hi_spin)
+        layout.addLayout(form)
+
+        self._preview_lbl = QLabel('')
+        self._preview_lbl.setStyleSheet('color:#bbb;font-size:12px;')
+        self._preview_lbl.setWordWrap(True)
+        layout.addWidget(self._preview_lbl)
+
+        self._error_lbl = QLabel('')
+        self._error_lbl.setStyleSheet('color:#e07070;font-size:12px;')
+        self._error_lbl.setWordWrap(True)
+        self._error_lbl.setVisible(False)
+        layout.addWidget(self._error_lbl)
+
+        # Buttons row.
+        btn_row = QHBoxLayout()
+        if has_baked:
+            restore_label = self._t('range_restore_default')
+        else:
+            restore_label = self._t('range_restore_fallback',
+                                    lo=baked_lo, hi=baked_hi)
+        self._btn_restore = QPushButton(restore_label)
+        self._btn_restore.clicked.connect(self._on_restore)
+        self._btn_cancel = QPushButton(self._t('range_cancel'))
+        self._btn_cancel.clicked.connect(self.reject)
+        self._btn_save = QPushButton(self._t('range_save'))
+        self._btn_save.clicked.connect(self._on_save)
+        btn_css = (
+            'QPushButton{background:#34495e;color:#eee;border:none;'
+            'border-radius:5px;padding:6px 12px;font-size:12px;}'
+            'QPushButton:hover{background:#3d566e;}'
+            'QPushButton:disabled{background:#2a2a3a;color:#666;}'
+        )
+        self._btn_restore.setStyleSheet(btn_css)
+        self._btn_cancel.setStyleSheet(btn_css)
+        self._btn_save.setStyleSheet(btn_css)
+        btn_row.addWidget(self._btn_restore)
+        btn_row.addStretch()
+        btn_row.addWidget(self._btn_cancel)
+        btn_row.addWidget(self._btn_save)
+        layout.addLayout(btn_row)
+
+        # Live preview wiring.
+        self._lo_spin.valueChanged.connect(self._update_preview)
+        self._hi_spin.valueChanged.connect(self._update_preview)
+        self._update_preview()
+
+        # Dark theme to match the rest of the app.
+        self.setStyleSheet('QDialog{background:#12121a;color:#ddd;} '
+                           'QLabel{color:#ccc;}')
+
+    def _update_preview(self) -> None:
+        lo = self._lo_spin.value()
+        hi = self._hi_spin.value()
+        invalid = lo > hi
+        # Visual cue on the offending field.
+        bad_css = (
+            'QSpinBox{background:#3a1e1e;color:#fdd;border:1px solid #c0392b;'
+            'border-radius:5px;padding:3px 6px;font-size:13px;min-width:90px;}'
+        )
+        ok_css = (
+            'QSpinBox{background:#1e1e2e;color:#ddd;border:1px solid #444;'
+            'border-radius:5px;padding:3px 6px;font-size:13px;min-width:90px;}'
+        )
+        self._lo_spin.setStyleSheet(bad_css if invalid else ok_css)
+        self._hi_spin.setStyleSheet(bad_css if invalid else ok_css)
+        if invalid:
+            self._error_lbl.setText(self._t('range_invalid'))
+            self._error_lbl.setVisible(True)
+            self._preview_lbl.setText('')
+            self._btn_save.setEnabled(False)
+            return
+        self._error_lbl.setVisible(False)
+        self._btn_save.setEnabled(True)
+        semis = hi - lo
+        octs = semis / 12.0
+        self._preview_lbl.setText(self._t(
+            'range_preview_fmt',
+            lo_name=midi_note_name(lo), hi_name=midi_note_name(hi),
+            semis=semis, octs=octs))
+
+    def _on_restore(self) -> None:
+        lo, hi = self._baked
+        self._lo_spin.setValue(lo)
+        self._hi_spin.setValue(hi)
+
+    def _on_save(self) -> None:
+        lo = self._lo_spin.value()
+        hi = self._hi_spin.value()
+        if lo > hi:
+            return
+        # If the user dialed back to the baked default AND a baked entry
+        # exists, clear the override instead of writing a redundant
+        # entry. Keeps the overrides file lean and lets future baked
+        # changes flow through.
+        if self._has_baked and (lo, hi) == self._baked:
+            sax_instruments.clear_range_override(self._key)
+        else:
+            sax_instruments.save_range_override(self._key, lo, hi)
+        self.accept()
+
+
+# =============================================================================
 # Haupt-Fenster
 # =============================================================================
 class MainWindow(QMainWindow):
@@ -1759,6 +1925,22 @@ class MainWindow(QMainWindow):
             register_custom(c.key, c.transp, c.name_de, c.name_en)
         _rebuild_transp_map()
 
+        # v0.5.5: restore last-session preferences that influence the
+        # initial UI build. Geometry, splitter sizes, and nickname text
+        # are widget-bound and get applied after _build_ui returns.
+        # First-launch (empty config) falls back to the locale-derived
+        # default already set above.
+        if getattr(self._cfg, 'last_lang', '') in ('de', 'en'):
+            self.lang = self._cfg.last_lang
+        if getattr(self._cfg, 'last_instrument_key', ''):
+            # Trust the saved key only if the catalog still knows it; a
+            # stale custom instrument that was deleted should fall back
+            # rather than crash the combo population.
+            if self._cfg.last_instrument_key in TRANSP_MAP:
+                self.instrument = self._cfg.last_instrument_key
+        if getattr(self._cfg, 'last_display_mode', '') in ('griff', 'klingend'):
+            self.display = self._cfg.last_display_mode
+
         self._engine = AudioEngine()
         self._engine.set_filter_mode(
             getattr(self._cfg, 'filter_mode', FILTER_MODE_DEFAULT))
@@ -1780,6 +1962,7 @@ class MainWindow(QMainWindow):
                 self._on_interface_appeared)
 
         self._build_ui()
+        self._restore_session_state()
         self._seed_expected_notes()
         self._update_record_btn_style()
 
@@ -1860,6 +2043,25 @@ class MainWindow(QMainWindow):
         self._instr_combo.setMinimumWidth(180)
         self._instr_combo.currentIndexChanged.connect(self._on_instr_changed)
         il.addWidget(self._instr_combo)
+
+        # v0.5.5: gear button opens the per-instrument range editor. Sits
+        # immediately to the right of the instrument combo so the user
+        # finds it without hunting through menus. Unicode glyph instead of
+        # an SVG asset — the project ships no settings icon and we keep
+        # the dependency surface minimal.
+        self._btn_range = QToolButton()
+        self._btn_range.setText('⚙')   # U+2699 GEAR
+        self._btn_range.setToolTip(self._t('gear_tip'))
+        self._btn_range.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_range.setStyleSheet("""
+            QToolButton{background:#1e1e2e;color:#ddd;border:1px solid #444;
+                         border-radius:5px;padding:2px 6px;font-size:15px;
+                         min-height:28px;min-width:28px;}
+            QToolButton:hover{background:#2a2a3a;border:1px solid #6699cc;}
+            QToolButton:pressed{background:#16161e;}
+        """)
+        self._btn_range.clicked.connect(self._open_range_editor)
+        il.addWidget(self._btn_range)
 
         self._btn_custom = QPushButton(self._t('custom_label'))
         self._btn_custom.setToolTip(self._t('custom_dlg_title'))
@@ -2143,6 +2345,8 @@ class MainWindow(QMainWindow):
         splitter.addWidget(right)
         splitter.setSizes([420, 620])
         root.addWidget(splitter, 1)
+        # Held for closeEvent persistence and restore-on-launch (v0.5.5).
+        self._splitter = splitter
 
         # Fensterstil
         self.setStyleSheet("""
@@ -2202,6 +2406,8 @@ class MainWindow(QMainWindow):
         self._populate_instrument_combo(select_key=self.instrument)
         self._btn_custom.setText(self._t('custom_label'))
         self._btn_custom.setToolTip(self._t('custom_dlg_title'))
+        if hasattr(self, '_btn_range'):
+            self._btn_range.setToolTip(self._t('gear_tip'))
         self._nick_edit.setPlaceholderText(self._t('nickname_tip'))
 
         # Display-Combo
@@ -2697,6 +2903,24 @@ class MainWindow(QMainWindow):
                                 a4_hz=self._engine.a4,
                                 label=self._nick_edit.text().strip())
         self._refresh_table()
+
+    def _open_range_editor(self) -> None:
+        """Open the per-instrument range editor for the active instrument.
+        Accepts → persist via sax_instruments override DB → refresh table
+        so the new bounds take effect immediately."""
+        key = self.instrument
+        cur_lo, cur_hi = sax_instruments.fingered_range(key)
+        baked_lo, baked_hi = sax_instruments.baked_fingered_range(key)
+        has_baked = sax_instruments.has_baked_range(key)
+        name = instrument_display_name(key, self.lang)
+        dlg = RangeEditorDialog(
+            self, self._t, key, name,
+            cur_lo, cur_hi, baked_lo, baked_hi, has_baked)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            # Re-seed expected notes with the new bounds so the table
+            # immediately reflects what changed.
+            self._seed_expected_notes()
+            self._refresh_table()
 
     def _seed_expected_notes(self) -> None:
         """Populate self.stats with empty NoteStats for the current
@@ -3834,9 +4058,139 @@ class MainWindow(QMainWindow):
         if cents < -1: return '.'*(half-fill) + '#'*fill + '|' + ' '*half
         return ' '*half + '|' + ' '*half
 
+    def _restore_session_state(self) -> None:
+        """Apply persisted window geometry, splitter sizes, nickname,
+        language/instrument/display/A4 to the freshly-built widgets.
+
+        Called from __init__ right after _build_ui. Lang / instrument /
+        display were already applied earlier (they affect _build_ui's
+        first paint); here we sync the combos to those values plus the
+        widget-level state. First launch (empty cfg) is a no-op."""
+        cfg = self._cfg
+
+        # Window geometry — only restore if the saved rect still fits on
+        # at least one connected screen. A user who unplugged a monitor
+        # should not get a window stranded off-screen.
+        geom_b64 = getattr(cfg, 'window_geometry', "")
+        if geom_b64:
+            try:
+                ba = QByteArray.fromBase64(geom_b64.encode('ascii'))
+                if not ba.isEmpty() and self.restoreGeometry(ba):
+                    screens = QGuiApplication.screens()
+                    if screens:
+                        visible = False
+                        win_geom = self.frameGeometry()
+                        for scr in screens:
+                            if scr.availableGeometry().intersects(win_geom):
+                                visible = True
+                                break
+                        if not visible:
+                            # Off-screen — let Qt's default placement
+                            # take over by clearing the geometry.
+                            self.resize(1100, 700)
+                            primary = QGuiApplication.primaryScreen()
+                            if primary is not None:
+                                center = primary.availableGeometry().center()
+                                self.move(center.x() - self.width() // 2,
+                                          center.y() - self.height() // 2)
+            except Exception:
+                pass
+        state_b64 = getattr(cfg, 'window_state', "")
+        if state_b64:
+            try:
+                ba = QByteArray.fromBase64(state_b64.encode('ascii'))
+                if not ba.isEmpty():
+                    self.restoreState(ba)
+            except Exception:
+                pass
+
+        # Splitter widths.
+        sizes = list(getattr(cfg, 'splitter_sizes', []) or [])
+        if (hasattr(self, '_splitter') and len(sizes) == 2
+                and all(s >= 0 for s in sizes) and sum(sizes) > 0):
+            self._splitter.setSizes(sizes)
+
+        # Nickname text.
+        nick = getattr(cfg, 'last_nickname', "")
+        if nick and hasattr(self, '_nick_edit'):
+            self._nick_edit.setText(nick)
+
+        # Language combo — match self.lang set earlier in __init__.
+        if hasattr(self, '_lang_combo'):
+            for i in range(self._lang_combo.count()):
+                if self._lang_combo.itemData(i) == self.lang:
+                    self._lang_combo.blockSignals(True)
+                    self._lang_combo.setCurrentIndex(i)
+                    self._lang_combo.blockSignals(False)
+                    break
+            # _build_ui used the lang in effect at construction; if we
+            # overrode it post-load, retranslate now to repaint labels.
+            self._retranslate()
+
+        # Display combo — match self.display.
+        if hasattr(self, '_disp_combo'):
+            target_idx = 0 if self.display == 'griff' else 1
+            if self._disp_combo.currentIndex() != target_idx:
+                self._disp_combo.blockSignals(True)
+                self._disp_combo.setCurrentIndex(target_idx)
+                self._disp_combo.blockSignals(False)
+
+        # A4 — apply to combo and engine.
+        a4 = int(getattr(cfg, 'last_a4_hz', 440))
+        if 430 <= a4 <= 450:
+            if hasattr(self, '_a4_combo'):
+                self._a4_combo.blockSignals(True)
+                self._a4_combo.setCurrentIndex(a4 - 430)
+                self._a4_combo.blockSignals(False)
+            try:
+                self._engine.a4 = float(a4)
+            except Exception:
+                pass
+
     def closeEvent(self, ev):
+        # v0.5.5: snapshot the full session state to the config file so the
+        # next launch lands the user back where they were. Wrapped in
+        # try/except because save-on-exit must never block the engine
+        # from stopping cleanly — a corrupt config is recoverable, a
+        # dangling audio stream is not.
+        try:
+            self._save_session_state()
+        except Exception:
+            pass
         self._engine.stop()
         ev.accept()
+
+    def _save_session_state(self) -> None:
+        """Assemble a full AppConfig snapshot from current widget state
+        and persist. Called from closeEvent. The per-setting saves
+        scattered through the GUI remain as a belt; this is the
+        suspenders."""
+        cfg = self._cfg
+        # Window geometry + state — QByteArray base64 round-trip.
+        geom = self.saveGeometry()
+        state = self.saveState()
+        try:
+            cfg.window_geometry = bytes(geom.toBase64()).decode('ascii')
+        except Exception:
+            cfg.window_geometry = ""
+        try:
+            cfg.window_state = bytes(state.toBase64()).decode('ascii')
+        except Exception:
+            cfg.window_state = ""
+        # Splitter sizes.
+        if hasattr(self, '_splitter'):
+            cfg.splitter_sizes = list(self._splitter.sizes())
+        # Per-widget UI state.
+        cfg.last_instrument_key = self.instrument
+        if hasattr(self, '_nick_edit'):
+            cfg.last_nickname = self._nick_edit.text().strip()
+        cfg.last_display_mode = self.display
+        try:
+            cfg.last_a4_hz = int(self._engine.a4)
+        except Exception:
+            pass
+        cfg.last_lang = self.lang
+        sax_config.save_config(cfg)
 
 
 def _today():

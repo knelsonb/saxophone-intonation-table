@@ -15,6 +15,11 @@ transposition values so old CSV exports round-trip cleanly.
 
 from __future__ import annotations
 
+import json
+import os
+import tempfile
+from pathlib import Path
+
 # (family_key, family_name_de, family_name_en,
 #   [(instrument_key, transp, name_de, name_en), ...])
 _FAMILIES = [
@@ -309,9 +314,150 @@ _RANGES: dict[str, tuple[int, int]] = {
 def fingered_range(instrument_key: str) -> tuple[int, int]:
     """Return (lo, hi) inclusive fingered-MIDI range for this instrument.
 
-    Falls back to a generic 2.5-octave middle range for keys without an
-    explicit entry (mainly user-defined custom instruments)."""
+    Consults the user override DB first, then the baked MuseScore-sourced
+    map, then a generic 2.5-octave middle range fallback for keys without
+    an explicit entry (mainly user-defined custom instruments)."""
+    ov = _OVERRIDES.get(instrument_key)
+    if ov is not None:
+        return ov
     return _RANGES.get(instrument_key, (48, 79))
+
+
+def baked_fingered_range(instrument_key: str) -> tuple[int, int]:
+    """Return the baked (non-overridden) range for the instrument. Used by
+    the range editor's Restore Default button."""
+    return _RANGES.get(instrument_key, (48, 79))
+
+
+def has_baked_range(instrument_key: str) -> bool:
+    """Whether the instrument has a baked range from the MuseScore source.
+    Custom instruments without a baked entry get the generic fallback;
+    the editor uses this to label the Restore button accordingly."""
+    return instrument_key in _RANGES
+
+
+# ---------------------------------------------------------------------------
+# Per-user range overrides
+# ---------------------------------------------------------------------------
+# Stored in ~/.intonation_analyzer/instrument_ranges.json. Loaded once at
+# import time; refreshed in-process whenever save/clear is called so the
+# next fingered_range() consult reflects the change without restart.
+_RANGES_FILE = (Path.home() / ".intonation_analyzer"
+                / "instrument_ranges.json")
+_RANGES_SCHEMA_VERSION = 1
+_OVERRIDES: dict[str, tuple[int, int]] = {}
+
+
+def _coerce_range_entry(v) -> tuple[int, int] | None:
+    """Validate a (lo, hi) entry. Rejects anything not parseable, out of
+    0..127, or with lo > hi. Returns None on any defect so the caller can
+    skip silently."""
+    if not isinstance(v, (list, tuple)) or len(v) != 2:
+        return None
+    try:
+        lo = int(v[0])
+        hi = int(v[1])
+    except (TypeError, ValueError):
+        return None
+    if not (0 <= lo <= 127 and 0 <= hi <= 127 and lo <= hi):
+        return None
+    return (lo, hi)
+
+
+def load_range_overrides() -> dict[str, tuple[int, int]]:
+    """Read the overrides file into a fresh dict. Tolerant: missing file,
+    malformed JSON, wrong shape, bad entries all degrade to {} or skip the
+    offending key. Updates the in-process cache as a side effect."""
+    global _OVERRIDES
+    out: dict[str, tuple[int, int]] = {}
+    if not _RANGES_FILE.exists():
+        _OVERRIDES = out
+        return out
+    try:
+        with _RANGES_FILE.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        _OVERRIDES = out
+        return out
+    if not isinstance(data, dict):
+        _OVERRIDES = out
+        return out
+    ranges = data.get("ranges")
+    if not isinstance(ranges, dict):
+        _OVERRIDES = out
+        return out
+    for key, val in ranges.items():
+        if not isinstance(key, str):
+            continue
+        coerced = _coerce_range_entry(val)
+        if coerced is None:
+            continue
+        out[key] = coerced
+    _OVERRIDES = out
+    return out
+
+
+def _write_overrides_atomic(payload: dict) -> None:
+    """Write JSON to the overrides file via a temp file + rename so a
+    crashed write never leaves a half-baked file behind."""
+    _RANGES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(
+        prefix=".instrument_ranges.", suffix=".tmp",
+        dir=str(_RANGES_FILE.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+        os.replace(tmp_path, _RANGES_FILE)
+    except OSError:
+        # Clean up the temp file if the rename failed.
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+
+def save_range_override(key: str, lo: int, hi: int) -> None:
+    """Persist one override entry. Read-modify-write of the JSON file so
+    other keys in the file are preserved. Refreshes the in-process cache."""
+    coerced = _coerce_range_entry((lo, hi))
+    if coerced is None:
+        return
+    # Re-read from disk so we don't clobber edits from a parallel process
+    # with the in-process cache (unlikely on a desktop app, but cheap).
+    current = load_range_overrides()
+    current[key] = coerced
+    payload = {
+        "version": _RANGES_SCHEMA_VERSION,
+        "ranges": {k: list(v) for k, v in current.items()},
+    }
+    try:
+        _write_overrides_atomic(payload)
+    except OSError:
+        return
+    # Refresh cache from the file we just wrote so any future load sees
+    # the same view as the in-process cache.
+    load_range_overrides()
+
+
+def clear_range_override(key: str) -> None:
+    """Remove one override entry, if present. Refreshes the cache."""
+    current = load_range_overrides()
+    if key not in current:
+        return
+    del current[key]
+    payload = {
+        "version": _RANGES_SCHEMA_VERSION,
+        "ranges": {k: list(v) for k, v in current.items()},
+    }
+    try:
+        _write_overrides_atomic(payload)
+    except OSError:
+        return
+    load_range_overrides()
+
+
+# Prime the cache at import time.
+load_range_overrides()
 
 
 def family_of(instrument_key: str) -> str | None:
