@@ -9,6 +9,7 @@ Starten:
     python3 sax_intonation_gui.py
 """
 
+import os
 import sys
 import math
 import threading
@@ -32,6 +33,8 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QRectF, QPointF
 from PyQt6.QtGui import QPainter, QColor, QFont, QPen
+
+from sax_intonation_log import MeasurementLog
 
 
 # =============================================================================
@@ -63,6 +66,27 @@ STRINGS = {
         'btn_start':    '\u23fa  Aufnahme starten',
         'btn_txt':      '\u2b07  Export TXT',
         'btn_pdf':      '\u2b07  Export PDF',
+        'btn_csv':      '\u2b07  Export CSV',
+        # CSV-Export
+        'csv_dialog_title':  'CSV exportieren',
+        'csv_dialog_info':   ('W\u00e4hle, wie die geloggten Messungen in der '
+                              'CSV-Datei zusammengefasst werden sollen.'),
+        'csv_mode_label':    'Aufteilung:',
+        'csv_run_label':     'Lauf:',
+        'csv_instr_label':   'Instrument:',
+        'csv_all_runs':      'Alle L\u00e4ufe',
+        'csv_all_instruments': 'Alle Instrumente',
+        'csv_mode_raw':                 'Rohdaten (eine Zeile pro Messung)',
+        'csv_mode_per_run_note':        'Pro Lauf und Ton (Mittel/Streuung)',
+        'csv_mode_per_instrument_note': 'Pro Instrument und Ton (\u00fcber L\u00e4ufe)',
+        'csv_mode_instrument_avg':      'Ein Instrument, je Ton gemittelt',
+        'csv_mode_overall_per_note':    'Gesamtmittel je Ton',
+        'csv_summary':       'Log: {n} Messungen in {runs} L\u00e4ufen',
+        'csv_save_title':    'CSV speichern',
+        'csv_filter':        'CSV-Dateien (*.csv)',
+        'csv_saved':         'CSV gespeichert ({rows} Zeilen):\n{path}',
+        'csv_no_data':       'Keine Messdaten im Log.',
+        'csv_need_instr':    'F\u00fcr diese Aufteilung muss ein Instrument gew\u00e4hlt werden.',
         # Tabellen-Header
         'col_fingered':  'Gegriffener Ton',
         'col_sounding':  'Klingender Ton',
@@ -173,6 +197,26 @@ STRINGS = {
         'btn_start':    '\u23fa  Start Recording',
         'btn_txt':      '\u2b07  Export TXT',
         'btn_pdf':      '\u2b07  Export PDF',
+        'btn_csv':      '\u2b07  Export CSV',
+        'csv_dialog_title':  'Export CSV',
+        'csv_dialog_info':   ('Choose how the logged measurements should be '
+                              'summarised in the CSV file.'),
+        'csv_mode_label':    'Slice by:',
+        'csv_run_label':     'Run:',
+        'csv_instr_label':   'Instrument:',
+        'csv_all_runs':      'All runs',
+        'csv_all_instruments': 'All instruments',
+        'csv_mode_raw':                 'Raw (one row per measurement)',
+        'csv_mode_per_run_note':        'Per run and note (mean/std)',
+        'csv_mode_per_instrument_note': 'Per instrument and note (across runs)',
+        'csv_mode_instrument_avg':      'One instrument, per-note average',
+        'csv_mode_overall_per_note':    'Overall mean per note',
+        'csv_summary':       'Log: {n} measurements across {runs} runs',
+        'csv_save_title':    'Save CSV',
+        'csv_filter':        'CSV files (*.csv)',
+        'csv_saved':         'CSV saved ({rows} rows):\n{path}',
+        'csv_no_data':       'No measurement data in the log.',
+        'csv_need_instr':    'This slice mode requires choosing one instrument.',
         'col_fingered':  'Fingered Note',
         'col_sounding':  'Sounding Note',
         'col_mean':      '\u00d8 Dev. (ct)',
@@ -593,7 +637,15 @@ class MainWindow(QMainWindow):
         self._recording = True   # Aufnahme läuft beim Start
 
         self._engine = AudioEngine()
+        # Persistence is opt-in via env var. When unset, the log is in-memory
+        # only — exports cover the current session.
+        self._log = MeasurementLog(
+            path=os.environ.get('SAX_INTONATION_LOG_PATH') or None)
         if AUDIO_OK:
+            # Only open a run when audio actually works; otherwise we'd write
+            # an empty run record on every launch with no microphone.
+            self._log.start_run(instrument=self.instrument,
+                                a4_hz=self._engine.a4)
             self._engine.signals.note_detected.connect(self._on_note)
             self._engine.start()
 
@@ -676,6 +728,7 @@ class MainWindow(QMainWindow):
         self._btn_reset    = self._make_btn(self._t('btn_reset'),    '#c0392b', self._on_reset)
         self._btn_txt      = self._make_btn(self._t('btn_txt'),      '#2980b9', self._export_txt)
         self._btn_pdf      = self._make_btn(self._t('btn_pdf'),      '#8e44ad', self._export_pdf)
+        self._btn_csv      = self._make_btn(self._t('btn_csv'),      '#16a085', self._export_csv)
 
         toolbar.addWidget(self._grp_instr)
         toolbar.addWidget(self._grp_disp)
@@ -687,6 +740,7 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(self._btn_reset)
         toolbar.addWidget(self._btn_txt)
         toolbar.addWidget(self._btn_pdf)
+        toolbar.addWidget(self._btn_csv)
         root.addLayout(toolbar)
 
         # ── Splitter ──────────────────────────────────────────────────────────
@@ -812,6 +866,7 @@ class MainWindow(QMainWindow):
         self._btn_reset.setText(self._t('btn_reset'))
         self._btn_txt.setText(self._t('btn_txt'))
         self._btn_pdf.setText(self._t('btn_pdf'))
+        self._btn_csv.setText(self._t('btn_csv'))
 
         # Tabellen-Header
         self._table.setHorizontalHeaderLabels(self._table_headers())
@@ -828,6 +883,13 @@ class MainWindow(QMainWindow):
             if midi_kl not in self.stats:
                 self.stats[midi_kl] = NoteStats()
             self.stats[midi_kl].add(cents)
+        # Per-measurement log. Instrument/A4 are read off the active run
+        # inside the log, not from `self`, so a callback firing during a UI
+        # change still attributes to the run that was active when it fired.
+        midi_gr = midi_kl - TRANSP_MAP[self.instrument]
+        self._log.add_measurement(midi_sounding=midi_kl,
+                                   midi_fingered=midi_gr,
+                                   cents=cents, freq_hz=freq)
 
         transp     = TRANSP_MAP[self.instrument]
         midi_gr    = midi_kl - transp
@@ -901,6 +963,11 @@ class MainWindow(QMainWindow):
     def _on_instr_changed(self, idx):
         self.instrument = INSTR_KEYS[idx]
         self._engine.instr_key = self.instrument
+        # Instrument switch ⇒ new run, so per-run aggregates stay coherent.
+        # Empty predecessor runs are coalesced inside `start_run`.
+        if AUDIO_OK and self._recording:
+            self._log.start_run(instrument=self.instrument,
+                                a4_hz=self._engine.a4)
         self._refresh_table()
 
     def _on_disp_changed(self, idx):
@@ -911,17 +978,28 @@ class MainWindow(QMainWindow):
         self._engine.a4 = float(self._a4_combo.itemData(idx))
         with self._lock:
             self.stats.clear()
+        # A4 changes invalidate cent values ⇒ start a new run. Scrubbing the
+        # combo to find the right value does NOT pile up empty runs because
+        # `start_run` coalesces the predecessor if it never recorded.
+        if AUDIO_OK and self._recording:
+            self._log.start_run(instrument=self.instrument,
+                                a4_hz=self._engine.a4)
         self._refresh_table()
 
     # ── Start / Stop ──────────────────────────────────────────────────────────
     def _on_record_toggle(self):
         self._recording = not self._recording
         if self._recording:
+            # Resumed recording ⇒ open a fresh run for the log.
+            if AUDIO_OK:
+                self._log.start_run(instrument=self.instrument,
+                                    a4_hz=self._engine.a4)
             self._btn_record.setText(self._t('btn_stop'))
             self._btn_record.setStyleSheet(self._btn_record.styleSheet().replace('#2ecc71', '#b7770d').replace('#27ae60', '#b7770d'))
             self._update_record_btn_style()
             self._status_lbl.setText(self._t('no_signal'))
         else:
+            self._log.end_run()
             self._update_record_btn_style()
             self._btn_record.setText(self._t('btn_start'))
 
@@ -1254,6 +1332,164 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, self._t('export_title'), self._t('pdf_saved', path=path))
         except Exception as e:
             QMessageBox.critical(self, self._t('err_title'), str(e))
+
+    # ── Export CSV ────────────────────────────────────────────────────────────
+    def _export_csv(self):
+        if not self._log.measurements():
+            QMessageBox.information(self, self._t('export_title'),
+                                    self._t('csv_no_data'))
+            return
+
+        # Optionally tag the current run with maker/model so they show up in
+        # the CSV alongside the measurements. In-memory only — no rewrite of
+        # the on-disk JSONL record.
+        model_info = self._ask_instrument_model()
+        if model_info is None:
+            return
+        maker, model = model_info
+        if maker or model:
+            self._log.set_current_run_metadata(maker=maker, model=model)
+
+        sel = self._ask_csv_slice()
+        if sel is None:
+            return
+
+        if sel['mode'] == 'instrument_avg' and not sel['instrument']:
+            QMessageBox.warning(self, self._t('err_title'),
+                                self._t('csv_need_instr'))
+            return
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, self._t('csv_save_title'),
+            f"intonation_{sel['mode']}_{_today()}.csv",
+            self._t('csv_filter'))
+        if not path:
+            return
+
+        try:
+            n = self._log.export_csv(path,
+                                     mode=sel['mode'],
+                                     run_id=sel['run_id'],
+                                     instrument=sel['instrument'])
+            QMessageBox.information(self, self._t('export_title'),
+                                    self._t('csv_saved', rows=n, path=path))
+        except Exception as e:
+            QMessageBox.critical(self, self._t('err_title'), str(e))
+
+    def _ask_csv_slice(self) -> dict | None:
+        """Modal dialog: slice mode + (optional) run/instrument filter.
+
+        Returns {'mode', 'run_id', 'instrument'} or None if cancelled.
+        """
+        dlg = QDialog(self)
+        dlg.setWindowTitle(self._t('csv_dialog_title'))
+        dlg.setMinimumWidth(480)
+        dlg.setStyleSheet("""
+            QDialog { background: #1a1a2e; color: #ddd; }
+            QLabel  { color: #bbb; font-size: 13px; }
+            QComboBox {
+                background: #252540; border: 1px solid #444; border-radius: 5px;
+                color: #eee; padding: 6px 10px; font-size: 13px; min-width: 260px;
+            }
+            QComboBox QAbstractItemView { background: #252540; color: #eee; }
+            QDialogButtonBox QPushButton {
+                background: #2c5282; color: white; border: none;
+                border-radius: 5px; padding: 6px 18px; font-size: 13px;
+            }
+            QDialogButtonBox QPushButton:hover  { background: #3a6da8; }
+            QDialogButtonBox QPushButton:pressed { background: #1e3a5f; }
+        """)
+
+        layout = QVBoxLayout(dlg)
+        layout.setSpacing(12)
+        layout.setContentsMargins(20, 16, 20, 16)
+
+        info = QLabel(self._t('csv_dialog_info'))
+        info.setStyleSheet('color: #888; font-size: 12px;')
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        form = QFormLayout()
+        form.setSpacing(10)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+
+        mode_combo = QComboBox()
+        for key in MeasurementLog.SLICE_MODES:
+            mode_combo.addItem(self._t(f'csv_mode_{key}'), key)
+        form.addRow(self._t('csv_mode_label'), mode_combo)
+
+        run_combo = QComboBox()
+        run_combo.addItem(self._t('csv_all_runs'), None)
+        for run in self._log.runs():
+            label = (f"{run.started_at} · {self._instr_label(run.instrument)}"
+                     f" · A={run.a4_hz:.0f} Hz")
+            tail = ' '.join(x for x in (run.maker, run.model) if x)
+            if tail:
+                label += f" · {tail}"
+            run_combo.addItem(label, run.run_id)
+        run_lbl = QLabel(self._t('csv_run_label'))
+        form.addRow(run_lbl, run_combo)
+
+        instr_combo = QComboBox()
+        instr_combo.addItem(self._t('csv_all_instruments'), None)
+        for key in self._log.instruments():
+            instr_combo.addItem(self._instr_label(key), key)
+        instr_lbl = QLabel(self._t('csv_instr_label'))
+        form.addRow(instr_lbl, instr_combo)
+
+        layout.addLayout(form)
+
+        n = len(self._log.measurements())
+        r = len(self._log.runs())
+        summary = QLabel(self._t('csv_summary', n=n, runs=r))
+        summary.setStyleSheet('color: #888; font-size: 11px;')
+        layout.addWidget(summary)
+
+        btns = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok |
+            QDialogButtonBox.StandardButton.Cancel)
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        layout.addWidget(btns)
+
+        def refresh_filters():
+            mode = mode_combo.currentData()
+            run_enabled = mode in ('raw', 'per_run_note')
+            instr_required = mode == 'instrument_avg'
+            instr_enabled = mode in ('raw', 'per_run_note',
+                                     'per_instrument_note', 'instrument_avg')
+
+            run_combo.setEnabled(run_enabled)
+            run_lbl.setEnabled(run_enabled)
+            instr_combo.setEnabled(instr_enabled)
+            instr_lbl.setEnabled(instr_enabled)
+
+            # In instrument_avg mode the user must pick one instrument; the
+            # "All instruments" sentinel at index 0 is removed and reinstated
+            # when leaving that mode.
+            first_is_all = instr_combo.itemData(0) is None
+            if instr_required and first_is_all:
+                instr_combo.removeItem(0)
+            elif not instr_required and not first_is_all:
+                instr_combo.insertItem(0, self._t('csv_all_instruments'),
+                                        None)
+                instr_combo.setCurrentIndex(0)
+
+        mode_combo.currentIndexChanged.connect(refresh_filters)
+        refresh_filters()
+
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return None
+        return {
+            'mode': mode_combo.currentData(),
+            'run_id': run_combo.currentData() if run_combo.isEnabled() else None,
+            'instrument': (instr_combo.currentData()
+                           if instr_combo.isEnabled() else None),
+        }
+
+    def _instr_label(self, key: str) -> str:
+        long_key = f'instr_long_{key}'
+        return self._t(long_key) if long_key in STRINGS[self.lang] else key
 
     def _make_bar_ascii(self, cents, w=16):
         half = w // 2
