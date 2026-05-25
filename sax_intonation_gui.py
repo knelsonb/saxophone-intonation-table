@@ -49,7 +49,7 @@ from sax_instruments import (
 import sax_config
 
 APP_NAME = 'Intonation Analyzer'
-APP_VERSION = '0.4.2'
+APP_VERSION = '0.5.0'
 
 
 # =============================================================================
@@ -64,12 +64,12 @@ STRINGS = {
         'grp_family':       'Familie',
         'grp_subinstrument':'Modell',
         'grp_nickname':     'Spitzname',
-        'allow_oor':        'Übertöne erlauben',
+        'allow_oor':        'Auf Instrumentenumfang beschränken',
         'grp_layout':       'Layout',
         'layout_auto':      'Auto',
         'layout_single':    'Liste',
         'layout_matrix':    'Raster',
-        'allow_oor_tip':    'Wenn aktiv: Töne au\u00dferhalb des Instrumentenumfangs (\u00dcbert\u00f6ne, Altissimo) werden mit aufgenommen.',
+        'allow_oor_tip':    'Aktiviert: Töne au\u00dferhalb des Instrumentenumfangs werden ignoriert.\nDeaktiviert (Standard): Jeder gespielte Ton wird aufgezeichnet; der Umfang dient nur als Anzeigehilfe.',
         'nickname_tip':     'Spitzname (z.B. "Tenor #1")',
         'custom_label':     '+  Eigenes …',
         'custom_dlg_title': 'Eigenes Instrument',
@@ -256,12 +256,12 @@ STRINGS = {
         'grp_family':       'Family',
         'grp_subinstrument':'Model',
         'grp_nickname':     'Nickname',
-        'allow_oor':        'Allow overtones',
+        'allow_oor':        'Filter to instrument range',
         'grp_layout':       'Layout',
         'layout_auto':      'Auto',
         'layout_single':    'List',
         'layout_matrix':    'Grid',
-        'allow_oor_tip':    'When on, notes outside the instrument range (overtones, altissimo, accidentals) are still recorded.',
+        'allow_oor_tip':    'Off (default): every played note is recorded; the instrument range is shown only as a display guide.\nOn: notes outside the instrument range are ignored.',
         'nickname_tip':     'Nickname (e.g. "Tenor #1")',
         'custom_label':     '+  Custom …',
         'custom_dlg_title': 'Custom instrument',
@@ -1063,10 +1063,13 @@ class MainWindow(QMainWindow):
         """)
         il.addWidget(self._nick_edit)
 
-        # OOR toggle: when off, the audio callback silently drops notes
-        # outside the instrument range so the table stays bounded.
+        # "Filter to instrument range" toggle. Off (default) = every played
+        # note is recorded; the instrument range is just a display guide.
+        # On = audio callback drops notes outside the nominal range. The
+        # internal flag is still `allow_out_of_range` (back-compat with
+        # saved configs); the checkbox shows the inverse.
         self._cb_oor = QCheckBox(self._t('allow_oor'))
-        self._cb_oor.setChecked(self._cfg.allow_out_of_range)
+        self._cb_oor.setChecked(not self._cfg.allow_out_of_range)
         self._cb_oor.setToolTip(self._t('allow_oor_tip'))
         self._cb_oor.setStyleSheet("""
             QCheckBox { color: #bbb; font-size: 12px; padding: 2px 4px; }
@@ -1722,8 +1725,11 @@ class MainWindow(QMainWindow):
 
     def _on_oor_toggled(self, checked: bool) -> None:
         """Persist the choice and refresh the table so the matrix can
-        shrink back to nominal range when the toggle goes off."""
-        self._cfg.allow_out_of_range = checked
+        shrink back to nominal range when the filter goes on.
+
+        UI semantic: `checked` means "filter to range ON" (restrict).
+        Internally we store the inverse as `allow_out_of_range`."""
+        self._cfg.allow_out_of_range = not checked
         sax_config.save_config(self._cfg)
         self._refresh_table()
 

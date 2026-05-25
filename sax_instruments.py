@@ -215,27 +215,28 @@ def display_name(instrument_key: str, lang: str = 'en') -> str:
 # at low C) layered on top — see tools/musescore/sync_ranges.py for
 # the reproducible regeneration script.
 _RANGES: dict[str, tuple[int, int]] = {
-    # Saxophones — fingered low A (57) to high F#6 (90) covers the standard
-    # low-A key extension and the high-F# altissimo key. 33 semitones ≈
-    # 2.75 octaves, matching the real range of every modern sax model.
-    'eb_sopranino':           ( 57,  90),
-    'bb_soprano':             ( 57,  90),
-    'eb_alto':                ( 57,  90),
-    'bb_tenor':               ( 57,  90),
-    'eb_bari':                ( 57,  90),
-    'bb_bass':                ( 57,  90),
-    'eb_contrabass':          ( 57,  90),
-    # Clarinets
-    'clar_eb':                ( 52,  91),   # MS via eb-clarinet
-    'clar_d':                 ( 52,  91),   # MS via d-clarinet
-    'clar_c':                 ( 52,  89),   # MS via c-clarinet
-    'clar_bb':                ( 52,  91),   # MS via bb-clarinet
-    'clar_a':                 ( 52,  91),   # MS via a-clarinet
-    'clar_basset_f':          ( 48,  91),   # MS via basset-horn
-    'clar_alto_eb':           ( 52,  89),   # MS via alto-clarinet
-    'clar_bass_bb':           ( 51,  89),   # MS via bb-bass-clarinet
-    'clar_contraalto_eb':     ( 48,  91),   # override-lo via contra-alto-clarinet
-    'clar_contrabass_bb':     ( 48,  91),   # override-lo via contrabass-clarinet
+    # Saxophones — fingered low A (57) to altissimo C7 (96). Generous on
+    # the top end so altissimo work isn't clipped; the filter-to-range
+    # toggle is off by default, so this is mostly a display guide for the
+    # grid layout. When players disagree, we include more.
+    'eb_sopranino':           ( 57,  96),
+    'bb_soprano':             ( 57,  96),
+    'eb_alto':                ( 57,  96),
+    'bb_tenor':               ( 57,  96),
+    'eb_bari':                ( 57,  96),
+    'bb_bass':                ( 57,  96),
+    'eb_contrabass':          ( 57,  96),
+    # Clarinets — top widened to cover altissimo where players disagree.
+    'clar_eb':                ( 52,  96),   # MS via eb-clarinet + altissimo
+    'clar_d':                 ( 52,  96),   # MS via d-clarinet + altissimo
+    'clar_c':                 ( 52,  96),   # MS via c-clarinet + altissimo
+    'clar_bb':                ( 52,  96),   # MS via bb-clarinet + altissimo
+    'clar_a':                 ( 52,  96),   # MS via a-clarinet + altissimo
+    'clar_basset_f':          ( 48,  96),   # MS via basset-horn + altissimo
+    'clar_alto_eb':           ( 52,  91),   # MS via alto-clarinet
+    'clar_bass_bb':           ( 48,  96),   # low-C extension; altissimo widened
+    'clar_contraalto_eb':     ( 48,  91),   # override-lo + altissimo
+    'clar_contrabass_bb':     ( 48,  91),   # override-lo + altissimo
     # Flutes
     'flute_piccolo':          ( 62,  93),   # MS via piccolo
     'flute_c':                ( 60,  93),   # MS via flute
