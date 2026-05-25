@@ -4,3 +4,5 @@ __pycache__/
 build/
 dist/
 *.spec.bak
+tools/musescore/_notes.txt
+tools/musescore/_generated_ranges.py
