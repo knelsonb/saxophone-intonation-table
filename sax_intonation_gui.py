@@ -51,7 +51,7 @@ from sax_instruments import (
 import sax_config
 
 APP_NAME = 'Intonation Analyzer'
-APP_VERSION = '0.5.6'
+APP_VERSION = '0.5.7'
 
 # v0.5.4: AudioEngine + pitch detection + filter presets live in their own
 # module so the engine has a state machine, host-API fallback chain, and
@@ -126,6 +126,9 @@ STRINGS = {
         'data_freq':            'Frequenz',
         'data_midi':            'MIDI (gehalten)',
         'data_notes_count':     'Töne seit Start',
+        'data_hotplug_poller':  'Hotplug-Prüfung',
+        'data_hotplug_value':       'alle {interval}s (zuletzt: {when})',
+        'data_hotplug_value_never': 'alle {interval}s (—)',
         'audio_disabled':       'Audio deaktiviert',
         'custom_label':     '+  Eigenes …',
         'custom_dlg_title': 'Eigenes Instrument',
@@ -389,6 +392,9 @@ STRINGS = {
         'data_freq':            'Frequency',
         'data_midi':            'MIDI (locked)',
         'data_notes_count':     'Notes since start',
+        'data_hotplug_poller':  'Hot-plug check',
+        'data_hotplug_value':       'every {interval}s (last: {when})',
+        'data_hotplug_value_never': 'every {interval}s (—)',
         'audio_disabled':       'Audio disabled',
         'custom_label':     '+  Custom …',
         'custom_dlg_title': 'Custom instrument',
@@ -1095,6 +1101,7 @@ class DataPanelWidget(QWidget):
             'data_freqrange', 'data_filter_mode', 'data_filter_params',
             'data_a4', 'data_rms', 'data_aperiodicity', 'data_freq',
             'data_midi', 'data_notes_count',
+            'data_hotplug_poller',
         ]
         for r, key in enumerate(self._row_keys):
             k_lbl = QLabel(self._t(key) + ':')
@@ -1155,6 +1162,7 @@ class DataPanelWidget(QWidget):
                 self._rows[key].setText('—')
             self._rows['data_notes_count'].setText(
                 str(int(self._get_notes_count())))
+            self._rows['data_hotplug_poller'].setText('—')
             return
         # Pull a single atomic snapshot of the engine's diagnostic
         # scalars; avoids reading half-updated last_* values mid-callback.
@@ -1205,6 +1213,23 @@ class DataPanelWidget(QWidget):
             self._rows['data_midi'].setText('—')
         self._rows['data_notes_count'].setText(
             str(int(self._get_notes_count())))
+        # Hot-plug poller status. The poller is a 1 Hz QTimer in
+        # MainWindow that calls engine.refresh_devices(); the engine
+        # stamps last_devices_refresh_at on every tick. Surfacing the
+        # last-refresh time here lets the user confirm at a glance
+        # that hot-plug detection is alive when a new interface fails
+        # to recover.
+        last = getattr(self._engine, 'last_devices_refresh_at', None)
+        if last is None:
+            self._rows['data_hotplug_poller'].setText(
+                self._t('data_hotplug_value_never', interval=1))
+        else:
+            try:
+                hhmmss = last.strftime('%H:%M:%S')
+            except Exception:
+                hhmmss = '—'
+            self._rows['data_hotplug_poller'].setText(
+                self._t('data_hotplug_value', interval=1, when=hhmmss))
 
 
 # =============================================================================
@@ -1675,6 +1700,45 @@ class AudioRecoveryBanner(QWidget):
         self.show()
 
 
+def _promote_vendor_prefix(name: str) -> str:
+    """If ``name`` contains a known vendor brand mid-string (typical of
+    Windows naming like "Headset (FIIO DSP Audio)" or "Microphone
+    (2- Scarlett Solo)"), return a ``"{VENDOR} · {rest}"`` form with
+    the matched vendor lifted to the front and the parenthesised vendor
+    fragment stripped from the body.
+
+    Returns the original ``name`` unchanged if no vendor regex matches
+    or if the match already sits at position 0 (no promotion needed)."""
+    import re
+    if not name:
+        return name
+    m = re.search(VENDOR_REGEX, name, re.IGNORECASE)
+    if m is None:
+        return name
+    if m.start() == 0:
+        return name
+    vendor = m.group(0).upper()
+    # Strip "(...vendor...)" runs from the body so we don't end up with
+    # "FIIO · Headset (FIIO DSP Audio)". Conservative: only nuke a
+    # parenthesised fragment that contains the matched vendor token.
+    body = name
+    paren_re = re.compile(r'\s*\([^)]*\)\s*')
+    cleaned_parts: list[str] = []
+    pos = 0
+    for pm in paren_re.finditer(name):
+        chunk = name[pos:pm.start()]
+        cleaned_parts.append(chunk)
+        inner = pm.group(0)
+        if re.search(VENDOR_REGEX, inner, re.IGNORECASE) is None:
+            cleaned_parts.append(inner)
+        pos = pm.end()
+    cleaned_parts.append(name[pos:])
+    body = ''.join(cleaned_parts).strip(' -·:|')
+    if not body:
+        body = name
+    return f'{vendor} · {body}'
+
+
 class AudioPickerDialog(QDialog):
     """Modal device picker. Two-line rows, dedup-by-name with an
     expandable host-API sublist. Vendor regex ranks external interfaces
@@ -1912,9 +1976,16 @@ class AudioPickerDialog(QDialog):
             badge = f'  ◀ {self._t("audio_picker_current")}'
         elif len(members) > 1:
             badge = f'  ▸ {self._t("audio_picker_apis_more", n=len(members))}'
-        text = f'{primary.name}{badge}\n    {meta}'
+        # v0.5.7: if a vendor brand appears mid-string in the Windows
+        # device name (e.g. "Headset (FIIO DSP Audio)"), promote the
+        # brand to the front of the row label so saxophone players can
+        # scan by brand instead of by Windows device-naming convention.
+        # The full original name remains in the row's tooltip.
+        display_name = _promote_vendor_prefix(primary.name)
+        text = f'{display_name}{badge}\n    {meta}'
         it = QListWidgetItem(text)
         it.setData(Qt.ItemDataRole.UserRole, primary)
+        it.setToolTip(primary.name)
         self._list.addItem(it)
         if is_current:
             self._list.setCurrentItem(it)
@@ -2155,6 +2226,11 @@ class MainWindow(QMainWindow):
             saved = self._device_selection_from_cfg()
             pref = str(getattr(self._cfg, 'audio_samplerate_pref',
                                 'auto') or 'auto')
+            # v0.5.7: the engine needs the saved (name, host_api) so its
+            # hot-plug poller and retry_open path can re-resolve the
+            # user's preferred device against a fresh device list
+            # without round-tripping through MainWindow.
+            self._engine.set_preferred_hint(saved)
             self._engine.start(preferred=saved, samplerate_pref=pref)
 
         # Hot-plug poller: 1 Hz per Legolas's measurements (cached
@@ -2269,33 +2345,14 @@ class MainWindow(QMainWindow):
         """)
         il.addWidget(self._nick_edit)
 
-        # "Filter to instrument range" toggle. Off (default) = every played
-        # note is recorded; the instrument range is just a display guide.
-        # On = audio callback drops notes outside the nominal range. The
-        # internal flag is still `allow_out_of_range` (back-compat with
-        # saved configs); the checkbox shows the inverse.
-        self._cb_oor = QCheckBox(self._t('allow_oor'))
-        self._cb_oor.setChecked(not self._cfg.allow_out_of_range)
-        self._cb_oor.setToolTip(self._t('allow_oor_tip'))
-        self._cb_oor.setStyleSheet("""
-            QCheckBox { color: #bbb; font-size: 12px; padding: 2px 4px; }
-            QCheckBox::indicator { width: 14px; height: 14px; }
-        """)
-        self._cb_oor.toggled.connect(self._on_oor_toggled)
-        il.addWidget(self._cb_oor)
-
-        # "Show spectrogram & diagnostics" toggle — reveals the live FFT
-        # waterfall and the diagnostics readout in the left pane. Off by
-        # default so the casual tuner view stays uncluttered.
-        self._cb_diag = QCheckBox(self._t('show_diagnostics'))
-        self._cb_diag.setChecked(bool(getattr(self._cfg, 'show_diagnostics', False)))
-        self._cb_diag.setToolTip(self._t('show_diagnostics_tip'))
-        self._cb_diag.setStyleSheet("""
-            QCheckBox { color: #bbb; font-size: 12px; padding: 2px 4px; }
-            QCheckBox::indicator { width: 14px; height: 14px; }
-        """)
-        self._cb_diag.toggled.connect(self._on_diagnostics_toggled)
-        il.addWidget(self._cb_diag)
+        # v0.5.7: the "Filter to instrument range" checkbox lives
+        # alongside the min-N spinbox under the table (both gate what
+        # the table shows). The "Show spectrum analyzer & diagnostics"
+        # checkbox lives in a footer under the TunerWidget (next to
+        # the widgets it controls). The checkboxes themselves are
+        # constructed below in _build_ui after the splitter, with the
+        # same handlers + persistence — the only thing that changed
+        # is the parent layout.
 
         # Select the saxophone family + the default alto instrument.
         self._select_family_for_instrument(self.instrument)
@@ -2443,6 +2500,25 @@ class MainWindow(QMainWindow):
         self._status_lbl.setStyleSheet('color:#888;font-size:13px;padding:4px;')
         ll3.addWidget(self._status_lbl)
 
+        # v0.5.7: "Show spectrum analyzer & diagnostics" footer row.
+        # Lives directly below the tuner so the toggle is adjacent to
+        # the widgets it controls. Same handler, same persistence as
+        # the old toolbar-resident checkbox — only the parent moved.
+        diag_footer = QHBoxLayout()
+        diag_footer.setContentsMargins(4, 0, 4, 0)
+        self._cb_diag = QCheckBox(self._t('show_diagnostics'))
+        self._cb_diag.setChecked(
+            bool(getattr(self._cfg, 'show_diagnostics', False)))
+        self._cb_diag.setToolTip(self._t('show_diagnostics_tip'))
+        self._cb_diag.setStyleSheet("""
+            QCheckBox { color: #bbb; font-size: 12px; padding: 2px 4px; }
+            QCheckBox::indicator { width: 14px; height: 14px; }
+        """)
+        self._cb_diag.toggled.connect(self._on_diagnostics_toggled)
+        diag_footer.addWidget(self._cb_diag)
+        diag_footer.addStretch()
+        ll3.addLayout(diag_footer)
+
         # Spectrum analyzer + diagnostics panels. Always constructed so
         # the toggle is just show/hide — keeps the timer threading
         # consistent and avoids reconstruction cost when flipped
@@ -2522,6 +2598,22 @@ class MainWindow(QMainWindow):
         self._min_n_spin.valueChanged.connect(self._on_min_n_changed)
         min_n_row.addWidget(self._min_n_lbl)
         min_n_row.addWidget(self._min_n_spin)
+        # v0.5.7: "Filter to instrument range" checkbox lives in this
+        # row alongside the min-N spinbox. Both controls gate what the
+        # table shows; co-locating them lets the user adjust scope in
+        # one place instead of hunting in the top toolbar. UI logic
+        # preserved verbatim: checked = filter ON, unchecked = show all
+        # (stored as the inverted cfg.allow_out_of_range).
+        self._cb_oor = QCheckBox(self._t('allow_oor'))
+        self._cb_oor.setChecked(not self._cfg.allow_out_of_range)
+        self._cb_oor.setToolTip(self._t('allow_oor_tip'))
+        self._cb_oor.setStyleSheet("""
+            QCheckBox { color: #bbb; font-size: 12px; padding: 2px 4px; }
+            QCheckBox::indicator { width: 14px; height: 14px; }
+        """)
+        self._cb_oor.toggled.connect(self._on_oor_toggled)
+        min_n_row.addSpacing(16)
+        min_n_row.addWidget(self._cb_oor)
         min_n_row.addStretch()
         rl.addLayout(min_n_row)
 
@@ -2633,6 +2725,11 @@ class MainWindow(QMainWindow):
         if hasattr(self, '_min_n_lbl'):
             self._min_n_lbl.setText(self._t('min_n_label'))
             self._min_n_spin.setToolTip(self._t('min_n_tip'))
+        # v0.5.7: "Filter to instrument range" checkbox relocated next
+        # to the min-N spinbox; same retranslate behaviour as before.
+        if hasattr(self, '_cb_oor'):
+            self._cb_oor.setText(self._t('allow_oor'))
+            self._cb_oor.setToolTip(self._t('allow_oor_tip'))
 
         # Buttons
         self._btn_autotune.setText(self._t('btn_autotune'))
@@ -3179,6 +3276,13 @@ class MainWindow(QMainWindow):
         self._cfg.audio_device_host_api = dev.host_api
         self._cfg.audio_device_samplerate = int(self._engine.samplerate or 0)
         sax_config.save_config(self._cfg)
+        # v0.5.7: keep the engine's hot-plug auto-recovery hint in sync
+        # with whatever's actually active. Otherwise the user picks a
+        # new device, unplugs it, plugs it back in, and the engine
+        # still resolves the stale launch-time hint.
+        self._engine.set_preferred_hint(DeviceSelection(
+            name=dev.name, host_api=dev.host_api,
+            samplerate=int(self._engine.samplerate or 0)))
 
     def _open_audio_picker(self) -> None:
         if not AUDIO_OK:
@@ -3199,7 +3303,11 @@ class MainWindow(QMainWindow):
     def _retry_audio(self) -> None:
         if not AUDIO_OK:
             return
-        self._engine.retry()
+        # v0.5.7: force a fresh PortAudio enumeration before re-opening
+        # so a device plugged in after launch can be picked up. The old
+        # ``engine.retry()`` reused the stale snapshot and never saw
+        # the hot-plugged device.
+        self._engine.retry_open()
 
     def _poll_devices(self) -> None:
         if not AUDIO_OK:

@@ -37,6 +37,7 @@ Threading contract:
 
 from __future__ import annotations
 
+import datetime
 import math
 import sys
 import threading
@@ -108,10 +109,17 @@ WIN_HOST_API_ORDER = ('Windows WASAPI', 'MME', 'Windows DirectSound')
 WIN_HOST_API_ORDER_WITH_KS = WIN_HOST_API_ORDER + ('Windows WDM-KS',)
 
 # Vendor regex for ranking external interfaces in the picker.
+# v0.5.7: extended with brands a user reported missing (FiiO) plus the
+# rest of the common pro/prosumer interface vendors. The ``(?! call)``
+# lookahead avoids boosting the Windows "Zoom Video Communications"
+# device when that's been installed alongside the Zoom Corp recorder.
 VENDOR_REGEX = (
-    r'focusrite|scarlett|motu|apollo|universal audio|behringer|umc|'
-    r'audient|evo|presonus|rme|babyface|steinberg|ur\d|tascam|zoom|'
-    r'm-audio|m audio'
+    r'focusrite|scarlett|motu|apollo|universal audio|uad|behringer|umc|'
+    r'audient|evo|presonus|rme|babyface|steinberg|ur\d|tascam|'
+    r'zoom(?! call)|'
+    r'm-audio|m audio|'
+    r'fiio|apogee|roland|native instruments|\bni\b|\bssl\b|'
+    r'antelope|ik multimedia'
 )
 
 
@@ -357,6 +365,16 @@ class AudioEngine:
 
         # Hot-plug snapshot.
         self._last_device_snapshot: tuple = ()
+        # Wall-clock timestamp of the most recent refresh_devices() tick.
+        # Diagnostics panel renders this so the user can confirm the
+        # poller is alive when a hot-plugged device fails to recover.
+        # None until the first poll fires.
+        self.last_devices_refresh_at: Optional[datetime.datetime] = None
+        # Persisted (name, host_api) hint for hot-plug auto-recovery.
+        # Set by the GUI right after load_config so refresh_devices() can
+        # resolve "the device the user picked last session" against the
+        # current device list, which holds rotated PortAudio indices.
+        self._preferred_hint: Optional[DeviceSelection] = None
         # Range gate: see SAX_MIDI from the GUI module. Mirrored here so
         # the engine can drop MIDI values outside the supported range
         # without round-tripping to Qt.
@@ -524,6 +542,85 @@ class AudioEngine:
             )
         self.start(preferred=prev, samplerate_pref=self.samplerate_pref)
 
+    def set_preferred_hint(self, sel: Optional[DeviceSelection]) -> None:
+        """Stash the persisted (name, host_api) so refresh_devices() can
+        try to auto-recover when a hot-plug introduces a device matching
+        the user's saved selection. No-op if ``sel`` is falsy."""
+        if sel and sel.name:
+            self._preferred_hint = sel
+        else:
+            self._preferred_hint = None
+
+    def retry_open(self) -> None:
+        """Force a fresh PortAudio enumeration and re-resolve the
+        persisted device selection against it before re-opening.
+
+        v0.5.7 fix: the previous ``retry()`` path inherited the engine's
+        stale snapshot and could not recover when a device was plugged
+        in after launch — the saved index was wrong and the saved
+        ``(name, host_api)`` was never re-resolved against the fresh
+        device list. ``retry_open`` always re-enumerates first.
+
+        Resolution order:
+          1. Persisted preferred-hint matched by (name, host_api) in the
+             fresh list.
+          2. Whatever was active before, if it's still present.
+          3. PortAudio's default input device.
+
+        On failure, transitions to FAILED with a clear message
+        (``NO_DEVICE`` + "Pinned device not present" when the saved
+        selection isn't in the fresh list)."""
+        if not AUDIO_OK:
+            self._set_state(AudioEngineState.FAILED,
+                            AudioEngineError.NO_DEVICE,
+                            'sounddevice / PortAudio not available')
+            return
+        if self._transitioning:
+            return
+        # Force re-enumeration; do NOT trust the cached snapshot.
+        devices = query_input_devices()
+        self.last_devices_refresh_at = datetime.datetime.now()
+        self._last_device_snapshot = self._snapshot_key(devices)
+        if self.signals is not None:
+            try:
+                self.signals.devices_changed.emit(devices)
+            except Exception:
+                pass
+        if not devices:
+            self._set_state(AudioEngineState.FAILED,
+                            AudioEngineError.NO_DEVICE,
+                            'No audio input devices detected')
+            return
+        # Pick a selection candidate. Always re-resolve by (name,
+        # host_api) — never reuse a stored PortAudio index.
+        sel: Optional[DeviceSelection] = None
+        hint = self._preferred_hint
+        if hint and hint.name:
+            for d in devices:
+                if (d.name == hint.name
+                        and (not hint.host_api
+                             or d.host_api == hint.host_api)):
+                    sel = DeviceSelection(
+                        name=d.name, host_api=d.host_api, samplerate=0)
+                    break
+            if sel is None:
+                # Hint device isn't in the fresh list — surface that
+                # instead of silently falling back to a default.
+                self._set_state(
+                    AudioEngineState.FAILED,
+                    AudioEngineError.NO_DEVICE,
+                    f'Pinned device not present: {hint.name}')
+                return
+        elif self.active_device is not None:
+            sel = DeviceSelection(
+                name=self.active_device.name,
+                host_api=self.active_device.host_api,
+                samplerate=0)
+        # Reopen with the fresh resolution. open_device handles teardown
+        # and state transitions internally.
+        self.open_device(sel) if sel else self.start(
+            preferred=None, samplerate_pref=self.samplerate_pref)
+
     def stop(self) -> None:
         """Tear down the stream cleanly. Never raises."""
         self._teardown_stream()
@@ -533,9 +630,12 @@ class AudioEngine:
         """Poll the device list. Emits ``devices_changed`` on a diff.
 
         If the active device vanished while RUNNING, transitions to
-        FAILED(DEVICE_DISCONNECTED). If we're in FAILED(NO_DEVICE) and a
-        device just appeared, the GUI's responsibility (we don't auto-
-        retry to avoid step-on-toes with the user's banner click).
+        FAILED(DEVICE_DISCONNECTED). v0.5.7: if we're in
+        FAILED(NO_DEVICE) or FAILED(DEVICE_DISCONNECTED) and a NEW
+        input device appears, automatically attempt to open it. The
+        previous behaviour required the user to click Retry; this hid
+        the recovery from anyone who plugged in an interface after
+        launch and assumed it would just work.
 
         Hot-plug toast for vendor-class interfaces is emitted via
         ``interface_appeared`` when applicable.
@@ -546,6 +646,10 @@ class AudioEngine:
             # Don't race the open path.
             return []
         devices = query_input_devices()
+        # Always advance the refresh timestamp — the diagnostics row
+        # uses it to prove the poller is still running even when the
+        # device list happens not to have changed.
+        self.last_devices_refresh_at = datetime.datetime.now()
         key = self._snapshot_key(devices)
         if key == self._last_device_snapshot:
             return devices
@@ -579,7 +683,60 @@ class AudioEngine:
                     except Exception:
                         pass
                     break
+        # Hot-plug auto-recovery from FAILED(NO_DEVICE) /
+        # FAILED(DEVICE_DISCONNECTED). Only fires when at least one
+        # NEW input-capable device appeared; we don't re-attempt on
+        # spurious diffs (renames, device-default changes).
+        if (self.state == AudioEngineState.FAILED
+                and self.last_error in (AudioEngineError.NO_DEVICE,
+                                        AudioEngineError.DEVICE_DISCONNECTED)
+                and appeared and devices):
+            self._auto_recover_after_hotplug(devices)
         return devices
+
+    def _auto_recover_after_hotplug(
+            self, devices: list[DeviceInfo]) -> None:
+        """Pick a device from the fresh list and try to open it.
+
+        Priority: persisted preferred hint (matched on name + host_api),
+        then highest-ranked vendor-regex device, then PortAudio's
+        default input device. Quiet if nothing opens — stays in
+        FAILED so the banner remains visible."""
+        sel: Optional[DeviceSelection] = None
+        hint = self._preferred_hint
+        if hint and hint.name:
+            for d in devices:
+                if (d.name == hint.name
+                        and (not hint.host_api
+                             or d.host_api == hint.host_api)):
+                    sel = DeviceSelection(
+                        name=d.name, host_api=d.host_api, samplerate=0)
+                    break
+        if sel is None:
+            import re
+            vendor = re.compile(VENDOR_REGEX, re.IGNORECASE)
+            best: Optional[DeviceInfo] = None
+            for d in devices:
+                if vendor.search(d.name):
+                    if (best is None
+                            or d.default_samplerate > best.default_samplerate):
+                        best = d
+            if best is not None:
+                sel = DeviceSelection(
+                    name=best.name, host_api=best.host_api, samplerate=0)
+        if sel is None:
+            di = _probe_default_input_index()
+            if di is not None:
+                for d in devices:
+                    if d.index == di:
+                        sel = DeviceSelection(
+                            name=d.name, host_api=d.host_api, samplerate=0)
+                        break
+        if sel is None:
+            return
+        # open_device handles its own transitioning guard, teardown,
+        # and FAILED/RUNNING transitions.
+        self.open_device(sel)
 
     # ---- internals --------------------------------------------------------
     @staticmethod
