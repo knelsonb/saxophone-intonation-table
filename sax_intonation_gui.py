@@ -49,7 +49,7 @@ from sax_instruments import (
 import sax_config
 
 APP_NAME = 'Intonation Analyzer'
-APP_VERSION = '0.5.0'
+APP_VERSION = '0.5.1'
 
 
 # =============================================================================
@@ -71,6 +71,13 @@ STRINGS = {
         'layout_matrix':    'Raster',
         'allow_oor_tip':    'Aktiviert: Töne au\u00dferhalb des Instrumentenumfangs werden ignoriert.\nDeaktiviert (Standard): Jeder gespielte Ton wird aufgezeichnet; der Umfang dient nur als Anzeigehilfe.',
         'nickname_tip':     'Spitzname (z.B. "Tenor #1")',
+        'grp_filter':       'Reaktion',
+        'filter_fast':      'Schnell',
+        'filter_normal':    'Normal',
+        'filter_slow':      'Langsam',
+        'filter_tip':       'Tonhöhen-Filter.\nSchnell: minimale Glättung, reaktionsfreudige Anzeige.\nNormal (Standard): ausgewogen.\nLangsam: starke Glättung, ideal für lange Töne und Stimmanalyse.',
+        'min_n_label':      'Mindest-Messungen pro Ton:',
+        'min_n_tip':        'Töne mit weniger als dieser Anzahl Messungen werden ausgeblendet.\nVerhindert, dass kurze Versehen die Tabelle füllen.',
         'custom_label':     '+  Eigenes …',
         'custom_dlg_title': 'Eigenes Instrument',
         'custom_dlg_info':  ('Ein eigenes Instrument hinzufügen. Die Transposition '
@@ -263,6 +270,13 @@ STRINGS = {
         'layout_matrix':    'Grid',
         'allow_oor_tip':    'Off (default): every played note is recorded; the instrument range is shown only as a display guide.\nOn: notes outside the instrument range are ignored.',
         'nickname_tip':     'Nickname (e.g. "Tenor #1")',
+        'grp_filter':       'Response',
+        'filter_fast':      'Fast',
+        'filter_normal':    'Normal',
+        'filter_slow':      'Slow',
+        'filter_tip':       'Pitch-detection smoothing.\nFast: minimal smoothing, snappy tuner.\nNormal (default): balanced.\nSlow: heavy smoothing, ideal for long tones and tuning analysis.\nAll modes truncate attack and release transients.',
+        'min_n_label':      'Min measurements per note:',
+        'min_n_tip':        'Notes with fewer than this many measurements are hidden.\nKeeps brief slips out of the analysis.',
         'custom_label':     '+  Custom …',
         'custom_dlg_title': 'Custom instrument',
         'custom_dlg_info':  ('Add a custom instrument. Transposition is the '
@@ -441,6 +455,22 @@ MIN_FREQ      = 27.0   # C1 – tiefstes Bass-Sax-Fundament mit Sicherheitspuffe
 MAX_FREQ      = 1400.0
 YIN_THRESHOLD = 0.12   # etwas strenger für sauberere Erkennung tiefer Töne
 A4_DEFAULT    = 440.0
+HOP_MS        = 1000.0 * HOP_SIZE / SAMPLE_RATE   # ~46 ms
+
+# Filter-mode presets. Each callback fires every HOP_MS (~46 ms), so
+# `confirm` and `edge_hops` are quantized to that grid.
+#   window     — how many recent detections to keep for confirmation/median
+#   confirm    — required matching-MIDI detections in the window to lock a note
+#   yin_thr    — YIN aperiodicity ceiling (lower = stricter, rejects noise)
+#   rms_floor  — RMS gate below which the frame is treated as silence
+#   edge_hops  — attack/release transient guard (in hops). The first and
+#                last edge_hops detections of a held note are suppressed.
+_FILTER_PRESETS = {
+    'fast':   dict(window=2, confirm=2, yin_thr=0.16, rms_floor=8e-5,  edge_hops=1),
+    'normal': dict(window=4, confirm=3, yin_thr=0.11, rms_floor=1.5e-4, edge_hops=1),
+    'slow':   dict(window=7, confirm=5, yin_thr=0.08, rms_floor=3e-4,  edge_hops=2),
+}
+FILTER_MODE_DEFAULT = 'normal'
 
 CHROMA = ['C', 'C#/Db', 'D', 'D#/Eb', 'E', 'F',
           'F#/Gb', 'G', 'G#/Ab', 'A', 'A#/Bb', 'B']
@@ -534,39 +564,166 @@ class AudioSignals(QObject):
     note_detected = pyqtSignal(int, float, float)
 
 class AudioEngine:
+    """Pitch detection + filtering.
+
+    The raw YIN result is noisy: a single ~46 ms hop can hit a partial,
+    misread an attack transient, or latch onto background noise. The
+    engine sits on top of YIN and applies four layers of cleanup before
+    emitting a measurement, all driven by the active filter preset
+    (`fast` / `normal` / `slow`):
+
+    1. RMS gate — frames below `rms_floor` are silence, not pitch.
+    2. YIN aperiodicity gate — frames with `ap > yin_thr` are noise.
+    3. Confirmation window — the new MIDI note must repeat at least
+       `confirm` times within the last `window` valid frames before a
+       new pitch is locked in. This kills octave-flip glitches and
+       transient mis-detections.
+    4. Edge truncation — the first `edge_hops` and last `edge_hops`
+       valid frames of a held note are suppressed. Attack chiff and
+       release pitch-drop don't reach the log. The release is
+       implemented as a one-hop lookahead: each emit is held back by
+       one frame, and the held value is dropped if the *next* frame
+       turns out to be silence or a different note.
+
+    The value finally emitted is the median frequency over the
+    confirmation window of the same MIDI — so the live tuner display
+    sits still instead of flickering even within one note.
+    """
+
     def __init__(self):
         self.signals    = AudioSignals()
         self._buf       = np.zeros(BLOCK_SIZE, dtype=np.float32)
         self._stream    = None
         self.a4         = A4_DEFAULT
         self.instr_key  = 'eb_alto'   # aktuell ausgewähltes Instrument
+        self.filter_mode = FILTER_MODE_DEFAULT
+        self._reset_filter_state()
+
+    def _reset_filter_state(self) -> None:
+        # `_recent` holds (midi, freq) for the last few VALID detections,
+        # newest at the end. `_locked_midi` is the MIDI we've confirmed as
+        # the active note; `_hop_in_note` counts how many valid frames
+        # we've spent on it. `_pending` is the one-frame lookahead buffer:
+        # (midi, freq, cents) waiting one hop before being emitted, so we
+        # can retroactively drop the last `edge_hops` frames of a note.
+        self._recent: list[tuple[int, float]] = []
+        self._locked_midi: int | None = None
+        self._hop_in_note: int = 0
+        self._pending: list[tuple[int, float, float]] = []
+
+    def set_filter_mode(self, mode: str) -> None:
+        if mode not in _FILTER_PRESETS:
+            return
+        self.filter_mode = mode
+        self._reset_filter_state()
+
+    def _drop_pending_for_edge(self, params: dict) -> None:
+        """Discard the last `edge_hops` of pending emissions on release."""
+        keep = max(0, len(self._pending) - params['edge_hops'])
+        self._pending = self._pending[:keep]
+
+    def _emit_one(self) -> None:
+        """Flush one frame from `_pending` to the signal."""
+        if not self._pending:
+            return
+        midi, freq, cents = self._pending.pop(0)
+        self.signals.note_detected.emit(int(midi), float(freq), float(cents))
 
     def start(self, device=None):
         if not AUDIO_OK:
             return
+
         def cb(indata, frames, ti, st):
             mono = indata[:, 0]
             self._buf = np.roll(self._buf, -frames)
             self._buf[-frames:] = mono
+
+            params = _FILTER_PRESETS[self.filter_mode]
             rms = math.sqrt(float(np.mean(self._buf**2)))
-            if rms < 5e-5:   # etwas empfindlicher für tiefe Töne
+
+            # Layer 1 + 2: silence + noise rejection. On a "silent" or
+            # noisy frame, the held note has ended. Drop the lookahead
+            # tail (release truncation) and reset the locked state.
+            if rms < params['rms_floor']:
+                self._on_silence(params)
                 return
             sig = self._buf / (rms + 1e-9)
             freq, ap = yin_pitch(sig)
-            if ap > YIN_THRESHOLD or not (MIN_FREQ < freq < MAX_FREQ):
+            if ap > params['yin_thr'] or not (MIN_FREQ < freq < MAX_FREQ):
+                self._on_silence(params)
                 return
             mr, ct = cents_dev(freq, self.a4)
-            if mr in SAX_MIDI:
-                self.signals.note_detected.emit(int(mr), freq, ct)
+            if mr not in SAX_MIDI:
+                self._on_silence(params)
+                return
+
+            # Push the valid frame into the confirmation window.
+            self._recent.append((int(mr), float(freq)))
+            if len(self._recent) > params['window']:
+                self._recent.pop(0)
+
+            # Layer 3: confirmation. The latest MIDI must repeat at
+            # least `confirm` times in the window before we treat the
+            # note as locked. Otherwise this is still in attack/glitch
+            # territory and we hold off entirely.
+            latest_midi = self._recent[-1][0]
+            matches = sum(1 for m, _f in self._recent if m == latest_midi)
+            if matches < params['confirm']:
+                return
+
+            if self._locked_midi != latest_midi:
+                # New note locked. Treat any unflushed lookahead from the
+                # previous note as release-edge material and drop it.
+                self._drop_pending_for_edge(params)
+                # Flush whatever still survives the edge cut.
+                while self._pending:
+                    self._emit_one()
+                self._locked_midi = latest_midi
+                self._hop_in_note = 0
+
+            self._hop_in_note += 1
+            # Layer 4a: attack truncation. Suppress the first
+            # `edge_hops` valid frames of a fresh note.
+            if self._hop_in_note <= params['edge_hops']:
+                return
+
+            # Compute the smoothed value: median freq across the window
+            # entries that share the locked MIDI. Recompute cents from
+            # the median so what the tuner shows matches what gets
+            # logged, and neither floats with single-frame noise.
+            same = [f for m, f in self._recent if m == latest_midi]
+            median_freq = float(np.median(same))
+            _mr2, median_cents = cents_dev(median_freq, self.a4)
+
+            # Layer 4b: release truncation via one-frame lookahead.
+            # Queue this frame in `_pending`. If the NEXT frame turns
+            # out to be silence or a different note, the queued entries
+            # get dropped by `_drop_pending_for_edge`. Otherwise the
+            # oldest queued entry is flushed now.
+            self._pending.append((latest_midi, median_freq, median_cents))
+            if len(self._pending) > params['edge_hops']:
+                self._emit_one()
+
         self._stream = sd.InputStream(
             samplerate=SAMPLE_RATE, blocksize=HOP_SIZE,
             channels=1, dtype='float32', callback=cb, device=device)
         self._stream.start()
 
+    def _on_silence(self, params: dict) -> None:
+        """Frame is silent or noise. End any held note cleanly."""
+        if self._locked_midi is not None or self._pending or self._recent:
+            self._drop_pending_for_edge(params)
+            while self._pending:
+                self._emit_one()
+        self._recent.clear()
+        self._locked_midi = None
+        self._hop_in_note = 0
+
     def stop(self):
         if self._stream:
             self._stream.stop()
             self._stream.close()
+        self._reset_filter_state()
 
 
 # =============================================================================
@@ -963,6 +1120,8 @@ class MainWindow(QMainWindow):
         _rebuild_transp_map()
 
         self._engine = AudioEngine()
+        self._engine.set_filter_mode(
+            getattr(self._cfg, 'filter_mode', FILTER_MODE_DEFAULT))
         # Persistence comes from config (welcome dialog), with the env var
         # SAX_INTONATION_LOG_PATH as a power-user override that always wins.
         env_path = os.environ.get('SAX_INTONATION_LOG_PATH')
@@ -1119,6 +1278,27 @@ class MainWindow(QMainWindow):
         self._a4_combo.currentIndexChanged.connect(self._on_a4_changed)
         al.addWidget(self._a4_combo)
 
+        # Response: pitch-detection smoothing preset. Mirrors a guitar-
+        # tuner "Fast/Normal/Slow" toggle. Routed straight into the
+        # engine; persisted in cfg.filter_mode.
+        self._grp_filter = QGroupBox(self._t('grp_filter'))
+        fl = QHBoxLayout(self._grp_filter)
+        fl.setContentsMargins(8, 4, 8, 4)
+        self._filter_combo = QComboBox()
+        self._filter_combo.addItem(self._t('filter_fast'),   'fast')
+        self._filter_combo.addItem(self._t('filter_normal'), 'normal')
+        self._filter_combo.addItem(self._t('filter_slow'),   'slow')
+        cur_mode = getattr(self._cfg, 'filter_mode', FILTER_MODE_DEFAULT)
+        for i in range(self._filter_combo.count()):
+            if self._filter_combo.itemData(i) == cur_mode:
+                self._filter_combo.setCurrentIndex(i)
+                break
+        self._filter_combo.setToolTip(self._t('filter_tip'))
+        self._filter_combo.currentIndexChanged.connect(
+            self._on_filter_mode_changed)
+        self._filter_combo.setMinimumWidth(100)
+        fl.addWidget(self._filter_combo)
+
         # Sprache
         self._grp_lang = QGroupBox(self._t('grp_language'))
         ll2 = QHBoxLayout(self._grp_lang)
@@ -1144,6 +1324,7 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(self._grp_instr)
         toolbar.addWidget(self._grp_disp)
         toolbar.addWidget(self._grp_a4)
+        toolbar.addWidget(self._grp_filter)
         toolbar.addWidget(self._grp_lang)
         toolbar.addWidget(self._btn_import)
         toolbar.addStretch()
@@ -1205,6 +1386,28 @@ class MainWindow(QMainWindow):
         self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._table.customContextMenuRequested.connect(self._on_table_context_menu)
 
+        # Min-N filter under the table: hide notes with fewer measurements
+        # than the threshold so single accidental blips don't pollute the
+        # view. Default 5 = "actually held". Mirrors the autotune
+        # min-n requirement.
+        min_n_row = QHBoxLayout()
+        min_n_row.setContentsMargins(0, 6, 0, 0)
+        self._min_n_lbl = QLabel(self._t('min_n_label'))
+        self._min_n_lbl.setStyleSheet('color:#aaa;font-size:12px;')
+        self._min_n_spin = QSpinBox()
+        self._min_n_spin.setRange(0, 999)
+        self._min_n_spin.setValue(int(getattr(self._cfg, 'min_n_visible', 5)))
+        self._min_n_spin.setToolTip(self._t('min_n_tip'))
+        self._min_n_spin.setMinimumWidth(70)
+        self._min_n_spin.setStyleSheet(
+            'QSpinBox{background:#1e1e2e;color:#ddd;border:1px solid #444;'
+            'border-radius:5px;padding:2px 6px;font-size:12px;}')
+        self._min_n_spin.valueChanged.connect(self._on_min_n_changed)
+        min_n_row.addWidget(self._min_n_lbl)
+        min_n_row.addWidget(self._min_n_spin)
+        min_n_row.addStretch()
+        rl.addLayout(min_n_row)
+
         splitter.addWidget(left)
         splitter.addWidget(right)
         splitter.setSizes([420, 620])
@@ -1254,6 +1457,7 @@ class MainWindow(QMainWindow):
         self._grp_instr.setTitle(self._t('grp_instrument'))
         self._grp_disp.setTitle(self._t('grp_display'))
         self._grp_a4.setTitle(self._t('grp_a4'))
+        self._grp_filter.setTitle(self._t('grp_filter'))
         self._grp_lang.setTitle(self._t('grp_language'))
 
         # Family + sub-instrument combos re-populated in current language.
@@ -1290,6 +1494,24 @@ class MainWindow(QMainWindow):
                     self._layout_combo.setCurrentIndex(i)
                     break
             self._layout_combo.blockSignals(False)
+
+        # Filter-mode combo — re-label Fast/Normal/Slow.
+        if hasattr(self, '_filter_combo'):
+            cur = self._filter_combo.currentData()
+            self._filter_combo.blockSignals(True)
+            self._filter_combo.clear()
+            self._filter_combo.addItem(self._t('filter_fast'),   'fast')
+            self._filter_combo.addItem(self._t('filter_normal'), 'normal')
+            self._filter_combo.addItem(self._t('filter_slow'),   'slow')
+            for i in range(self._filter_combo.count()):
+                if self._filter_combo.itemData(i) == cur:
+                    self._filter_combo.setCurrentIndex(i)
+                    break
+            self._filter_combo.setToolTip(self._t('filter_tip'))
+            self._filter_combo.blockSignals(False)
+        if hasattr(self, '_min_n_lbl'):
+            self._min_n_lbl.setText(self._t('min_n_label'))
+            self._min_n_spin.setToolTip(self._t('min_n_tip'))
 
         # Buttons
         self._btn_autotune.setText(self._t('btn_autotune'))
@@ -1509,7 +1731,14 @@ class MainWindow(QMainWindow):
                     self._t('col_n'), self._t('col_tendency')])
 
         with self._lock:
-            items = sorted(self.stats.items())
+            raw_items = sorted(self.stats.items())
+
+        # Min-N filter: rows with 1..min_n-1 measurements are below
+        # threshold and hidden as noise. N=0 seeded blanks still show so
+        # the instrument range stays visible as a guide.
+        min_n = max(0, int(getattr(self._cfg, 'min_n_visible', 0)))
+        items = [(m, s) for (m, s) in raw_items
+                 if s.n == 0 or s.n >= min_n]
 
         self._table.setRowCount(len(items))
         played_n = 0
@@ -1603,7 +1832,14 @@ class MainWindow(QMainWindow):
                     in_range_cells += 1
 
                 st = stats_by_midi.get(midi_sounding)
-                has_data = st is not None and st.n > 0
+                # Apply min-N gate so single-blip cells don't render with
+                # arbitrary cents readings. Same rule as single-column:
+                # a cell with 1..min_n-1 hits is treated as if it has no
+                # data yet.
+                min_n = max(0, int(
+                    getattr(self._cfg, 'min_n_visible', 0)))
+                has_data = (st is not None and st.n > 0
+                            and st.n >= min_n)
                 if has_data:
                     played_n += 1
                 # MatrixCellDelegate reads this dict and paints all six
@@ -1740,6 +1976,24 @@ class MainWindow(QMainWindow):
             self._cfg.layout_mode_preference = pref
             sax_config.save_config(self._cfg)
             self._refresh_table()
+
+    def _on_filter_mode_changed(self, _idx: int) -> None:
+        """User picked Fast / Normal / Slow. Reroute live audio through
+        the new preset and persist."""
+        mode = self._filter_combo.currentData()
+        if mode in _FILTER_PRESETS:
+            self._cfg.filter_mode = mode
+            sax_config.save_config(self._cfg)
+            if AUDIO_OK:
+                self._engine.set_filter_mode(mode)
+
+    def _on_min_n_changed(self, value: int) -> None:
+        """User adjusted the min-N filter. Persist + redraw the table.
+        The filter is purely a display gate — measurements are still
+        collected; rows just hide until they accumulate enough hits."""
+        self._cfg.min_n_visible = max(0, int(value))
+        sax_config.save_config(self._cfg)
+        self._refresh_table()
 
     def _on_nickname_changed(self) -> None:
         """User finished editing the nickname. Stamp the new label onto the
