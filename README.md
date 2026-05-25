@@ -16,6 +16,8 @@ This program records notes via microphone, detects the pitch in real time, and m
 - Automatic detection of optimal concert pitch from measurement data
 - Export as TXT, PDF and CSV (including manufacturer and model)
 - CSV export with multiple slice modes: raw measurements, per run, per instrument, one instrument averaged across all runs, or overall per-note mean
+- Import a previously-exported raw CSV to resume, compare, or view someone else's session
+- Chart export (PNG): one-click shareable bar chart of mean cents per note with ±1σ whiskers
 - Optional cross-session persistence: set the environment variable `SAX_INTONATION_LOG_PATH` to a file path and every measurement is appended there as JSONL
 - Interface switchable between German and English
 
@@ -196,6 +198,8 @@ Dieses Programm nimmt Töne über das Mikrofon auf, erkennt die Tonhöhe in Echt
 - Automatische Ermittlung des optimalen Kammertons aus den Messdaten
 - Export als TXT, PDF und CSV (mit Hersteller- und Modellangabe)
 - CSV-Export mit verschiedenen Aufteilungen: Rohdaten, pro Lauf, pro Instrument, ein Instrument über alle Läufe gemittelt, oder Gesamtmittel je Ton
+- CSV-Import: eine zuvor exportierte Rohdaten-CSV wieder einlesen, um eine Sitzung fortzusetzen, zu vergleichen oder die Daten von jemand anderem anzusehen
+- Diagramm-Export (PNG): ein-Klick-Balkendiagramm der mittleren Cent-Abweichung pro Ton mit ±1σ-Whiskers, fertig zum Teilen
 - Optionale sitzungsübergreifende Persistenz: Umgebungsvariable `SAX_INTONATION_LOG_PATH` auf einen Pfad setzen, dann werden alle Messungen zusätzlich als JSONL angehängt
 - Oberfläche auf Deutsch und Englisch umschaltbar
 

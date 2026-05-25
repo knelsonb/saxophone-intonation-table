@@ -240,6 +240,91 @@ class MeasurementLog:
         with self._lock:
             return list(self._measurements)
 
+    # -- import -----------------------------------------------------------
+    RAW_CSV_HEADER = (
+        "timestamp", "run_id", "run_started_at", "instrument", "a4_hz",
+        "midi_sounding", "sounding_note", "midi_fingered", "fingered_note",
+        "cents", "freq_hz", "maker", "model",
+    )
+
+    def import_raw_csv(self, path: Path | str) -> tuple[int, int]:
+        """Load a previously-exported `raw` CSV into the log as historical
+        runs. Returns (runs_added, measurements_added).
+
+        Only the `raw` slice mode round-trips — aggregated modes drop the
+        timestamp and per-measurement frequency, so they can't be restored.
+
+        Imported runs become historical (no active-run pointer is touched).
+        Existing `run_id`s in the log are skipped to avoid duplicates from
+        re-importing the same file.
+        """
+        path = Path(path)
+        with path.open("r", encoding="utf-8", newline="") as f:
+            reader = csv.reader(f)
+            try:
+                header = tuple(next(reader))
+            except StopIteration:
+                return (0, 0)
+            if header != self.RAW_CSV_HEADER:
+                raise ValueError(
+                    "CSV header does not match the raw export format. "
+                    f"Expected {self.RAW_CSV_HEADER!r}, got {header!r}.")
+
+            with self._lock:
+                existing_runs = set(self._runs.keys())
+
+            new_runs: dict[str, RunMeta] = {}
+            new_measurements: list[Measurement] = []
+
+            for row in reader:
+                if len(row) != len(self.RAW_CSV_HEADER):
+                    continue
+                (timestamp, run_id, run_started_at, instrument, a4_hz_s,
+                 midi_sounding_s, _sounding, midi_fingered_s, _fingered,
+                 cents_s, freq_s, maker, model) = row
+                if not run_id or run_id in existing_runs:
+                    continue
+                try:
+                    a4_hz = float(a4_hz_s)
+                    midi_sounding = int(midi_sounding_s)
+                    midi_fingered = int(midi_fingered_s)
+                    cents = float(cents_s)
+                    freq_hz = float(freq_s)
+                except ValueError:
+                    continue
+
+                if run_id not in new_runs:
+                    new_runs[run_id] = RunMeta(
+                        run_id=run_id,
+                        started_at=run_started_at or timestamp,
+                        instrument=instrument,
+                        a4_hz=a4_hz,
+                        maker=maker,
+                        model=model,
+                    )
+                new_measurements.append(Measurement(
+                    run_id=run_id,
+                    timestamp=timestamp,
+                    instrument=instrument,
+                    a4_hz=a4_hz,
+                    midi_sounding=midi_sounding,
+                    midi_fingered=midi_fingered,
+                    cents=cents,
+                    freq_hz=freq_hz,
+                ))
+
+        # Persist imported records too, so the user's running log subsumes
+        # imports if persistence is enabled.
+        with self._lock:
+            for run in new_runs.values():
+                self._runs[run.run_id] = run
+            self._measurements.extend(new_measurements)
+        for run in new_runs.values():
+            self._append_line(run.to_jsonl())
+        for m in new_measurements:
+            self._append_line(m.to_jsonl())
+        return (len(new_runs), len(new_measurements))
+
     # -- export -----------------------------------------------------------
     SLICE_MODES = (
         "raw",                    # one row per measurement

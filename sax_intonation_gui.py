@@ -35,6 +35,7 @@ from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QRectF, QPointF
 from PyQt6.QtGui import QPainter, QColor, QFont, QPen
 
 from sax_intonation_log import MeasurementLog
+from sax_intonation_chart import render_intonation_chart
 
 
 # =============================================================================
@@ -67,6 +68,22 @@ STRINGS = {
         'btn_txt':      '\u2b07  Export TXT',
         'btn_pdf':      '\u2b07  Export PDF',
         'btn_csv':      '\u2b07  Export CSV',
+        'btn_chart':    '\ud83d\uddbc  Diagramm (PNG)',
+        'btn_import':   '\u2b06  CSV importieren',
+        # CSV-Import
+        'csv_import_title':   'CSV importieren',
+        'csv_import_saved':   '{runs} L\u00e4ufe und {meas} Messungen importiert.',
+        'csv_import_empty':   'Keine neuen Datens\u00e4tze importiert (vielleicht bereits geladen?).',
+        'csv_import_badhdr':  'Diese CSV stammt nicht aus dem Rohdaten-Export.',
+        # Diagramm
+        'chart_save_title':   'Diagramm speichern',
+        'chart_filter':       'PNG-Bilder (*.png)',
+        'chart_saved':        'Diagramm gespeichert:\n{path}',
+        'chart_no_data':      'Keine Messdaten zum Darstellen.',
+        'chart_title':        'Intonationsanalyse',
+        'chart_subtitle':     '{instr}  \u00b7  A = {a4:.0f} Hz  \u00b7  {dt}',
+        'chart_subtitle_id':  '{instr}  \u00b7  {maker} {model}  \u00b7  A = {a4:.0f} Hz  \u00b7  {dt}',
+        'chart_footer':       '{notes} T\u00f6ne, {total} Messungen gesamt  \u00b7  Balken: Mittelwert, Whisker: \u00b11\u03c3',
         # CSV-Export
         'csv_dialog_title':  'CSV exportieren',
         'csv_dialog_info':   ('W\u00e4hle, wie die geloggten Messungen in der '
@@ -198,6 +215,20 @@ STRINGS = {
         'btn_txt':      '\u2b07  Export TXT',
         'btn_pdf':      '\u2b07  Export PDF',
         'btn_csv':      '\u2b07  Export CSV',
+        'btn_chart':    '\ud83d\uddbc  Chart (PNG)',
+        'btn_import':   '\u2b06  Import CSV',
+        'csv_import_title':   'Import CSV',
+        'csv_import_saved':   'Imported {runs} runs and {meas} measurements.',
+        'csv_import_empty':   'No new records imported (already loaded?).',
+        'csv_import_badhdr':  'This CSV is not a raw-mode export.',
+        'chart_save_title':   'Save chart',
+        'chart_filter':       'PNG images (*.png)',
+        'chart_saved':        'Chart saved:\n{path}',
+        'chart_no_data':      'No measurement data to chart.',
+        'chart_title':        'Intonation Analysis',
+        'chart_subtitle':     '{instr}  \u00b7  A = {a4:.0f} Hz  \u00b7  {dt}',
+        'chart_subtitle_id':  '{instr}  \u00b7  {maker} {model}  \u00b7  A = {a4:.0f} Hz  \u00b7  {dt}',
+        'chart_footer':       '{notes} notes, {total} measurements total  \u00b7  Bars: mean, whiskers: \u00b11\u03c3',
         'csv_dialog_title':  'Export CSV',
         'csv_dialog_info':   ('Choose how the logged measurements should be '
                               'summarised in the CSV file.'),
@@ -729,6 +760,8 @@ class MainWindow(QMainWindow):
         self._btn_txt      = self._make_btn(self._t('btn_txt'),      '#2980b9', self._export_txt)
         self._btn_pdf      = self._make_btn(self._t('btn_pdf'),      '#8e44ad', self._export_pdf)
         self._btn_csv      = self._make_btn(self._t('btn_csv'),      '#16a085', self._export_csv)
+        self._btn_chart    = self._make_btn(self._t('btn_chart'),    '#d35400', self._export_chart)
+        self._btn_import   = self._make_btn(self._t('btn_import'),   '#7f8c8d', self._import_csv)
 
         toolbar.addWidget(self._grp_instr)
         toolbar.addWidget(self._grp_disp)
@@ -741,6 +774,8 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(self._btn_txt)
         toolbar.addWidget(self._btn_pdf)
         toolbar.addWidget(self._btn_csv)
+        toolbar.addWidget(self._btn_chart)
+        toolbar.addWidget(self._btn_import)
         root.addLayout(toolbar)
 
         # ── Splitter ──────────────────────────────────────────────────────────
@@ -867,6 +902,8 @@ class MainWindow(QMainWindow):
         self._btn_txt.setText(self._t('btn_txt'))
         self._btn_pdf.setText(self._t('btn_pdf'))
         self._btn_csv.setText(self._t('btn_csv'))
+        self._btn_chart.setText(self._t('btn_chart'))
+        self._btn_import.setText(self._t('btn_import'))
 
         # Tabellen-Header
         self._table.setHorizontalHeaderLabels(self._table_headers())
@@ -1490,6 +1527,93 @@ class MainWindow(QMainWindow):
     def _instr_label(self, key: str) -> str:
         long_key = f'instr_long_{key}'
         return self._t(long_key) if long_key in STRINGS[self.lang] else key
+
+    # ── Import CSV ────────────────────────────────────────────────────────────
+    def _import_csv(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, self._t('csv_import_title'), '',
+            self._t('csv_filter'))
+        if not path:
+            return
+        try:
+            runs, meas = self._log.import_raw_csv(path)
+        except ValueError:
+            QMessageBox.warning(self, self._t('err_title'),
+                                self._t('csv_import_badhdr'))
+            return
+        except OSError as e:
+            QMessageBox.critical(self, self._t('err_title'), str(e))
+            return
+
+        if runs == 0 and meas == 0:
+            QMessageBox.information(self, self._t('csv_import_title'),
+                                    self._t('csv_import_empty'))
+            return
+        QMessageBox.information(
+            self, self._t('csv_import_title'),
+            self._t('csv_import_saved', runs=runs, meas=meas))
+
+    # ── Export Chart (PNG) ────────────────────────────────────────────────────
+    def _export_chart(self):
+        with self._lock:
+            items = sorted(self.stats.items())
+
+        if not items:
+            QMessageBox.information(self, self._t('export_title'),
+                                    self._t('chart_no_data'))
+            return
+
+        # Optional maker/model — same flow as TXT/PDF/CSV export.
+        model_info = self._ask_instrument_model()
+        if model_info is None:
+            return
+        maker, model = model_info
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, self._t('chart_save_title'),
+            f"intonation_chart_{self.instrument}_{_today()}.png",
+            self._t('chart_filter'))
+        if not path:
+            return
+        # Ensure the file ends in .png so QPixmap picks the right encoder.
+        if not path.lower().endswith('.png'):
+            path += '.png'
+
+        transp = TRANSP_MAP[self.instrument]
+        disp_griff = (self.display == 'griff')
+        notes = []
+        for midi_kl, st in items:
+            midi_gr = midi_kl - transp
+            display_name = (midi_note_name(midi_gr) if disp_griff
+                            else midi_note_name(midi_kl))
+            notes.append((display_name, st.mean, st.std, st.n))
+
+        instr_long = self._t(f'instr_long_{self.instrument}')
+        dt = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
+        if maker or model:
+            subtitle = self._t('chart_subtitle_id',
+                                instr=instr_long,
+                                maker=maker, model=model,
+                                a4=self._engine.a4, dt=dt)
+        else:
+            subtitle = self._t('chart_subtitle',
+                                instr=instr_long,
+                                a4=self._engine.a4, dt=dt)
+        total = sum(s.n for _, s in items)
+        footer = self._t('chart_footer', notes=len(items), total=total)
+
+        try:
+            render_intonation_chart(
+                notes=notes,
+                title=self._t('chart_title'),
+                subtitle=subtitle,
+                footer=footer,
+                output_path=path,
+            )
+            QMessageBox.information(self, self._t('export_title'),
+                                    self._t('chart_saved', path=path))
+        except Exception as e:
+            QMessageBox.critical(self, self._t('err_title'), str(e))
 
     def _make_bar_ascii(self, cents, w=16):
         half = w // 2
