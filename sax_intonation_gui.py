@@ -49,7 +49,7 @@ from sax_instruments import (
 import sax_config
 
 APP_NAME = 'Intonation Analyzer'
-APP_VERSION = '0.4.0'
+APP_VERSION = '0.4.2'
 
 
 # =============================================================================
@@ -64,6 +64,12 @@ STRINGS = {
         'grp_family':       'Familie',
         'grp_subinstrument':'Modell',
         'grp_nickname':     'Spitzname',
+        'allow_oor':        'Übertöne erlauben',
+        'grp_layout':       'Layout',
+        'layout_auto':      'Auto',
+        'layout_single':    'Liste',
+        'layout_matrix':    'Raster',
+        'allow_oor_tip':    'Wenn aktiv: Töne au\u00dferhalb des Instrumentenumfangs (\u00dcbert\u00f6ne, Altissimo) werden mit aufgenommen.',
         'nickname_tip':     'Spitzname (z.B. "Tenor #1")',
         'custom_label':     '+  Eigenes …',
         'custom_dlg_title': 'Eigenes Instrument',
@@ -161,6 +167,8 @@ STRINGS = {
         'table_empty_hint': 'Intonationstabelle  \u2013  spiel einen Ton, dann erscheinen hier Mittelwert und Standardabweichung pro Ton.',
         'table_matrix_title': 'Intonationsmatrix  \u2013  {played} von {total} Z\u00e4hlen gespielt',
         'matrix_oct_label':   'Okt {n}',
+        'matrix_oct_rel_label': 'Okt {n:+d}',
+        'matrix_oct_center':    'Okt 0 (Mitte)',
         # Reset-Dialog
         'reset_title':   'Reset',
         'reset_msg':     'Alle Messungen zurücksetzen?',
@@ -248,6 +256,12 @@ STRINGS = {
         'grp_family':       'Family',
         'grp_subinstrument':'Model',
         'grp_nickname':     'Nickname',
+        'allow_oor':        'Allow overtones',
+        'grp_layout':       'Layout',
+        'layout_auto':      'Auto',
+        'layout_single':    'List',
+        'layout_matrix':    'Grid',
+        'allow_oor_tip':    'When on, notes outside the instrument range (overtones, altissimo, accidentals) are still recorded.',
         'nickname_tip':     'Nickname (e.g. "Tenor #1")',
         'custom_label':     '+  Custom …',
         'custom_dlg_title': 'Custom instrument',
@@ -337,6 +351,8 @@ STRINGS = {
         'table_empty_hint': 'Intonation Table  \u2013  play a note to begin; per-note mean and standard deviation appear here as you play.',
         'table_matrix_title': 'Intonation matrix  \u2013  {played} of {total} cells played',
         'matrix_oct_label':   'Oct {n}',
+        'matrix_oct_rel_label': 'Oct {n:+d}',
+        'matrix_oct_center':    'Oct 0 (middle)',
         'reset_title':   'Reset',
         'reset_msg':     'Reset all measurements?',
         'audio_error_title': 'No audio input',
@@ -739,26 +755,33 @@ class CentBarDelegate(QStyledItemDelegate):
 # Delegate: matrix-mode cell with mean number + bar + std whiskers + live arrow
 # =============================================================================
 class MatrixCellDelegate(QStyledItemDelegate):
-    """Paints each piano-roll cell with three layers of information:
+    """Paints each piano-roll cell with the same data the single-column
+    table exposes per row, just stacked vertically:
 
-    * Top half — mean cents number (color-coded by magnitude).
-    * Middle bar — horizontal scale centered at 0 ct; the filled bar runs
-      from center to the mean value, with ±std whiskers extending beyond.
-    * Right edge — a small triangle if a live measurement just landed in
-      this cell (within the last 1.5s — handled in the GUI by setting an
-      'active' flag in the cell's UserRole+1 data slot).
+    * Top strip: fingered note name on the left, sounding note name on
+      the right (always shown for in-range cells so the user can read
+      the cell's identity without consulting the row/column headers).
+    * Mid strip: mean cents (color-coded by magnitude) and ±std as a
+      smaller adjacent value.
+    * Lower strip: horizontal scale centered on 0 ct with the filled
+      bar from center to mean, plus ±1σ whiskers below.
+    * Bottom-right corner: small N counter.
+
+    Active cell (currently-played note within the last 1.5s) gets the
+    blue background tint. Out-of-range cells render only the dimmed
+    note label (so the player still knows what note that row+column
+    represents) on a darker background.
 
     Data layout per cell (set on the QTableWidgetItem):
-        ItemDataRole.UserRole       → dict {
-            'mean': float | None,
-            'std':  float | None,
-            'n':    int,
-            'in_range': bool,
-            'active': bool,
+        ItemDataRole.UserRole → dict {
+            'mean':          float | None,
+            'std':           float | None,
+            'n':             int,
+            'in_range':      bool,
+            'active':        bool,
+            'fingered_name': str,
+            'sounding_name': str,
         }
-
-    Cells where the dict is missing (or in_range is False) just render the
-    background and skip all overlays.
     """
 
     MAX_CENT = 50.0   # ±50 ct = bar saturated
@@ -778,43 +801,88 @@ class MatrixCellDelegate(QStyledItemDelegate):
         mean     = data.get('mean')
         std      = data.get('std') or 0.0
         n        = int(data.get('n') or 0)
+        fingered = data.get('fingered_name', '')
+        sounding = data.get('sounding_name', '')
 
-        # Background — out-of-range darker, active blue tint, else default.
-        if active:
-            painter.fillRect(r, QColor('#2c5a8a'))
-        elif in_range:
-            painter.fillRect(r, QColor('#1a1a24'))
-        else:
-            painter.fillRect(r, QColor('#101018'))
-
-        # Always draw the cell border on a subtle pen so the grid stays
-        # visible even when the table-widget grid lines are styled flat.
-        painter.setPen(QPen(QColor(60, 60, 80), 1))
-        painter.drawRect(r.adjusted(0, 0, -1, -1))
-
-        if not in_range or mean is None:
+        if not in_range:
+            # Out-of-range cells render with NO border and NO text — they
+            # blend into the table background so the user only sees the
+            # cells that correspond to physically playable notes. The
+            # surrounding grid structure stays so column alignment is
+            # preserved.
+            painter.fillRect(r, QColor('#12121a'))
             painter.restore()
             return
 
-        # --- Top half: mean text ---------------------------------------
+        # In-range background — active blue tint or default panel color.
+        if active:
+            painter.fillRect(r, QColor('#2c5a8a'))
+        else:
+            painter.fillRect(r, QColor('#1a1a24'))
+
+        # Subtle cell border — only on in-range cells, so the playable
+        # area visually pops as a grid against the unbordered out-of-
+        # range background.
+        painter.setPen(QPen(QColor(55, 55, 75), 1))
+        painter.drawRect(r.adjusted(0, 0, -1, -1))
+
+        pad_x = 4
+        # ----- Top strip: note names ----------------------------------
+        top_h = 13
+        top_y = r.top() + 1
+        painter.setFont(QFont('Monospace', 7))
+        painter.setPen(QColor(150, 150, 175))
+        if fingered:
+            painter.drawText(
+                QRectF(r.left() + pad_x, top_y, r.width() / 2 - pad_x, top_h),
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                fingered)
+        if sounding and sounding != fingered:
+            painter.setPen(QColor(120, 130, 160))
+            painter.drawText(
+                QRectF(r.left() + r.width() / 2, top_y,
+                       r.width() / 2 - pad_x, top_h),
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                sounding)
+
+        if mean is None:
+            # In-range but no measurement yet — show a centered dot to
+            # acknowledge the seeded slot.
+            painter.setPen(QColor(80, 80, 100))
+            painter.setFont(QFont('Monospace', 10))
+            painter.drawText(
+                QRectF(r.left(), r.top() + top_h, r.width(), r.height() - top_h),
+                Qt.AlignmentFlag.AlignCenter, '·')
+            painter.restore()
+            return
+
+        # ----- Mid strip: mean (color) + ±std ------------------------
         col = (QColor('#3a9e5f') if abs(mean) <= 5 else
                QColor('#c8a020') if abs(mean) <= 12 else QColor('#c03030'))
         sign = '+' if mean >= 0 else ''
+        mid_h = 18
+        mid_y = r.top() + top_h
         painter.setPen(col)
-        painter.setFont(QFont('Monospace', 10, QFont.Weight.Bold))
-        text_rect = QRectF(r.left(), r.top() + 1, r.width(), r.height() / 2)
-        painter.drawText(text_rect,
-                          Qt.AlignmentFlag.AlignHCenter
-                          | Qt.AlignmentFlag.AlignVCenter,
-                          f"{sign}{mean:.1f}")
+        painter.setFont(QFont('Monospace', 11, QFont.Weight.Bold))
+        painter.drawText(
+            QRectF(r.left() + pad_x, mid_y,
+                   r.width() * 0.62 - pad_x, mid_h),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            f"{sign}{mean:.1f}")
+        if n > 1 and std > 0:
+            painter.setPen(QColor(170, 170, 200))
+            painter.setFont(QFont('Monospace', 8))
+            painter.drawText(
+                QRectF(r.left() + r.width() * 0.55, mid_y,
+                       r.width() * 0.45 - pad_x, mid_h),
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                f"±{std:.1f}")
 
-        # --- Bottom half: scale + bar + whiskers -----------------------
-        pad_x = 6
+        # ----- Bar with whiskers --------------------------------------
         scale_w = r.width() - 2 * pad_x
         scale_h = 4
         cx = r.left() + r.width() / 2
-        # Place the scale just below vertical center.
-        scale_y = r.top() + r.height() * 0.58
+        scale_y = r.top() + top_h + mid_h + 3
         # Background trough.
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor(45, 45, 60))
@@ -824,7 +892,7 @@ class MatrixCellDelegate(QStyledItemDelegate):
         zone_w = max(2.0, scale_w / 2 * 5.0 / self.MAX_CENT)
         painter.setBrush(QColor(40, 110, 60, 160))
         painter.drawRect(QRectF(cx - zone_w, scale_y, zone_w * 2, scale_h))
-        # Filled bar from center to mean.
+        # Filled bar.
         norm = max(-1.0, min(1.0, mean / self.MAX_CENT))
         fill_w = abs(norm) * scale_w / 2
         painter.setBrush(col)
@@ -834,39 +902,39 @@ class MatrixCellDelegate(QStyledItemDelegate):
         else:
             painter.drawRoundedRect(QRectF(cx - fill_w, scale_y - 1,
                                             fill_w, scale_h + 2), 2, 2)
-        # Center tick.
         painter.setPen(QPen(QColor(200, 200, 220), 1))
         painter.drawLine(QPointF(cx, scale_y - 2),
                           QPointF(cx, scale_y + scale_h + 2))
 
-        # ±1σ whiskers — extend from the mean point along the same scale.
+        # Whiskers.
         if n > 1 and std > 0:
             std_lo = max(-1.0, min(1.0, (mean - std) / self.MAX_CENT))
             std_hi = max(-1.0, min(1.0, (mean + std) / self.MAX_CENT))
             x_lo = cx + std_lo * scale_w / 2
             x_hi = cx + std_hi * scale_w / 2
             w_y = scale_y + scale_h + 4
-            painter.setPen(QPen(QColor(220, 220, 235, 180), 1.4))
+            painter.setPen(QPen(QColor(220, 220, 235, 200), 1.4))
             painter.drawLine(QPointF(x_lo, w_y), QPointF(x_hi, w_y))
             painter.drawLine(QPointF(x_lo, w_y - 2),
                               QPointF(x_lo, w_y + 2))
             painter.drawLine(QPointF(x_hi, w_y - 2),
                               QPointF(x_hi, w_y + 2))
 
-        # Small N count in the corner.
-        painter.setPen(QColor(140, 140, 160))
+        # N counter, bottom-right.
+        painter.setPen(QColor(140, 140, 165))
         painter.setFont(QFont('Monospace', 7))
-        painter.drawText(QRectF(r.right() - 24, r.bottom() - 12, 22, 10),
-                          Qt.AlignmentFlag.AlignRight
-                          | Qt.AlignmentFlag.AlignVCenter,
-                          f"n{n}")
+        painter.drawText(
+            QRectF(r.right() - 28, r.bottom() - 12, 26, 10),
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+            f"n={n}")
 
         painter.restore()
 
     def sizeHint(self, option, index):
         sh = super().sizeHint(option, index)
-        # Need vertical room for: number (12) + scale (12) + whiskers (8).
-        return sh.__class__(max(sh.width(), 70), max(sh.height(), 44))
+        # Need vertical room: top (13) + mid (18) + bar (4) + whiskers (8)
+        # + N counter (8) = ~55px minimum.
+        return sh.__class__(max(sh.width(), 110), max(sh.height(), 60))
 
 
 # =============================================================================
@@ -995,6 +1063,18 @@ class MainWindow(QMainWindow):
         """)
         il.addWidget(self._nick_edit)
 
+        # OOR toggle: when off, the audio callback silently drops notes
+        # outside the instrument range so the table stays bounded.
+        self._cb_oor = QCheckBox(self._t('allow_oor'))
+        self._cb_oor.setChecked(self._cfg.allow_out_of_range)
+        self._cb_oor.setToolTip(self._t('allow_oor_tip'))
+        self._cb_oor.setStyleSheet("""
+            QCheckBox { color: #bbb; font-size: 12px; padding: 2px 4px; }
+            QCheckBox::indicator { width: 14px; height: 14px; }
+        """)
+        self._cb_oor.toggled.connect(self._on_oor_toggled)
+        il.addWidget(self._cb_oor)
+
         # Select the saxophone family + the default alto instrument.
         self._select_family_for_instrument(self.instrument)
         self._populate_instrument_combo(select_key=self.instrument)
@@ -1007,6 +1087,22 @@ class MainWindow(QMainWindow):
         self._disp_combo.addItems([self._t('disp_griff'), self._t('disp_klingend')])
         self._disp_combo.currentIndexChanged.connect(self._on_disp_changed)
         dl.addWidget(self._disp_combo)
+
+        # Layout mode override: Auto / List / Grid. Auto picks based on
+        # window width; the explicit choices let the user pin the layout
+        # they want regardless of how wide the window is.
+        self._layout_combo = QComboBox()
+        self._layout_combo.addItem(self._t('layout_auto'), 'auto')
+        self._layout_combo.addItem(self._t('layout_single'), 'single')
+        self._layout_combo.addItem(self._t('layout_matrix'), 'matrix')
+        pref = getattr(self._cfg, 'layout_mode_preference', 'auto')
+        for i in range(self._layout_combo.count()):
+            if self._layout_combo.itemData(i) == pref:
+                self._layout_combo.setCurrentIndex(i)
+                break
+        self._layout_combo.currentIndexChanged.connect(
+            self._on_layout_pref_changed)
+        dl.addWidget(self._layout_combo)
 
         # Kammerton
         self._grp_a4 = QGroupBox(self._t('grp_a4'))
@@ -1178,6 +1274,20 @@ class MainWindow(QMainWindow):
         self._disp_combo.setCurrentIndex(idx_d)
         self._disp_combo.blockSignals(False)
 
+        # Layout-Combo — re-label the Auto/List/Grid items in the new lang.
+        if hasattr(self, '_layout_combo'):
+            cur = self._layout_combo.currentData()
+            self._layout_combo.blockSignals(True)
+            self._layout_combo.clear()
+            self._layout_combo.addItem(self._t('layout_auto'), 'auto')
+            self._layout_combo.addItem(self._t('layout_single'), 'single')
+            self._layout_combo.addItem(self._t('layout_matrix'), 'matrix')
+            for i in range(self._layout_combo.count()):
+                if self._layout_combo.itemData(i) == cur:
+                    self._layout_combo.setCurrentIndex(i)
+                    break
+            self._layout_combo.blockSignals(False)
+
         # Buttons
         self._btn_autotune.setText(self._t('btn_autotune'))
         self._btn_record.setText(self._t('btn_stop' if self._recording else 'btn_start'))
@@ -1199,6 +1309,14 @@ class MainWindow(QMainWindow):
     def _on_note(self, midi_kl: int, freq: float, cents: float):
         if not self._recording:
             return
+        # Drop out-of-range notes when the toggle is off — keeps the table
+        # bounded to the instrument's nominal range.
+        if not self._cfg.allow_out_of_range:
+            transp = TRANSP_MAP.get(self.instrument, 0)
+            lo_f, hi_f = sax_instruments.fingered_range(self.instrument)
+            midi_fingered = midi_kl - transp
+            if not (lo_f <= midi_fingered <= hi_f):
+                return
         with self._lock:
             if midi_kl not in self.stats:
                 self.stats[midi_kl] = NoteStats()
@@ -1235,8 +1353,9 @@ class MainWindow(QMainWindow):
     #              N covers the instrument's range padded ±1 octave. Cells
     #              outside the instrument's range render greyed out.
     # The mode is chosen automatically based on the available width.
-    _MATRIX_COL_WIDTH = 88     # min usable width per octave column (px)
+    _MATRIX_COL_WIDTH = 112    # min usable width per octave column (px)
     _MATRIX_HEADER_W  = 64     # row-header width (note names)
+    _MATRIX_ROW_HEIGHT = 60    # tall enough for: names + mean+std + bar + N
     # Hysteresis: enter matrix at the calculated threshold, drop back to
     # single only when noticeably narrower. Prevents thrash near the edge.
     _MATRIX_HYSTERESIS = 48    # px
@@ -1254,10 +1373,17 @@ class MainWindow(QMainWindow):
             self._refresh_table_single()
 
     def _desired_layout_mode(self) -> str:
-        """Pick 'matrix' when the table viewport is wide enough to show
-        every octave the current instrument touches; 'single' otherwise.
-        Uses a small hysteresis band so width oscillations around the
-        threshold don't thrash the layout."""
+        """User-preference first; falls back to a width-driven auto pick.
+        In auto mode, matrix is used as long as the viewport can fit at
+        least two octave columns; below that, single-column for
+        readability. Matrix never truncates a playable note — wider
+        instruments overflow into a horizontal scrollbar instead of
+        dropping back to single."""
+        pref = getattr(self._cfg, 'layout_mode_preference', 'auto')
+        if pref == 'single':
+            return 'single'
+        if pref == 'matrix':
+            return 'matrix'
         if not hasattr(self, '_table'):
             return 'single'
         w = self._table.viewport().width()
@@ -1265,29 +1391,51 @@ class MainWindow(QMainWindow):
             w = self._table.width()
         if w <= 0:
             return 'single'
-        n_octaves = self._matrix_octave_count()
-        needed = n_octaves * self._MATRIX_COL_WIDTH + self._MATRIX_HEADER_W
+        floor = self._MATRIX_HEADER_W + 2 * self._MATRIX_COL_WIDTH
         if self._layout_mode == 'matrix':
-            # Only drop back to single when meaningfully narrower than the
-            # entry threshold.
-            return 'matrix' if w >= needed - self._MATRIX_HYSTERESIS else 'single'
-        return 'matrix' if w >= needed else 'single'
+            return 'matrix' if w >= floor - self._MATRIX_HYSTERESIS else 'single'
+        return 'matrix' if w >= floor else 'single'
 
     def _matrix_octave_range(self) -> tuple[int, int]:
         """(lo_octave, hi_octave) inclusive to display for the current
-        instrument. The lowest displayed octave is the one that contains
-        the instrument's lowest in-range note — no padding below, since
-        a padded-below octave would render greyed rows for notes that
-        physically don't exist on the horn. Padded +1 octave above for
-        upper context (altissimo / overtones)."""
+        instrument. Spans the instrument's nominal fingered range AND any
+        actually-played notes outside it — overtones, altissimo, and
+        accidentals get their own cells so nothing gets truncated.
+
+        Half-step-beyond rule: if the low note is exactly a C (the start
+        of its octave) we pad one column below so the B a half-step lower
+        is visible; if the high note is exactly a B (the end of its
+        octave) we pad one column above so the C a half-step higher is
+        visible. Extra context octaves beyond that are configurable via
+        cfg.matrix_extra_octaves."""
         transp = TRANSP_MAP.get(self.instrument, 0)
         lo_f, hi_f = sax_instruments.fingered_range(self.instrument)
         if self.display == 'griff':
             lo_midi, hi_midi = lo_f, hi_f
         else:
             lo_midi, hi_midi = lo_f + transp, hi_f + transp
-        lo_oct = max(0, lo_midi // 12 - 1)
-        hi_oct = hi_midi // 12 - 1 + 1
+        # Played-note expansion (only when OOR is allowed).
+        with self._lock:
+            played = [m for m, st in self.stats.items() if st.n > 0]
+        if played and self._cfg.allow_out_of_range:
+            if self.display == 'griff':
+                played = [m - transp for m in played]
+            lo_midi = min(lo_midi, min(played))
+            hi_midi = max(hi_midi, max(played))
+        lo_oct = lo_midi // 12 - 1
+        hi_oct = hi_midi // 12 - 1
+        # Half-step-beyond rule.
+        if lo_midi % 12 == 0:      # low note is C → show B in the column below
+            lo_oct -= 1
+        if hi_midi % 12 == 11:     # high note is B → show C in the column above
+            hi_oct += 1
+        # Configurable extra context on each side.
+        extra = max(0, int(getattr(self._cfg, 'matrix_extra_octaves', 0)))
+        lo_oct -= extra
+        hi_oct += extra
+        # Clamp to non-negative octaves (MIDI octave -1 not useful for
+        # any real instrument in this app).
+        lo_oct = max(0, lo_oct)
         return (lo_oct, hi_oct)
 
     def _matrix_octave_count(self) -> int:
@@ -1311,11 +1459,17 @@ class MainWindow(QMainWindow):
             self._table.setColumnCount(n_oct)
             self._table.setRowCount(12)
             self._table.verticalHeader().setVisible(True)
-            self._table.verticalHeader().setDefaultSectionSize(46)
-            self._table.horizontalHeader().setSectionResizeMode(
-                QHeaderView.ResizeMode.Stretch)
-            # Replace the column-5 bar delegate with a default so the old
-            # delegate doesn't try to paint our new data shape.
+            self._table.verticalHeader().setDefaultSectionSize(self._MATRIX_ROW_HEIGHT)
+            # Fixed column widths — playable notes always render at full
+            # cell size. If the columns don't all fit, Qt's horizontal
+            # scrollbar takes over instead of the cells getting squished.
+            hh = self._table.horizontalHeader()
+            hh.setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
+            hh.setDefaultSectionSize(self._MATRIX_COL_WIDTH)
+            for c in range(n_oct):
+                self._table.setColumnWidth(c, self._MATRIX_COL_WIDTH)
+            self._table.setHorizontalScrollBarPolicy(
+                Qt.ScrollBarPolicy.ScrollBarAsNeeded)
             self._table.setItemDelegateForColumn(5, self._default_delegate)
             self._table.setItemDelegate(self._matrix_delegate)
         else:
@@ -1406,8 +1560,22 @@ class MainWindow(QMainWindow):
         lo_oct, hi_oct = self._matrix_octave_range()
         octaves = list(range(lo_oct, hi_oct + 1))
 
-        self._table.setHorizontalHeaderLabels(
-            [self._t('matrix_oct_label', n=o) for o in octaves])
+        # Fingered (griff) mode uses RELATIVE octave labels (-1, 0, +1)
+        # centered on the instrument's middle octave — saxophone players
+        # read "low Bb" as Bb3 in SPN, which feels mis-octaved against an
+        # absolute scale. Concert (klingend) mode keeps absolute octave
+        # numbers because sounding pitch IS absolute.
+        if disp_griff:
+            mid_oct = (lo_oct + hi_oct) // 2
+            header_strings = [
+                self._t('matrix_oct_rel_label', n=(o - mid_oct))
+                for o in octaves
+            ]
+        else:
+            header_strings = [
+                self._t('matrix_oct_label', n=o) for o in octaves
+            ]
+        self._table.setHorizontalHeaderLabels(header_strings)
         # Row labels: pitch class only (octave lives in the column header).
         self._table.setVerticalHeaderLabels(
             [c.split('/')[0] for c in CHROMA])
@@ -1435,14 +1603,17 @@ class MainWindow(QMainWindow):
                 has_data = st is not None and st.n > 0
                 if has_data:
                     played_n += 1
-                # MatrixCellDelegate reads this dict; it paints the
-                # mean number, the centered scale bar, and ±std whiskers.
+                # MatrixCellDelegate reads this dict and paints all six
+                # data fields the single-column view shows per row:
+                # fingered name, sounding name, mean, std, N, bar.
                 payload = {
-                    'mean':     st.mean if has_data else None,
-                    'std':      st.std if has_data else None,
-                    'n':        st.n if st is not None else 0,
-                    'in_range': in_range,
-                    'active':   (active_midi == midi_sounding),
+                    'mean':          st.mean if has_data else None,
+                    'std':           st.std if has_data else None,
+                    'n':             st.n if st is not None else 0,
+                    'in_range':      in_range,
+                    'active':        (active_midi == midi_sounding),
+                    'fingered_name': midi_note_name(midi_fingered),
+                    'sounding_name': midi_note_name(midi_sounding),
                 }
                 item = QTableWidgetItem('')
                 item.setData(Qt.ItemDataRole.UserRole, payload)
@@ -1457,9 +1628,13 @@ class MainWindow(QMainWindow):
 
     def resizeEvent(self, ev):
         super().resizeEvent(ev)
-        # Recalculate layout mode on resize. Cheap.
+        # Defer the mode-decision one event-loop tick so the splitter has
+        # time to propagate the new viewport size into the table widget
+        # before _desired_layout_mode reads it. Without the singleShot,
+        # rapid window shrinks sometimes leave the table in matrix mode
+        # because viewport().width() still reflects the pre-resize size.
         if hasattr(self, '_table'):
-            self._refresh_table()
+            QTimer.singleShot(0, self._refresh_table)
 
     def _make_bar(self, cents, w=20):
         half = w // 2
@@ -1544,6 +1719,21 @@ class MainWindow(QMainWindow):
                 sounding = fingered + transp
                 if sounding in SAX_MIDI and sounding not in self.stats:
                     self.stats[sounding] = NoteStats()
+
+    def _on_oor_toggled(self, checked: bool) -> None:
+        """Persist the choice and refresh the table so the matrix can
+        shrink back to nominal range when the toggle goes off."""
+        self._cfg.allow_out_of_range = checked
+        sax_config.save_config(self._cfg)
+        self._refresh_table()
+
+    def _on_layout_pref_changed(self, _idx: int) -> None:
+        """User picked Auto / List / Grid. Persist and refresh the table."""
+        pref = self._layout_combo.currentData()
+        if pref in ('auto', 'single', 'matrix'):
+            self._cfg.layout_mode_preference = pref
+            sax_config.save_config(self._cfg)
+            self._refresh_table()
 
     def _on_nickname_changed(self) -> None:
         """User finished editing the nickname. Stamp the new label onto the
@@ -1776,15 +1966,32 @@ class MainWindow(QMainWindow):
         self._refresh_table()
 
     def _on_a4_changed(self, idx):
-        self._engine.a4 = float(self._a4_combo.itemData(idx))
+        """Concert pitch changed. Cents are a function of frequency + A4,
+        so the cents values stored in self.stats are invalidated — but the
+        underlying frequencies are immutable and still live in the log.
+        Re-derive the table by walking the log's measurements at the new
+        A4 instead of throwing away everything the user just recorded."""
+        new_a4 = float(self._a4_combo.itemData(idx))
+        self._engine.a4 = new_a4
+
+        remapped: dict[int, NoteStats] = {}
+        for m in self._log.measurements():
+            midi_round, cents = cents_dev(m.freq_hz, new_a4)
+            if midi_round in SAX_MIDI:
+                ns = remapped.setdefault(midi_round, NoteStats())
+                ns.add(cents)
         with self._lock:
-            self.stats.clear()
-        # A4 changes invalidate cent values ⇒ start a new run. Scrubbing the
-        # combo to find the right value does NOT pile up empty runs because
-        # `start_run` coalesces the predecessor if it never recorded.
+            self.stats = remapped
+        # Re-seed expected blank rows on top of the remapped data so the
+        # instrument's range still shows even after a clean re-derive.
+        self._seed_expected_notes()
+
+        # Open a new run at the new A4 so subsequent measurements are
+        # tagged correctly; coalescing in `start_run` keeps empty runs out
+        # of the log when the user is just scrubbing the combo.
         if AUDIO_OK and self._recording:
             self._log.start_run(instrument=self.instrument,
-                                a4_hz=self._engine.a4,
+                                a4_hz=new_a4,
                                 label=self._nick_edit.text().strip())
         self._refresh_table()
 
@@ -1826,14 +2033,36 @@ class MainWindow(QMainWindow):
         if row < 0:
             return
 
-        # klingende MIDI-Note aus den gespeicherten Stats ermitteln
-        with self._lock:
-            keys = sorted(self.stats.keys())
-        if row >= len(keys):
-            return
-        midi_kl = keys[row]
+        transp = TRANSP_MAP[self.instrument]
+        midi_kl: int | None = None
 
-        transp   = TRANSP_MAP[self.instrument]
+        if self._layout_mode == 'matrix':
+            # Matrix mode: map (row, col) to the sounding MIDI for the
+            # clicked cell. Row = chroma index (0..11), col = octave from
+            # the current octave range.
+            col = self._table.columnAt(pos.x())
+            if col < 0:
+                return
+            lo_oct, _hi_oct = self._matrix_octave_range()
+            oct_ = lo_oct + col
+            midi_visible = (oct_ + 1) * 12 + row
+            if self.display == 'griff':
+                midi_kl = midi_visible + transp
+            else:
+                midi_kl = midi_visible
+            # Only offer the action if this cell actually holds played data.
+            with self._lock:
+                st = self.stats.get(midi_kl)
+            if st is None or st.n == 0:
+                return
+        else:
+            # Single-column mode: row directly indexes into sorted stats.
+            with self._lock:
+                keys = sorted(self.stats.keys())
+            if row >= len(keys):
+                return
+            midi_kl = keys[row]
+
         midi_gr  = midi_kl - transp
         note_str = f"{midi_note_name(midi_gr)} / {midi_note_name(midi_kl)}"
 

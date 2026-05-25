@@ -34,6 +34,18 @@ class AppConfig:
     # Where the JSONL log lives when persistence is enabled. Defaults to
     # ~/.intonation_analyzer/log.jsonl but the user can override.
     log_path: str = ""
+    # Whether to accept measurements that fall outside the current
+    # instrument's nominal fingered range. ON = overtones / altissimo /
+    # accidentals get their own cells and appear in the matrix.
+    # OFF = the audio callback silently drops them before they reach
+    # `stats`, so the table stays bounded to the instrument's range.
+    allow_out_of_range: bool = True
+    # Extra octave columns to show in matrix mode beyond the half-step-
+    # beyond auto-rule. 0 = minimal (just the half-step rule); 1 = one
+    # extra column of context on each side; etc. Power-user knob.
+    matrix_extra_octaves: int = 0
+    # 'auto' (width-driven), 'single' (force list), 'matrix' (force grid).
+    layout_mode_preference: str = 'auto'
 
     def effective_log_path(self) -> Optional[Path]:
         if not self.persistence_enabled:
@@ -66,6 +78,10 @@ def load_config() -> AppConfig:
             welcome_shown=bool(data.get("welcome_shown", False)),
             persistence_enabled=bool(data.get("persistence_enabled", False)),
             log_path=str(data.get("log_path", "")),
+            allow_out_of_range=bool(data.get("allow_out_of_range", True)),
+            matrix_extra_octaves=int(data.get("matrix_extra_octaves", 0)),
+            layout_mode_preference=str(
+                data.get("layout_mode_preference", "auto")),
         )
     except (OSError, json.JSONDecodeError):
         return AppConfig()
