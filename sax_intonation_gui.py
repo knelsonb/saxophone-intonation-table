@@ -49,7 +49,7 @@ from sax_instruments import (
 import sax_config
 
 APP_NAME = 'Intonation Analyzer'
-APP_VERSION = '0.3.0'
+APP_VERSION = '0.3.1'
 
 
 # =============================================================================
@@ -1132,14 +1132,18 @@ class MainWindow(QMainWindow):
 
     def _matrix_octave_range(self) -> tuple[int, int]:
         """(lo_octave, hi_octave) inclusive to display for the current
-        instrument. Padded ±1 octave for out-of-range context."""
+        instrument. The lowest displayed octave is the one that contains
+        the instrument's lowest in-range note — no padding below, since
+        a padded-below octave would render greyed rows for notes that
+        physically don't exist on the horn. Padded +1 octave above for
+        upper context (altissimo / overtones)."""
         transp = TRANSP_MAP.get(self.instrument, 0)
         lo_f, hi_f = sax_instruments.fingered_range(self.instrument)
         if self.display == 'griff':
             lo_midi, hi_midi = lo_f, hi_f
         else:
             lo_midi, hi_midi = lo_f + transp, hi_f + transp
-        lo_oct = max(0, lo_midi // 12 - 1 - 1)
+        lo_oct = max(0, lo_midi // 12 - 1)
         hi_oct = hi_midi // 12 - 1 + 1
         return (lo_oct, hi_oct)
 

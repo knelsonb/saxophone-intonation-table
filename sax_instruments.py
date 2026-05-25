@@ -210,37 +210,41 @@ def display_name(instrument_key: str, lang: str = 'en') -> str:
 # and the F-attachment on bass trombone — but stopping short of altissimo,
 # pedal tones, and other virtuoso-only registers.
 _RANGES: dict[str, tuple[int, int]] = {
-    # Saxophones — fingered Bb3 (58) to F#6 (78) covers the standard
-    # low-Bb / high-F# range. Eb baritone gets the low-A extension that
-    # most pro horns carry.
-    'eb_sopranino':       (58, 78),
-    'bb_soprano':         (58, 78),
-    'eb_alto':            (58, 78),
-    'bb_tenor':           (58, 78),
-    'eb_bari':            (57, 78),   # low-A extension on pro baris
-    'bb_bass':            (58, 78),
-    'eb_contrabass':      (58, 78),
-    # Clarinets — E3 (52) up to high C6 (84) on standard pedagogical
-    # Boehm horns; bass clarinet often carries the low-C extension on
-    # pro models so the floor moves from D2 down to C2 (38 → 36).
-    'clar_bb':            (52, 84),
-    'clar_a':             (52, 84),
-    'clar_c':             (52, 84),
-    'clar_eb':            (52, 80),
-    'clar_d':             (52, 80),
-    'clar_basset_f':      (48, 79),
-    'clar_alto_eb':       (50, 78),
-    'clar_bass_bb':       (36, 74),   # low-C extension on pro bass clarinets
-    'clar_contraalto_eb': (38, 74),
-    'clar_contrabass_bb': (34, 70),
-    # Flutes — B3 (59) to high D7 (86) on the concert flute is reachable
-    # by most intermediate players with the standard B-foot.
+    # Saxophones — all saxes floor at fingered low A (57) per real-player
+    # feedback. The low-A key is the practical bottom across the family;
+    # horns without it just leave the A row unplayed (still useful for
+    # exports and comparison). High end stays at fingered F#6 (78).
+    'eb_sopranino':       (57, 78),
+    'bb_soprano':         (57, 78),
+    'eb_alto':            (57, 78),
+    'bb_tenor':           (57, 78),
+    'eb_bari':            (57, 78),
+    'bb_bass':            (57, 78),
+    'eb_contrabass':      (57, 78),
+    # Clarinets — Boehm horns span written D/E3 (50/52) up to altissimo
+    # G6 (91) for most pros. Bass and contra clarinets carry the low-C
+    # extension (48) on pro models.
+    'clar_bb':            (50, 91),
+    'clar_a':             (50, 91),
+    'clar_c':             (50, 89),
+    'clar_eb':            (50, 91),
+    'clar_d':             (50, 91),
+    'clar_basset_f':      (44, 91),
+    'clar_alto_eb':       (46, 89),
+    'clar_bass_bb':       (48, 89),
+    'clar_contraalto_eb': (48, 84),   # fingered low-C extension
+    'clar_contrabass_bb': (48, 84),   # fingered low-C extension
+    # Flutes — alto and bass flute use the SAME fingerings as concert C
+    # flute and read in their own transposed clefs. Their fingered range
+    # is C4 (60) to C7 (84), not the concert pitch they sound. Concert
+    # flute itself: B3 with B-foot up to high D7 reachable by intermediate
+    # players.
     'flute_c':            (59, 86),
     'flute_piccolo':      (62, 84),
-    'flute_alto_g':       (55, 79),
-    'flute_bass_c':       (48, 72),
-    # Trumpets — F#3 (54) to high C6 (84) is the universal Bb/C/D/Eb range.
-    # Piccolo trumpets shift up to C4 (60). Bass trumpet drops to A#2 (46).
+    'flute_alto_g':       (60, 84),
+    'flute_bass_c':       (60, 84),
+    # Trumpets — written F#3 (54) to high C (84) universal across the
+    # Bb/C/D/Eb/F family. Piccolo Bb/A trumpets shift up to G3 (55).
     'trp_bb':             (54, 84),
     'trp_c':              (54, 84),
     'trp_d':              (54, 84),
@@ -248,62 +252,63 @@ _RANGES: dict[str, tuple[int, int]] = {
     'trp_e':              (54, 84),
     'trp_f':              (54, 84),
     'trp_a':              (54, 84),
-    'trp_piccolo_bb':     (60, 84),
-    'trp_piccolo_a':      (60, 84),
-    'trp_bass_bb':        (46, 72),
-    'cornet_bb':          (54, 84),
-    'flugel_bb':          (54, 82),
-    # Horns
-    'horn_f':             (43, 77),
-    'horn_bb':            (43, 77),
-    'horn_eb_alto':       (50, 78),
+    'trp_piccolo_bb':     (55, 84),
+    'trp_piccolo_a':      (55, 84),
+    'trp_bass_bb':        (40, 72),
+    'cornet_bb':          (52, 84),
+    'flugel_bb':          (52, 82),
+    # Horns — F horn covers Bb1 (34) to high F5 (77); Bb horn similar
+    # extended upper register.
+    'horn_f':             (34, 77),
+    'horn_bb':            (43, 82),
+    'horn_eb_alto':       (44, 79),
     'mellophone_f':       (54, 79),
-    # Trombones — tenor reaches D5 (74) easily for most players; bass
-    # trombone with F+Gb attachments fills the gap down to Bb1 (34) and
-    # comfortably reaches Bb4 (70).
+    # Trombones — tenor with F-attachment widens the low end; bass
+    # trombone with double valves comfortably reaches Bb4 (70).
     'tbn_alto_eb':        (50, 79),
-    'tbn_tenor':          (40, 74),
-    'tbn_bass':           (34, 70),
+    'tbn_tenor':          (40, 72),
+    'tbn_bass':           (34, 72),
     'tbn_contrabass':     (28, 60),
-    # Low brass — baritone horn often plays higher than euphonium on the
-    # treble-clef parts in British brass-band literature.
-    'euph_bc':            (40, 72),
-    'euph_tc':            (40, 72),
-    'baritone_bc':        (40, 74),
-    'baritone_tc':        (40, 74),
-    'tuba_f':             (36, 67),
-    'tuba_eb':            (34, 65),
-    'tuba_cc':            (28, 60),
-    'tuba_bbb':           (26, 58),
-    'sousaphone_bbb':     (26, 58),
-    # Double reeds — bassoon with the standard low-Bb extension and pro
-    # players reaching high F (77).
-    'oboe':               (58, 84),
-    'oboe_damore':        (55, 81),
-    'english_horn':       (52, 79),
-    'bassoon':            (34, 74),
-    'contrabassoon':      (22, 56),
-    # Recorders
-    'rec_sopranino_f':    (65, 84),
-    'rec_soprano_c':      (60, 82),
-    'rec_alto_f':         (53, 77),
-    'rec_tenor_c':        (48, 72),
-    'rec_bass_f':         (41, 65),
-    # Strings — cello pros reach E5/F5 (76); 5-string double bass extends
-    # up to G4 (67) on solo literature, common 4-string pros reach G4.
+    # Low brass — treble-clef baritone/euphonium parts sit a major 9th
+    # higher than the bass-clef equivalent (transposing convention).
+    'euph_bc':            (34, 72),
+    'euph_tc':            (46, 84),
+    'baritone_bc':        (34, 72),
+    'baritone_tc':        (46, 84),
+    'tuba_f':             (29, 65),
+    'tuba_eb':            (27, 65),
+    'tuba_cc':            (24, 60),
+    'tuba_bbb':           (21, 60),
+    'sousaphone_bbb':     (21, 60),
+    # Double reeds — oboe reaches G6 (91) on pro horns; bassoon with the
+    # standard low-Bb extension and pros to high Eb (75).
+    'oboe':               (58, 91),
+    'oboe_damore':        (57, 88),
+    'english_horn':       (52, 83),
+    'bassoon':            (34, 75),
+    'contrabassoon':      (22, 58),
+    # Recorders — non-transposing instruments, each pitched at its
+    # nominal lowest note. Sopranino starts at F5, soprano at C5, alto
+    # at F4, tenor at C4, bass at F3.
+    'rec_sopranino_f':    (77, 100),
+    'rec_soprano_c':      (72, 98),
+    'rec_alto_f':         (65, 91),
+    'rec_tenor_c':        (60, 86),
+    'rec_bass_f':         (53, 79),
+    # Strings — viola/cello pros reach into the 5th-position range.
     'violin':             (55, 91),
-    'viola':              (48, 84),
-    'cello':              (36, 76),
-    'double_bass':        (28, 65),
-    'mandolin':           (55, 84),
+    'viola':              (48, 91),
+    'cello':              (36, 81),
+    'double_bass':        (28, 60),
+    'mandolin':           (55, 88),
     # Plucked
-    'guitar':             (40, 76),
+    'guitar':             (40, 84),
     'bass_guitar':        (28, 60),
-    'ukulele':            (55, 79),
-    'banjo':              (43, 76),
-    'harp':               (24, 96),
+    'ukulele':            (60, 81),
+    'banjo':              (45, 81),
+    'harp':               (24, 103),
     # Concert / generic
-    'voice':              (48, 79),
+    'voice':              (41, 81),
     'c':                  (48, 79),
     'piano':              (21, 108),
 }
