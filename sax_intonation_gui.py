@@ -188,7 +188,7 @@ STRINGS = {
         'txt_save_title':  'TXT speichern',
         'txt_filter':      'Textdateien (*.txt)',
         'txt_saved':       'TXT gespeichert:\n{path}',
-        'txt_header':      'SAXOPHON-INTONATIONSANALYSATOR',
+        'txt_header':      'INTONATIONS-ANALYSATOR',
         'txt_instr':       'Instrument : {name}',
         'txt_transp':      'Transpos.  : gegriffenes C klingt {note}',
         'txt_no_transp':   'Keine Transposition',
@@ -201,7 +201,7 @@ STRINGS = {
         'pdf_save_title':  'PDF speichern',
         'pdf_filter':      'PDF-Dateien (*.pdf)',
         'pdf_saved':       'PDF gespeichert:\n{path}',
-        'pdf_title':       'Saxophon-Intonationsanalysator',
+        'pdf_title':       'Intonations-Analysator',
         'pdf_transp':      'Transposition: gegriffenes C klingt {note} (+{n} Halbtöne)',
         'pdf_no_transp':   'Keine Transposition (C-Instrument)',
         'pdf_a4':          'Kammerton: A = {hz:.0f} Hz',
@@ -358,7 +358,7 @@ STRINGS = {
         'txt_save_title':  'Save TXT',
         'txt_filter':      'Text files (*.txt)',
         'txt_saved':       'TXT saved:\n{path}',
-        'txt_header':      'SAXOPHONE INTONATION ANALYZER',
+        'txt_header':      'INTONATION ANALYZER',
         'txt_instr':       'Instrument : {name}',
         'txt_transp':      'Transpos.  : fingered C sounds as {note}',
         'txt_no_transp':   'No transposition',
@@ -371,7 +371,7 @@ STRINGS = {
         'pdf_save_title':  'Save PDF',
         'pdf_filter':      'PDF files (*.pdf)',
         'pdf_saved':       'PDF saved:\n{path}',
-        'pdf_title':       'Saxophone Intonation Analyzer',
+        'pdf_title':       'Intonation Analyzer',
         'pdf_transp':      'Transposition: fingered C sounds as {note} (+{n} semitones)',
         'pdf_no_transp':   'No transposition (C instrument)',
         'pdf_a4':          'Concert pitch: A = {hz:.0f} Hz',
@@ -745,6 +745,8 @@ class MainWindow(QMainWindow):
         self.stats: dict[int, NoteStats] = {}
         self._lock = threading.Lock()
         self._recording = True   # Aufnahme läuft beim Start
+        self._active_midi: int | None = None
+        self._active_midi_at: datetime.datetime | None = None
 
         # Load user config + previously-registered custom instruments before
         # building the UI so the catalog reflects them at first paint.
@@ -1071,6 +1073,11 @@ class MainWindow(QMainWindow):
         self._status_lbl.setText(self._t(
             'status_fmt', fingered=gr_name, sounding=kl_name,
             freq=freq, sign=sign, cents=cents, a4=self._engine.a4))
+        # Highlight the row currently being played so the user can see
+        # which entry in a long table just ticked. _refresh_table reads
+        # this on its next tick (every 300ms via _refresh_timer).
+        self._active_midi = midi_kl
+        self._active_midi_at = datetime.datetime.now()
 
     # ── Tabelle ───────────────────────────────────────────────────────────────
     def _refresh_table(self):
@@ -1095,6 +1102,13 @@ class MainWindow(QMainWindow):
 
         self._table.setRowCount(len(items))
         played_n = 0
+        # Decide whether the highlight is still fresh — fade it after 1.5s
+        # of silence so the table reverts to neutral when the player stops.
+        now = datetime.datetime.now()
+        active_midi = self._active_midi
+        if (self._active_midi_at is None
+                or (now - self._active_midi_at).total_seconds() > 1.5):
+            active_midi = None
         for row, (midi_kl, st) in enumerate(items):
             midi_gr = midi_kl - transp
             kl_name = midi_note_name(midi_kl)
@@ -1110,6 +1124,7 @@ class MainWindow(QMainWindow):
                    QColor('#c8a020') if abs(mean) <= 12 else QColor('#c03030'))
             dim_col = QColor('#555')   # un-played pre-seeded notes
 
+            is_active = (active_midi == midi_kl)
             for c, val in enumerate([
                 n1, n2,
                 f"{sign}{mean:.1f}" if has_data else '\u2013',
@@ -1125,8 +1140,8 @@ class MainWindow(QMainWindow):
                     item.setForeground(dim_col)
                 if c == 5 and has_data:
                     item.setData(Qt.ItemDataRole.UserRole, mean)
-                # When N=0 the bar delegate sees no UserRole data and
-                # naturally draws nothing \u2014 the row stays visually quiet.
+                if is_active:
+                    item.setBackground(QColor('#2c5a8a'))
                 self._table.setItem(row, c, item)
 
         total = sum(s.n for _, s in items)
@@ -1189,6 +1204,12 @@ class MainWindow(QMainWindow):
         key = self._instr_combo.itemData(idx)
         if key is None:
             return
+        # Family-combo scrubs re-populate the sub-instrument combo, which
+        # auto-fires this handler even when the resolved key matches the
+        # already-active instrument. Bail out so we don't spawn a fresh run
+        # for every flicker through the family list.
+        if key == self.instrument:
+            return
         self.instrument = key
         self._engine.instr_key = self.instrument
         # Seed the stats with empty slots for every expected fingered note so
@@ -1230,12 +1251,26 @@ class MainWindow(QMainWindow):
         if result is None:
             return
         name, transp = result
-        # Build a stable key: 'custom_' + slugified name. Replacement on
-        # duplicate is handled by register_custom.
-        key = 'custom_' + ''.join(
+        # Build a stable key: 'custom_' + slugified name. If the slug collides
+        # with an existing custom (different display name but same slug, e.g.
+        # 'Mezzo' vs 'mezzo'), append a numeric suffix instead of silently
+        # overwriting the older entry — old CSV exports may still reference
+        # the original transposition for that key.
+        base = 'custom_' + ''.join(
             c.lower() if c.isalnum() else '_' for c in name).strip('_')[:32]
-        if not key or key == 'custom_':
+        if not base or base == 'custom_':
             return
+        existing_keys = set(build_transp_map().keys())
+        key = base
+        suffix = 2
+        while key in existing_keys:
+            # If the user re-typed the EXACT same display name, treat it as
+            # an intentional re-add (let register_custom replace the row).
+            existing = [c for c in sax_config.load_customs() if c.key == key]
+            if existing and existing[0].name_en == name:
+                break
+            key = f"{base}_{suffix}"
+            suffix += 1
         register_custom(key, transp, name, name)
         _rebuild_transp_map()
         # Persist for next session.
@@ -1890,11 +1925,38 @@ class MainWindow(QMainWindow):
         # Closing the dialog and re-opening it is the path to picking up a
         # language switch — the captured labels here aren't re-bound. The
         # toggle at least lets the user notice they're in the wrong language.
-        self._add_dialog_lang_toggle(dlg, layout)
-
         info = QLabel(self._t('csv_dialog_info'))
         info.setStyleSheet('color: #888; font-size: 12px;')
         info.setWordWrap(True)
+
+        def relabel_slice_dialog():
+            info.setText(self._t('csv_dialog_info'))
+            # Mode combo: keep current selection, swap labels.
+            cur_mode = mode_combo.currentData()
+            mode_combo.blockSignals(True)
+            mode_combo.clear()
+            for key in MeasurementLog.SLICE_MODES:
+                mode_combo.addItem(self._t(f'csv_mode_{key}'), key)
+                if key == cur_mode:
+                    mode_combo.setCurrentIndex(mode_combo.count() - 1)
+            mode_combo.blockSignals(False)
+            mode_lbl.setText(self._t('csv_mode_label'))
+            run_lbl.setText(self._t('csv_run_label'))
+            instr_lbl.setText(self._t('csv_instr_label'))
+            nick_lbl.setText(self._t('csv_nick_label'))
+            # Re-translate the "All …" sentinels at index 0 if present.
+            if run_combo.itemData(0) is None:
+                run_combo.setItemText(0, self._t('csv_all_runs'))
+            if instr_combo.count() and instr_combo.itemData(0) is None:
+                instr_combo.setItemText(0, self._t('csv_all_instruments'))
+            if nick_combo.itemData(0) is None:
+                nick_combo.setItemText(0, self._t('csv_all_nicks'))
+            summary.setText(self._t('csv_summary',
+                                     n=len(self._log.measurements()),
+                                     runs=len(self._log.runs())))
+
+        self._add_dialog_lang_toggle(dlg, layout, on_change=relabel_slice_dialog)
+
         layout.addWidget(info)
 
         form = QFormLayout()
@@ -1904,7 +1966,8 @@ class MainWindow(QMainWindow):
         mode_combo = QComboBox()
         for key in MeasurementLog.SLICE_MODES:
             mode_combo.addItem(self._t(f'csv_mode_{key}'), key)
-        form.addRow(self._t('csv_mode_label'), mode_combo)
+        mode_lbl = QLabel(self._t('csv_mode_label'))
+        form.addRow(mode_lbl, mode_combo)
 
         run_combo = QComboBox()
         run_combo.addItem(self._t('csv_all_runs'), None)
