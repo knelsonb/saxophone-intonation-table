@@ -56,6 +56,10 @@ class AppConfig:
     # shows notes you actually held. Defaults to 5 to match the
     # threshold the autotune feature already uses.
     min_n_visible: int = 5
+    # Show the live spectrogram + diagnostics panel beneath the tuner.
+    # Off by default so casual users get the uncluttered tuner-only view;
+    # power users flip it on to inspect FFT and runtime metrics.
+    show_diagnostics: bool = False
 
     def effective_log_path(self) -> Optional[Path]:
         if not self.persistence_enabled:
@@ -94,6 +98,7 @@ def load_config() -> AppConfig:
                 data.get("layout_mode_preference", "auto")),
             filter_mode=str(data.get("filter_mode", "normal")),
             min_n_visible=max(0, int(data.get("min_n_visible", 5))),
+            show_diagnostics=bool(data.get("show_diagnostics", False)),
         )
     except (OSError, json.JSONDecodeError):
         return AppConfig()

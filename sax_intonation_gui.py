@@ -49,7 +49,7 @@ from sax_instruments import (
 import sax_config
 
 APP_NAME = 'Intonation Analyzer'
-APP_VERSION = '0.5.1'
+APP_VERSION = '0.5.2'
 
 
 # =============================================================================
@@ -78,6 +78,25 @@ STRINGS = {
         'filter_tip':       'Tonhöhen-Filter.\nSchnell: minimale Glättung, reaktionsfreudige Anzeige.\nNormal (Standard): ausgewogen.\nLangsam: starke Glättung, ideal für lange Töne und Stimmanalyse.',
         'min_n_label':      'Mindest-Messungen pro Ton:',
         'min_n_tip':        'Töne mit weniger als dieser Anzahl Messungen werden ausgeblendet.\nVerhindert, dass kurze Versehen die Tabelle füllen.',
+        # Diagnose-Panel (Spektrogramm + Live-Werte)
+        'show_diagnostics':     'Spektrogramm & Diagnose anzeigen',
+        'show_diagnostics_tip': 'Blendet ein Live-Spektrogramm und ein Diagnose-Feld unter dem Stimmgerät ein.\nNützlich zum Beobachten von Obertönen und zur Fehlersuche.',
+        'spectro_title':        'Spektrogramm',
+        'data_panel_title':     'Diagnose',
+        'data_device':          'Audio-Eingang',
+        'data_samplerate':      'Abtastrate',
+        'data_blocksize':       'Blockgröße',
+        'data_hopsize':         'Hop-Größe',
+        'data_freqrange':       'Frequenzbereich',
+        'data_filter_mode':     'Filtermodus',
+        'data_filter_params':   'Filterparameter',
+        'data_a4':              'Kammerton A',
+        'data_rms':             'Pegel (dBFS)',
+        'data_aperiodicity':    'YIN-Aperiodizität',
+        'data_freq':            'Frequenz',
+        'data_midi':            'MIDI (gehalten)',
+        'data_notes_count':     'Töne seit Start',
+        'audio_disabled':       'Audio deaktiviert',
         'custom_label':     '+  Eigenes …',
         'custom_dlg_title': 'Eigenes Instrument',
         'custom_dlg_info':  ('Ein eigenes Instrument hinzufügen. Die Transposition '
@@ -277,6 +296,25 @@ STRINGS = {
         'filter_tip':       'Pitch-detection smoothing.\nFast: minimal smoothing, snappy tuner.\nNormal (default): balanced.\nSlow: heavy smoothing, ideal for long tones and tuning analysis.\nAll modes truncate attack and release transients.',
         'min_n_label':      'Min measurements per note:',
         'min_n_tip':        'Notes with fewer than this many measurements are hidden.\nKeeps brief slips out of the analysis.',
+        # Diagnostics panel (spectrogram + live values)
+        'show_diagnostics':     'Show spectrogram & diagnostics',
+        'show_diagnostics_tip': 'Reveals a live spectrogram and a diagnostics readout below the tuner.\nUseful for inspecting overtones and troubleshooting.',
+        'spectro_title':        'Spectrogram',
+        'data_panel_title':     'Diagnostics',
+        'data_device':          'Audio input',
+        'data_samplerate':      'Sample rate',
+        'data_blocksize':       'Block size',
+        'data_hopsize':         'Hop size',
+        'data_freqrange':       'Frequency range',
+        'data_filter_mode':     'Filter mode',
+        'data_filter_params':   'Filter params',
+        'data_a4':              'Concert pitch A',
+        'data_rms':             'Level (dBFS)',
+        'data_aperiodicity':    'YIN aperiodicity',
+        'data_freq':            'Frequency',
+        'data_midi':            'MIDI (locked)',
+        'data_notes_count':     'Notes since start',
+        'audio_disabled':       'Audio disabled',
         'custom_label':     '+  Custom …',
         'custom_dlg_title': 'Custom instrument',
         'custom_dlg_info':  ('Add a custom instrument. Transposition is the '
@@ -597,6 +635,15 @@ class AudioEngine:
         self.a4         = A4_DEFAULT
         self.instr_key  = 'eb_alto'   # aktuell ausgewähltes Instrument
         self.filter_mode = FILTER_MODE_DEFAULT
+        # Per-frame diagnostic readouts. Written every callback regardless
+        # of whether the frame is gated out — the diagnostics panel reads
+        # these directly and never affects emission decisions. Keeping the
+        # writes to a handful of float/int stores keeps the callback hot
+        # path O(1).
+        self.last_rms_db: float = -120.0
+        self.last_ap: float = 1.0
+        self.last_freq: float = 0.0
+        self.last_locked_midi: int | None = None
         self._reset_filter_state()
 
     def _reset_filter_state(self) -> None:
@@ -640,22 +687,33 @@ class AudioEngine:
 
             params = _FILTER_PRESETS[self.filter_mode]
             rms = math.sqrt(float(np.mean(self._buf**2)))
+            # Diagnostic: dBFS = 20 log10(rms). Cap the log argument so an
+            # all-zero buffer doesn't produce -inf.
+            self.last_rms_db = 20.0 * math.log10(max(rms, 1e-9))
 
             # Layer 1 + 2: silence + noise rejection. On a "silent" or
             # noisy frame, the held note has ended. Drop the lookahead
             # tail (release truncation) and reset the locked state.
             if rms < params['rms_floor']:
+                self.last_ap = 1.0
+                self.last_freq = 0.0
+                self.last_locked_midi = self._locked_midi
                 self._on_silence(params)
                 return
             sig = self._buf / (rms + 1e-9)
             freq, ap = yin_pitch(sig)
+            self.last_ap = float(ap)
+            self.last_freq = float(freq)
             if ap > params['yin_thr'] or not (MIN_FREQ < freq < MAX_FREQ):
+                self.last_locked_midi = self._locked_midi
                 self._on_silence(params)
                 return
             mr, ct = cents_dev(freq, self.a4)
             if mr not in SAX_MIDI:
+                self.last_locked_midi = self._locked_midi
                 self._on_silence(params)
                 return
+            self.last_locked_midi = self._locked_midi if self._locked_midi is not None else int(mr)
 
             # Push the valid frame into the confirmation window.
             self._recent.append((int(mr), float(freq)))
@@ -740,7 +798,10 @@ class TunerWidget(QWidget):
         t = QTimer(self)
         t.timeout.connect(self._fade)
         t.start(80)
-        self.setMinimumHeight(260)
+        # Reduced from 260 in v0.5.2 to make room for the spectrogram and
+        # diagnostics panels beneath the tuner. The needle still reads
+        # cleanly at 180px on typical desktop resolutions.
+        self.setMinimumHeight(180)
 
     def set_note(self, note, freq, cents):
         self.note, self.freq, self.cents = note, freq, cents
@@ -820,6 +881,257 @@ class TunerWidget(QWidget):
                        Qt.AlignmentFlag.AlignHCenter,
                        f"{sign}{self.cents:.1f} ct")
         p.end()
+
+
+# =============================================================================
+# Spektrogramm-Widget
+# =============================================================================
+class SpectrogramWidget(QWidget):
+    """Rolling FFT waterfall of the live audio buffer.
+
+    Pulls slices of `AudioEngine._buf`, runs a Hann-windowed rfft, bins
+    the magnitude into log-spaced frequency rows (27 Hz .. 4000 Hz), and
+    shifts the column-history image left each tick so the newest column
+    paints on the right edge. ~25 fps refresh; the engine's hop is
+    ~46 ms so there is no point chasing higher rates.
+
+    Magnitudes are converted to dBFS, clamped to [-80, -10] dB, and
+    mapped through a viridis-style palette. Display only — never gates
+    or feeds back into pitch detection.
+    """
+
+    F_LO = 27.0
+    F_HI = 4000.0
+    DB_FLOOR = -80.0
+    DB_CEIL  = -10.0
+    N_BINS = 192       # vertical resolution (frequency rows)
+    HISTORY_COLS = 256  # ~3 s at 25 fps × ~120 ms? actually 256 × 40 ms ≈ 10 s, sized for window width
+    REFRESH_MS = 40
+
+    def __init__(self, engine: 'AudioEngine | None'):
+        super().__init__()
+        self._engine = engine
+        # Log-spaced bin edges used to bucket the rfft magnitudes.
+        self._edges = np.logspace(math.log10(self.F_LO), math.log10(self.F_HI),
+                                   self.N_BINS + 1)
+        # Cached Hann window. BLOCK_SIZE is fixed for the life of the
+        # process, so allocating once and reusing is safe.
+        self._window = np.hanning(BLOCK_SIZE).astype(np.float32)
+        # Pre-computed mapping from rfft bin index → log-bucket index.
+        # The rfft over BLOCK_SIZE samples has BLOCK_SIZE//2 + 1 bins, each
+        # spaced SAMPLE_RATE / BLOCK_SIZE Hz apart.
+        fft_freqs = np.fft.rfftfreq(BLOCK_SIZE, d=1.0 / SAMPLE_RATE)
+        # np.searchsorted gives the bucket index per fft bin.
+        self._bucket = np.searchsorted(self._edges, fft_freqs) - 1
+        self._bucket = np.clip(self._bucket, -1, self.N_BINS - 1)
+        # Column history: N_BINS rows × HISTORY_COLS columns, dBFS values.
+        self._history = np.full((self.N_BINS, self.HISTORY_COLS),
+                                 self.DB_FLOOR, dtype=np.float32)
+        # Viridis-ish lookup table (256 entries, RGB tuples).
+        self._lut = self._build_lut()
+        self.setMinimumHeight(120)
+
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._tick)
+        self._timer.start(self.REFRESH_MS)
+
+    @staticmethod
+    def _build_lut() -> list[tuple[int, int, int]]:
+        """Approximate viridis. Five anchor stops, linearly interpolated."""
+        stops = [
+            (0.00, (68,   1,  84)),
+            (0.25, (59,  82, 139)),
+            (0.50, (33, 145, 140)),
+            (0.75, (94, 201,  98)),
+            (1.00, (253, 231, 37)),
+        ]
+        lut: list[tuple[int, int, int]] = []
+        for i in range(256):
+            t = i / 255.0
+            for (t0, c0), (t1, c1) in zip(stops, stops[1:]):
+                if t0 <= t <= t1:
+                    f = 0.0 if t1 == t0 else (t - t0) / (t1 - t0)
+                    r = int(c0[0] + (c1[0] - c0[0]) * f)
+                    g = int(c0[1] + (c1[1] - c0[1]) * f)
+                    b = int(c0[2] + (c1[2] - c0[2]) * f)
+                    lut.append((r, g, b))
+                    break
+            else:
+                lut.append(stops[-1][1])
+        return lut
+
+    def _tick(self) -> None:
+        if not AUDIO_OK or self._engine is None:
+            return
+        buf = self._engine._buf
+        # Defensive: buf is a numpy array allocated once at startup, but
+        # if the audio thread is mid-roll the read is still safe — np.roll
+        # returns a new array, so the cb's assignment is atomic at array-
+        # reference level. We accept a hop of staleness either way.
+        if buf is None or len(buf) < 8:
+            return
+        windowed = buf * self._window
+        mag = np.abs(np.fft.rfft(windowed))
+        # Bucket-sum magnitudes into log-spaced rows. np.add.at handles
+        # repeated indices, which is exactly what happens at the low end
+        # where many fft bins fall in the same log bucket.
+        col = np.full(self.N_BINS, 1e-12, dtype=np.float32)
+        valid = self._bucket >= 0
+        np.add.at(col, self._bucket[valid], mag[valid])
+        # Normalize so 0 dBFS corresponds to a sinusoid at unity amplitude
+        # in the windowed buffer. Hann window sum / 2 is the right
+        # denominator for amplitude-preserving rfft.
+        col /= (np.sum(self._window) * 0.5)
+        db = 20.0 * np.log10(col + 1e-12)
+        self._history = np.roll(self._history, -1, axis=1)
+        self._history[:, -1] = db
+        self.update()
+
+    def paintEvent(self, _ev):
+        p = QPainter(self)
+        W, H = self.width(), self.height()
+        p.fillRect(0, 0, W, H, QColor(10, 10, 16))
+        if not AUDIO_OK or self._engine is None:
+            p.setPen(QColor(140, 140, 160))
+            p.setFont(QFont('Monospace', 11))
+            p.drawText(QRectF(0, 0, W, H),
+                       Qt.AlignmentFlag.AlignCenter,
+                       'audio disabled')
+            p.end()
+            return
+        # Map history (N_BINS × HISTORY_COLS) to a QImage and draw.
+        from PyQt6.QtGui import QImage
+        norm = np.clip((self._history - self.DB_FLOOR) /
+                       (self.DB_CEIL - self.DB_FLOOR), 0.0, 1.0)
+        idx = (norm * 255).astype(np.uint8)
+        # Build RGB byte buffer: N_BINS rows (flipped so low freq is at
+        # the bottom of the image, where music expects it) × HISTORY_COLS.
+        lut_arr = np.array(self._lut, dtype=np.uint8)        # (256, 3)
+        rgb = lut_arr[idx]                                    # (N_BINS, COLS, 3)
+        rgb = np.flipud(rgb)                                  # low freq at bottom
+        rgb = np.ascontiguousarray(rgb)
+        img = QImage(rgb.data, self.HISTORY_COLS, self.N_BINS,
+                     3 * self.HISTORY_COLS, QImage.Format.Format_RGB888)
+        # Scale to widget. Smooth would blur the data; FastTransformation
+        # gives crisp pixel blocks that match the data resolution.
+        p.drawImage(QRectF(0, 0, W, H), img)
+        p.end()
+
+
+# =============================================================================
+# Diagnose-Panel
+# =============================================================================
+class DataPanelWidget(QWidget):
+    """Read-only key:value readout of audio + engine state.
+
+    The values come straight from constants and from the AudioEngine's
+    last_* attributes, refreshed every 250 ms. Diagnostic only; never
+    influences playback or detection."""
+
+    REFRESH_MS = 250
+
+    def __init__(self, engine: 'AudioEngine | None',
+                 t_func, get_notes_count, get_cfg):
+        super().__init__()
+        self._engine = engine
+        self._t = t_func
+        self._get_notes_count = get_notes_count
+        self._get_cfg = get_cfg
+        self._device_label = self._resolve_device_label()
+
+        from PyQt6.QtWidgets import QGridLayout
+        self._grid = QGridLayout(self)
+        self._grid.setContentsMargins(8, 6, 8, 6)
+        self._grid.setHorizontalSpacing(12)
+        self._grid.setVerticalSpacing(2)
+        self._rows: dict[str, QLabel] = {}
+        # Order matters — top-to-bottom layout of the panel.
+        self._row_keys = [
+            'data_device', 'data_samplerate', 'data_blocksize', 'data_hopsize',
+            'data_freqrange', 'data_filter_mode', 'data_filter_params',
+            'data_a4', 'data_rms', 'data_aperiodicity', 'data_freq',
+            'data_midi', 'data_notes_count',
+        ]
+        for r, key in enumerate(self._row_keys):
+            k_lbl = QLabel(self._t(key) + ':')
+            k_lbl.setStyleSheet('color:#8a8aa0;font-family:Monospace;font-size:11px;')
+            v_lbl = QLabel('—')
+            v_lbl.setStyleSheet('color:#d8d8ee;font-family:Monospace;font-size:11px;')
+            v_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            self._grid.addWidget(k_lbl, r, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+            self._grid.addWidget(v_lbl, r, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+            self._rows[key] = v_lbl
+        self._grid.setColumnStretch(1, 1)
+
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._refresh)
+        self._timer.start(self.REFRESH_MS)
+        self._refresh_static()
+        self._refresh()
+
+    def retranslate(self, t_func) -> None:
+        self._t = t_func
+        # Re-label each row's key column. The grid stores key labels at
+        # column 0 in the same order as self._row_keys.
+        for r, key in enumerate(self._row_keys):
+            item = self._grid.itemAtPosition(r, 0)
+            if item is not None and item.widget() is not None:
+                item.widget().setText(self._t(key) + ':')
+        self._refresh_static()
+        self._refresh()
+
+    def _resolve_device_label(self) -> str:
+        if not AUDIO_OK:
+            return '—'
+        try:
+            info = sd.query_devices(kind='input')
+            name = info.get('name') if isinstance(info, dict) else str(info)
+            return str(name) if name else '—'
+        except Exception:
+            return '—'
+
+    def _refresh_static(self) -> None:
+        """Update fields that only change on instrument/config changes."""
+        self._rows['data_device'].setText(self._device_label)
+        self._rows['data_samplerate'].setText(f'{SAMPLE_RATE} Hz')
+        self._rows['data_blocksize'].setText(f'{BLOCK_SIZE} samples')
+        self._rows['data_hopsize'].setText(f'{HOP_SIZE} samples ({HOP_MS:.1f} ms)')
+        self._rows['data_freqrange'].setText(
+            f'{MIN_FREQ:.1f} – {MAX_FREQ:.1f} Hz')
+
+    def _refresh(self) -> None:
+        if not AUDIO_OK or self._engine is None:
+            for key in ('data_a4', 'data_rms', 'data_aperiodicity',
+                        'data_freq', 'data_midi', 'data_filter_mode',
+                        'data_filter_params'):
+                self._rows[key].setText('—')
+            self._rows['data_notes_count'].setText(
+                str(int(self._get_notes_count())))
+            return
+        mode = self._engine.filter_mode
+        params = _FILTER_PRESETS.get(mode, {})
+        self._rows['data_filter_mode'].setText(mode)
+        if params:
+            self._rows['data_filter_params'].setText(
+                'win={window}  conf={confirm}  yin_thr={yin_thr}  '
+                'rms_floor={rms_floor:g}  edge={edge_hops}'.format(**params))
+        else:
+            self._rows['data_filter_params'].setText('—')
+        self._rows['data_a4'].setText(f'{self._engine.a4:.2f} Hz')
+        self._rows['data_rms'].setText(f'{self._engine.last_rms_db:+.1f} dBFS')
+        self._rows['data_aperiodicity'].setText(f'{self._engine.last_ap:.3f}')
+        if self._engine.last_freq > 0:
+            self._rows['data_freq'].setText(f'{self._engine.last_freq:.2f} Hz')
+        else:
+            self._rows['data_freq'].setText('—')
+        m = self._engine.last_locked_midi
+        if m is not None:
+            self._rows['data_midi'].setText(
+                f'{m}  ({midi_note_name(int(m))})')
+        else:
+            self._rows['data_midi'].setText('—')
+        self._rows['data_notes_count'].setText(
+            str(int(self._get_notes_count())))
 
 
 # =============================================================================
@@ -1111,6 +1423,10 @@ class MainWindow(QMainWindow):
         self._active_midi: int | None = None
         self._active_midi_at: datetime.datetime | None = None
         self._layout_mode: str = 'single'   # 'single' | 'matrix'
+        # Cumulative count of distinct note emissions since launch (each
+        # _on_note increments). Diagnostics readout consumes this; the
+        # table-level note count comes from `len(self.stats)`.
+        self._notes_count: int = 0
 
         # Load user config + previously-registered custom instruments before
         # building the UI so the catalog reflects them at first paint.
@@ -1237,6 +1553,19 @@ class MainWindow(QMainWindow):
         self._cb_oor.toggled.connect(self._on_oor_toggled)
         il.addWidget(self._cb_oor)
 
+        # "Show spectrogram & diagnostics" toggle — reveals the live FFT
+        # waterfall and the diagnostics readout in the left pane. Off by
+        # default so the casual tuner view stays uncluttered.
+        self._cb_diag = QCheckBox(self._t('show_diagnostics'))
+        self._cb_diag.setChecked(bool(getattr(self._cfg, 'show_diagnostics', False)))
+        self._cb_diag.setToolTip(self._t('show_diagnostics_tip'))
+        self._cb_diag.setStyleSheet("""
+            QCheckBox { color: #bbb; font-size: 12px; padding: 2px 4px; }
+            QCheckBox::indicator { width: 14px; height: 14px; }
+        """)
+        self._cb_diag.toggled.connect(self._on_diagnostics_toggled)
+        il.addWidget(self._cb_diag)
+
         # Select the saxophone family + the default alto instrument.
         self._select_family_for_instrument(self.instrument)
         self._populate_instrument_combo(select_key=self.instrument)
@@ -1343,17 +1672,48 @@ class MainWindow(QMainWindow):
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setHandleWidth(6)
 
-        # Links: Tuner
+        # Links: Tuner (+ optional spectrogram + diagnostics panel)
         left = QWidget()
         ll3 = QVBoxLayout(left)
         ll3.setContentsMargins(0, 0, 6, 0)
         self._tuner = TunerWidget()
-        self._tuner.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        # Tuner gets a fixed-ish vertical slot now that it shares the
+        # pane with optional panels. Expanding horizontally but only
+        # Preferred vertically lets the spectrogram claim leftover space
+        # when the panels are visible.
+        self._tuner.setSizePolicy(QSizePolicy.Policy.Expanding,
+                                   QSizePolicy.Policy.Preferred)
         ll3.addWidget(self._tuner)
         self._status_lbl = QLabel(self._t('no_signal'))
         self._status_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._status_lbl.setStyleSheet('color:#888;font-size:13px;padding:4px;')
         ll3.addWidget(self._status_lbl)
+
+        # Spectrogram + diagnostics panels. Always constructed so toggle
+        # is just show/hide — keeps the timer threading consistent and
+        # avoids reconstruction cost when flipped repeatedly.
+        self._spectro_grp = QGroupBox(self._t('spectro_title'))
+        sg_l = QVBoxLayout(self._spectro_grp)
+        sg_l.setContentsMargins(6, 6, 6, 6)
+        self._spectro = SpectrogramWidget(self._engine if AUDIO_OK else None)
+        sg_l.addWidget(self._spectro)
+        ll3.addWidget(self._spectro_grp, 1)
+
+        self._data_grp = QGroupBox(self._t('data_panel_title'))
+        dg_l = QVBoxLayout(self._data_grp)
+        dg_l.setContentsMargins(6, 6, 6, 6)
+        self._data_panel = DataPanelWidget(
+            self._engine if AUDIO_OK else None,
+            self._t,
+            lambda: self._notes_count,
+            lambda: self._cfg,
+        )
+        dg_l.addWidget(self._data_panel)
+        ll3.addWidget(self._data_grp)
+
+        show_diag = bool(getattr(self._cfg, 'show_diagnostics', False))
+        self._spectro_grp.setVisible(show_diag)
+        self._data_grp.setVisible(show_diag)
 
         # Rechts: Tabelle
         right = QWidget()
@@ -1528,6 +1888,18 @@ class MainWindow(QMainWindow):
 
         # Status & Tabellenlabel
         self._status_lbl.setText(self._t('no_signal'))
+
+        # Diagnose-Panel + Spektrogramm.
+        if hasattr(self, '_cb_diag'):
+            self._cb_diag.setText(self._t('show_diagnostics'))
+            self._cb_diag.setToolTip(self._t('show_diagnostics_tip'))
+        if hasattr(self, '_spectro_grp'):
+            self._spectro_grp.setTitle(self._t('spectro_title'))
+        if hasattr(self, '_data_grp'):
+            self._data_grp.setTitle(self._t('data_panel_title'))
+        if hasattr(self, '_data_panel'):
+            self._data_panel.retranslate(self._t)
+
         self._refresh_table()
 
     # ── Audio-Callback ────────────────────────────────────────────────────────
@@ -1546,6 +1918,10 @@ class MainWindow(QMainWindow):
             if midi_kl not in self.stats:
                 self.stats[midi_kl] = NoteStats()
             self.stats[midi_kl].add(cents)
+        # Bump the diagnostics counter outside the lock — single thread
+        # writes it, single thread reads via the timer; integer add is
+        # atomic enough for a display-only counter.
+        self._notes_count += 1
         # Per-measurement log. Instrument/A4 are read off the active run
         # inside the log, not from `self`, so a callback firing during a UI
         # change still attributes to the run that was active when it fired.
@@ -1967,6 +2343,17 @@ class MainWindow(QMainWindow):
         Internally we store the inverse as `allow_out_of_range`."""
         self._cfg.allow_out_of_range = not checked
         sax_config.save_config(self._cfg)
+
+    def _on_diagnostics_toggled(self, checked: bool) -> None:
+        """Show or hide the spectrogram + diagnostics panels and persist
+        the choice. Widgets remain constructed either way so flipping
+        the toggle has no allocation cost on the audio thread."""
+        self._cfg.show_diagnostics = bool(checked)
+        sax_config.save_config(self._cfg)
+        if hasattr(self, '_spectro_grp'):
+            self._spectro_grp.setVisible(bool(checked))
+        if hasattr(self, '_data_grp'):
+            self._data_grp.setVisible(bool(checked))
         self._refresh_table()
 
     def _on_layout_pref_changed(self, _idx: int) -> None:
