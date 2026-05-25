@@ -49,7 +49,7 @@ from sax_instruments import (
 import sax_config
 
 APP_NAME = 'Intonation Analyzer'
-APP_VERSION = '0.2.1'
+APP_VERSION = '0.3.0'
 
 
 # =============================================================================
@@ -159,6 +159,8 @@ STRINGS = {
         'table_title':   'Intonationstabelle',
         'table_summary': 'Intonationstabelle  \u2013  {notes} Töne  |  {total} Messungen',
         'table_empty_hint': 'Intonationstabelle  \u2013  spiel einen Ton, dann erscheinen hier Mittelwert und Standardabweichung pro Ton.',
+        'table_matrix_title': 'Intonationsmatrix  \u2013  {played} von {total} Z\u00e4hlen gespielt',
+        'matrix_oct_label':   'Okt {n}',
         # Reset-Dialog
         'reset_title':   'Reset',
         'reset_msg':     'Alle Messungen zurücksetzen?',
@@ -333,6 +335,8 @@ STRINGS = {
         'table_title':   'Intonation Table',
         'table_summary': 'Intonation Table  \u2013  {notes} notes  |  {total} measurements',
         'table_empty_hint': 'Intonation Table  \u2013  play a note to begin; per-note mean and standard deviation appear here as you play.',
+        'table_matrix_title': 'Intonation matrix  \u2013  {played} of {total} cells played',
+        'matrix_oct_label':   'Oct {n}',
         'reset_title':   'Reset',
         'reset_msg':     'Reset all measurements?',
         'audio_error_title': 'No audio input',
@@ -747,6 +751,7 @@ class MainWindow(QMainWindow):
         self._recording = True   # Aufnahme läuft beim Start
         self._active_midi: int | None = None
         self._active_midi_at: datetime.datetime | None = None
+        self._layout_mode: str = 'single'   # 'single' | 'matrix'
 
         # Load user config + previously-registered custom instruments before
         # building the UI so the catalog reflects them at first paint.
@@ -1088,13 +1093,90 @@ class MainWindow(QMainWindow):
         self._active_midi = midi_kl
         self._active_midi_at = datetime.datetime.now()
 
-    # ── Tabelle ───────────────────────────────────────────────────────────────
+    # ── Tabelle ──────────────────────────────────────────────────────────────────────
+    # Two layout modes:
+    #   'single' — single-column-of-notes table (1 row per played note +
+    #              1 row per seeded expected note).
+    #   'matrix' — piano-roll: 12 chromatic rows × N octave columns, where
+    #              N covers the instrument's range padded ±1 octave. Cells
+    #              outside the instrument's range render greyed out.
+    # The mode is chosen automatically based on the available width.
+    _MATRIX_COL_WIDTH = 88     # min usable width per octave column (px)
+    _MATRIX_HEADER_W  = 64     # row-header width (note names)
+
     def _refresh_table(self):
-        # Can be called during initial UI construction (instrument combo
-        # populate fires _on_instr_changed before _build_ui finishes the
-        # right-hand panel). Bail out until the table widget exists.
         if not hasattr(self, '_table'):
             return
+        desired = self._desired_layout_mode()
+        if desired != self._layout_mode:
+            self._layout_mode = desired
+            self._configure_table_for_mode(desired)
+        if desired == 'matrix':
+            self._refresh_table_matrix()
+        else:
+            self._refresh_table_single()
+
+    def _desired_layout_mode(self) -> str:
+        """Pick 'matrix' when the table viewport is wide enough to show
+        every octave the current instrument touches; 'single' otherwise."""
+        if not hasattr(self, '_table'):
+            return 'single'
+        w = self._table.viewport().width()
+        if w <= 0:
+            w = self._table.width()
+        if w <= 0:
+            return 'single'
+        n_octaves = self._matrix_octave_count()
+        needed = n_octaves * self._MATRIX_COL_WIDTH + self._MATRIX_HEADER_W
+        return 'matrix' if w >= needed else 'single'
+
+    def _matrix_octave_range(self) -> tuple[int, int]:
+        """(lo_octave, hi_octave) inclusive to display for the current
+        instrument. Padded ±1 octave for out-of-range context."""
+        transp = TRANSP_MAP.get(self.instrument, 0)
+        lo_f, hi_f = sax_instruments.fingered_range(self.instrument)
+        if self.display == 'griff':
+            lo_midi, hi_midi = lo_f, hi_f
+        else:
+            lo_midi, hi_midi = lo_f + transp, hi_f + transp
+        lo_oct = max(0, lo_midi // 12 - 1 - 1)
+        hi_oct = hi_midi // 12 - 1 + 1
+        return (lo_oct, hi_oct)
+
+    def _matrix_octave_count(self) -> int:
+        lo, hi = self._matrix_octave_range()
+        return hi - lo + 1
+
+    def _configure_table_for_mode(self, mode: str) -> None:
+        """Swap the table between single-column and matrix layouts."""
+        if mode == 'matrix':
+            n_oct = self._matrix_octave_count()
+            self._table.clear()
+            self._table.setColumnCount(n_oct)
+            self._table.setRowCount(12)
+            self._table.verticalHeader().setVisible(True)
+            self._table.verticalHeader().setDefaultSectionSize(28)
+            self._table.horizontalHeader().setSectionResizeMode(
+                QHeaderView.ResizeMode.Stretch)
+            self._table.setItemDelegateForColumn(5, None)
+        else:
+            self._table.clear()
+            self._table.setColumnCount(6)
+            self._table.verticalHeader().setVisible(False)
+            self._table.horizontalHeader().setSectionResizeMode(
+                QHeaderView.ResizeMode.Stretch)
+            self._table.setHorizontalHeaderLabels(self._table_headers())
+            self._table.setItemDelegateForColumn(5, self._bar_delegate)
+
+    def _active_midi_now(self):
+        """Currently-played MIDI if the highlight is still fresh, else None."""
+        if (self._active_midi_at is None
+                or (datetime.datetime.now() - self._active_midi_at)
+                .total_seconds() > 1.5):
+            return None
+        return self._active_midi
+
+    def _refresh_table_single(self):
         transp     = TRANSP_MAP[self.instrument]
         disp_griff = (self.display == 'griff')
 
@@ -1111,13 +1193,7 @@ class MainWindow(QMainWindow):
 
         self._table.setRowCount(len(items))
         played_n = 0
-        # Decide whether the highlight is still fresh — fade it after 1.5s
-        # of silence so the table reverts to neutral when the player stops.
-        now = datetime.datetime.now()
-        active_midi = self._active_midi
-        if (self._active_midi_at is None
-                or (now - self._active_midi_at).total_seconds() > 1.5):
-            active_midi = None
+        active_midi = self._active_midi_now()
         for row, (midi_kl, st) in enumerate(items):
             midi_gr = midi_kl - transp
             kl_name = midi_note_name(midi_kl)
@@ -1131,15 +1207,15 @@ class MainWindow(QMainWindow):
 
             col = (QColor('#3a9e5f') if abs(mean) <= 5 else
                    QColor('#c8a020') if abs(mean) <= 12 else QColor('#c03030'))
-            dim_col = QColor('#555')   # un-played pre-seeded notes
+            dim_col = QColor('#555')
 
             is_active = (active_midi == midi_kl)
             for c, val in enumerate([
                 n1, n2,
-                f"{sign}{mean:.1f}" if has_data else '\u2013',
-                f"\u00b1{st.std:.1f}" if st.n > 1 else '\u2013',
-                str(st.n) if has_data else '\u2013',
-                '',   # Balken wird vom Delegate gezeichnet
+                f"{sign}{mean:.1f}" if has_data else '–',
+                f"±{st.std:.1f}" if st.n > 1 else '–',
+                str(st.n) if has_data else '–',
+                '',
             ]):
                 item = QTableWidgetItem(val)
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1154,14 +1230,84 @@ class MainWindow(QMainWindow):
                 self._table.setItem(row, c, item)
 
         total = sum(s.n for _, s in items)
-        if not items:
-            label = self._t('table_empty_hint')
-        elif played_n == 0:
-            # Only seeded blanks visible \u2014 keep the play-a-note hint up.
+        if not items or played_n == 0:
             label = self._t('table_empty_hint')
         else:
             label = self._t('table_summary', notes=played_n, total=total)
         self._table_lbl.setText(label)
+
+    def _refresh_table_matrix(self):
+        transp     = TRANSP_MAP[self.instrument]
+        disp_griff = (self.display == 'griff')
+        lo_f, hi_f = sax_instruments.fingered_range(self.instrument)
+        lo_oct, hi_oct = self._matrix_octave_range()
+        octaves = list(range(lo_oct, hi_oct + 1))
+
+        self._table.setHorizontalHeaderLabels(
+            [self._t('matrix_oct_label', n=o) for o in octaves])
+        # Row labels: pitch class only (octave lives in the column header).
+        self._table.setVerticalHeaderLabels(
+            [c.split('/')[0] for c in CHROMA])
+
+        with self._lock:
+            stats_by_midi = dict(self.stats)
+        active_midi = self._active_midi_now()
+
+        played_n = 0
+        in_range_cells = 0
+        for r in range(12):
+            for c, oct_ in enumerate(octaves):
+                midi_visible = (oct_ + 1) * 12 + r
+                if disp_griff:
+                    midi_fingered = midi_visible
+                    midi_sounding = midi_visible + transp
+                else:
+                    midi_sounding = midi_visible
+                    midi_fingered = midi_visible - transp
+                in_range = lo_f <= midi_fingered <= hi_f
+                if in_range:
+                    in_range_cells += 1
+
+                st = stats_by_midi.get(midi_sounding)
+                has_data = st is not None and st.n > 0
+                if has_data:
+                    played_n += 1
+                    mean = st.mean
+                    sign = '+' if mean >= 0 else ''
+                    text = f"{sign}{mean:.1f}"
+                    fg = (QColor('#3a9e5f') if abs(mean) <= 5 else
+                          QColor('#c8a020') if abs(mean) <= 12 else
+                          QColor('#c03030'))
+                    bg = QColor('#1a1a24')
+                elif in_range:
+                    text = '·'
+                    fg = QColor('#666')
+                    bg = QColor('#1a1a24')
+                else:
+                    text = ''
+                    fg = QColor('#333')
+                    bg = QColor('#101018')
+                if active_midi == midi_sounding:
+                    bg = QColor('#2c5a8a')
+
+                item = QTableWidgetItem(text)
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                item.setForeground(fg)
+                item.setBackground(bg)
+                self._table.setItem(r, c, item)
+
+        if in_range_cells == 0:
+            label = self._t('table_empty_hint')
+        else:
+            label = self._t('table_matrix_title',
+                             played=played_n, total=in_range_cells)
+        self._table_lbl.setText(label)
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        # Recalculate layout mode on resize. Cheap.
+        if hasattr(self, '_table'):
+            self._refresh_table()
 
     def _make_bar(self, cents, w=20):
         half = w // 2
