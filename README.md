@@ -60,7 +60,7 @@ source ~/sax-venv/bin/activate
 #### 4. Install Python packages
 
 ```bash
-pip install PyQt6 numpy sounddevice reportlab
+pip install -r requirements.txt
 ```
 
 #### 5. Run the program
@@ -109,7 +109,7 @@ python -m venv %USERPROFILE%\sax-venv
 #### 5. Install Python packages
 
 ```cmd
-pip install PyQt6 numpy sounddevice reportlab
+pip install -r requirements.txt
 ```
 
 #### 6. Run the program
@@ -242,7 +242,7 @@ source ~/sax-venv/bin/activate
 #### 4. Python-Pakete installieren
 
 ```bash
-pip install PyQt6 numpy sounddevice reportlab
+pip install -r requirements.txt
 ```
 
 #### 5. Programm starten
@@ -291,7 +291,7 @@ python -m venv %USERPROFILE%\sax-venv
 #### 5. Python-Pakete installieren
 
 ```cmd
-pip install PyQt6 numpy sounddevice reportlab
+pip install -r requirements.txt
 ```
 
 #### 6. Programm starten

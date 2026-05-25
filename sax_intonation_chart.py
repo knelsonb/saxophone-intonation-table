@@ -30,7 +30,7 @@ def _sans(point_size: int, bold: bool = False) -> QFont:
     """
     f = QFont()
     f.setFamilies(["Segoe UI", "Arial", "Helvetica", "DejaVu Sans",
-                   "Liberation Sans", "sans-serif"])
+                   "Liberation Sans"])
     f.setStyleHint(QFont.StyleHint.SansSerif)
     f.setPointSize(point_size)
     if bold:
@@ -41,7 +41,7 @@ def _sans(point_size: int, bold: bool = False) -> QFont:
 def _mono(point_size: int) -> QFont:
     f = QFont()
     f.setFamilies(["Consolas", "Menlo", "DejaVu Sans Mono",
-                   "Liberation Mono", "Courier New", "monospace"])
+                   "Liberation Mono", "Courier New"])
     f.setStyleHint(QFont.StyleHint.Monospace)
     f.setPointSize(point_size)
     return f
@@ -94,7 +94,13 @@ def render_intonation_chart(
     finally:
         p.end()
 
-    pix.save(output_path)
+    # Returns False if PyQt6's image plugin chain refuses the format — for
+    # example a stripped-down conda build with no PNG plugin. Surface that
+    # instead of silently writing a 0-byte file.
+    if not pix.save(output_path):
+        raise RuntimeError(
+            f"Failed to save chart image to {output_path!r}. The image "
+            "format may not be supported by this PyQt6 install.")
 
 
 def _draw_header(p: QPainter, title: str, subtitle: str) -> None:
