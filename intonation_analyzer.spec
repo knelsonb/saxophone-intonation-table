@@ -34,6 +34,7 @@ a = Analysis(
         'sax_instruments',
         'sax_config',
         'sax_flow_layout',
+        'sax_audio_engine',
         '_sounddevice',
         *sd_hidden,
     ],
