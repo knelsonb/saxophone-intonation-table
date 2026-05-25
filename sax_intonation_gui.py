@@ -49,7 +49,7 @@ from sax_instruments import (
 import sax_config
 
 APP_NAME = 'Intonation Analyzer'
-APP_VERSION = '0.3.1'
+APP_VERSION = '0.3.2'
 
 
 # =============================================================================
@@ -736,6 +736,140 @@ class CentBarDelegate(QStyledItemDelegate):
 
 
 # =============================================================================
+# Delegate: matrix-mode cell with mean number + bar + std whiskers + live arrow
+# =============================================================================
+class MatrixCellDelegate(QStyledItemDelegate):
+    """Paints each piano-roll cell with three layers of information:
+
+    * Top half — mean cents number (color-coded by magnitude).
+    * Middle bar — horizontal scale centered at 0 ct; the filled bar runs
+      from center to the mean value, with ±std whiskers extending beyond.
+    * Right edge — a small triangle if a live measurement just landed in
+      this cell (within the last 1.5s — handled in the GUI by setting an
+      'active' flag in the cell's UserRole+1 data slot).
+
+    Data layout per cell (set on the QTableWidgetItem):
+        ItemDataRole.UserRole       → dict {
+            'mean': float | None,
+            'std':  float | None,
+            'n':    int,
+            'in_range': bool,
+            'active': bool,
+        }
+
+    Cells where the dict is missing (or in_range is False) just render the
+    background and skip all overlays.
+    """
+
+    MAX_CENT = 50.0   # ±50 ct = bar saturated
+
+    def paint(self, painter, option, index):
+        data = index.data(Qt.ItemDataRole.UserRole)
+        if not isinstance(data, dict):
+            super().paint(painter, option, index)
+            return
+
+        r = option.rect
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        in_range = data.get('in_range', True)
+        active   = data.get('active', False)
+        mean     = data.get('mean')
+        std      = data.get('std') or 0.0
+        n        = int(data.get('n') or 0)
+
+        # Background — out-of-range darker, active blue tint, else default.
+        if active:
+            painter.fillRect(r, QColor('#2c5a8a'))
+        elif in_range:
+            painter.fillRect(r, QColor('#1a1a24'))
+        else:
+            painter.fillRect(r, QColor('#101018'))
+
+        # Always draw the cell border on a subtle pen so the grid stays
+        # visible even when the table-widget grid lines are styled flat.
+        painter.setPen(QPen(QColor(60, 60, 80), 1))
+        painter.drawRect(r.adjusted(0, 0, -1, -1))
+
+        if not in_range or mean is None:
+            painter.restore()
+            return
+
+        # --- Top half: mean text ---------------------------------------
+        col = (QColor('#3a9e5f') if abs(mean) <= 5 else
+               QColor('#c8a020') if abs(mean) <= 12 else QColor('#c03030'))
+        sign = '+' if mean >= 0 else ''
+        painter.setPen(col)
+        painter.setFont(QFont('Monospace', 10, QFont.Weight.Bold))
+        text_rect = QRectF(r.left(), r.top() + 1, r.width(), r.height() / 2)
+        painter.drawText(text_rect,
+                          Qt.AlignmentFlag.AlignHCenter
+                          | Qt.AlignmentFlag.AlignVCenter,
+                          f"{sign}{mean:.1f}")
+
+        # --- Bottom half: scale + bar + whiskers -----------------------
+        pad_x = 6
+        scale_w = r.width() - 2 * pad_x
+        scale_h = 4
+        cx = r.left() + r.width() / 2
+        # Place the scale just below vertical center.
+        scale_y = r.top() + r.height() * 0.58
+        # Background trough.
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(45, 45, 60))
+        painter.drawRoundedRect(QRectF(r.left() + pad_x, scale_y,
+                                        scale_w, scale_h), 2, 2)
+        # ±5 ct in-tune band.
+        zone_w = max(2.0, scale_w / 2 * 5.0 / self.MAX_CENT)
+        painter.setBrush(QColor(40, 110, 60, 160))
+        painter.drawRect(QRectF(cx - zone_w, scale_y, zone_w * 2, scale_h))
+        # Filled bar from center to mean.
+        norm = max(-1.0, min(1.0, mean / self.MAX_CENT))
+        fill_w = abs(norm) * scale_w / 2
+        painter.setBrush(col)
+        if mean >= 0:
+            painter.drawRoundedRect(QRectF(cx, scale_y - 1,
+                                            fill_w, scale_h + 2), 2, 2)
+        else:
+            painter.drawRoundedRect(QRectF(cx - fill_w, scale_y - 1,
+                                            fill_w, scale_h + 2), 2, 2)
+        # Center tick.
+        painter.setPen(QPen(QColor(200, 200, 220), 1))
+        painter.drawLine(QPointF(cx, scale_y - 2),
+                          QPointF(cx, scale_y + scale_h + 2))
+
+        # ±1σ whiskers — extend from the mean point along the same scale.
+        if n > 1 and std > 0:
+            std_lo = max(-1.0, min(1.0, (mean - std) / self.MAX_CENT))
+            std_hi = max(-1.0, min(1.0, (mean + std) / self.MAX_CENT))
+            x_lo = cx + std_lo * scale_w / 2
+            x_hi = cx + std_hi * scale_w / 2
+            w_y = scale_y + scale_h + 4
+            painter.setPen(QPen(QColor(220, 220, 235, 180), 1.4))
+            painter.drawLine(QPointF(x_lo, w_y), QPointF(x_hi, w_y))
+            painter.drawLine(QPointF(x_lo, w_y - 2),
+                              QPointF(x_lo, w_y + 2))
+            painter.drawLine(QPointF(x_hi, w_y - 2),
+                              QPointF(x_hi, w_y + 2))
+
+        # Small N count in the corner.
+        painter.setPen(QColor(140, 140, 160))
+        painter.setFont(QFont('Monospace', 7))
+        painter.drawText(QRectF(r.right() - 24, r.bottom() - 12, 22, 10),
+                          Qt.AlignmentFlag.AlignRight
+                          | Qt.AlignmentFlag.AlignVCenter,
+                          f"n{n}")
+
+        painter.restore()
+
+    def sizeHint(self, option, index):
+        sh = super().sizeHint(option, index)
+        # Need vertical room for: number (12) + scale (12) + whiskers (8).
+        return sh.__class__(max(sh.width(), 70), max(sh.height(), 44))
+
+
+# =============================================================================
 # Haupt-Fenster
 # =============================================================================
 class MainWindow(QMainWindow):
@@ -1103,6 +1237,9 @@ class MainWindow(QMainWindow):
     # The mode is chosen automatically based on the available width.
     _MATRIX_COL_WIDTH = 88     # min usable width per octave column (px)
     _MATRIX_HEADER_W  = 64     # row-header width (note names)
+    # Hysteresis: enter matrix at the calculated threshold, drop back to
+    # single only when noticeably narrower. Prevents thrash near the edge.
+    _MATRIX_HYSTERESIS = 48    # px
 
     def _refresh_table(self):
         if not hasattr(self, '_table'):
@@ -1118,7 +1255,9 @@ class MainWindow(QMainWindow):
 
     def _desired_layout_mode(self) -> str:
         """Pick 'matrix' when the table viewport is wide enough to show
-        every octave the current instrument touches; 'single' otherwise."""
+        every octave the current instrument touches; 'single' otherwise.
+        Uses a small hysteresis band so width oscillations around the
+        threshold don't thrash the layout."""
         if not hasattr(self, '_table'):
             return 'single'
         w = self._table.viewport().width()
@@ -1128,6 +1267,10 @@ class MainWindow(QMainWindow):
             return 'single'
         n_octaves = self._matrix_octave_count()
         needed = n_octaves * self._MATRIX_COL_WIDTH + self._MATRIX_HEADER_W
+        if self._layout_mode == 'matrix':
+            # Only drop back to single when meaningfully narrower than the
+            # entry threshold.
+            return 'matrix' if w >= needed - self._MATRIX_HYSTERESIS else 'single'
         return 'matrix' if w >= needed else 'single'
 
     def _matrix_octave_range(self) -> tuple[int, int]:
@@ -1152,24 +1295,40 @@ class MainWindow(QMainWindow):
         return hi - lo + 1
 
     def _configure_table_for_mode(self, mode: str) -> None:
-        """Swap the table between single-column and matrix layouts."""
+        """Swap the table between single-column and matrix layouts.
+
+        Reuses cached delegates rather than constructing per call. The
+        single-mode delegate is the existing CentBarDelegate on column 5;
+        matrix mode replaces it with a default delegate (PyQt6 won't
+        accept None) and installs MatrixCellDelegate on every cell."""
+        if not hasattr(self, '_default_delegate'):
+            self._default_delegate = QStyledItemDelegate(self._table)
+        if not hasattr(self, '_matrix_delegate'):
+            self._matrix_delegate = MatrixCellDelegate(self._table)
         if mode == 'matrix':
             n_oct = self._matrix_octave_count()
             self._table.clear()
             self._table.setColumnCount(n_oct)
             self._table.setRowCount(12)
             self._table.verticalHeader().setVisible(True)
-            self._table.verticalHeader().setDefaultSectionSize(28)
+            self._table.verticalHeader().setDefaultSectionSize(46)
             self._table.horizontalHeader().setSectionResizeMode(
                 QHeaderView.ResizeMode.Stretch)
-            self._table.setItemDelegateForColumn(5, None)
+            # Replace the column-5 bar delegate with a default so the old
+            # delegate doesn't try to paint our new data shape.
+            self._table.setItemDelegateForColumn(5, self._default_delegate)
+            self._table.setItemDelegate(self._matrix_delegate)
         else:
             self._table.clear()
             self._table.setColumnCount(6)
             self._table.verticalHeader().setVisible(False)
+            self._table.verticalHeader().setDefaultSectionSize(28)
             self._table.horizontalHeader().setSectionResizeMode(
                 QHeaderView.ResizeMode.Stretch)
             self._table.setHorizontalHeaderLabels(self._table_headers())
+            # Restore the default per-table delegate, then the bar delegate
+            # for the tendency column.
+            self._table.setItemDelegate(self._default_delegate)
             self._table.setItemDelegateForColumn(5, self._bar_delegate)
 
     def _active_midi_now(self):
@@ -1276,28 +1435,17 @@ class MainWindow(QMainWindow):
                 has_data = st is not None and st.n > 0
                 if has_data:
                     played_n += 1
-                    mean = st.mean
-                    sign = '+' if mean >= 0 else ''
-                    text = f"{sign}{mean:.1f}"
-                    fg = (QColor('#3a9e5f') if abs(mean) <= 5 else
-                          QColor('#c8a020') if abs(mean) <= 12 else
-                          QColor('#c03030'))
-                    bg = QColor('#1a1a24')
-                elif in_range:
-                    text = '·'
-                    fg = QColor('#666')
-                    bg = QColor('#1a1a24')
-                else:
-                    text = ''
-                    fg = QColor('#333')
-                    bg = QColor('#101018')
-                if active_midi == midi_sounding:
-                    bg = QColor('#2c5a8a')
-
-                item = QTableWidgetItem(text)
-                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                item.setForeground(fg)
-                item.setBackground(bg)
+                # MatrixCellDelegate reads this dict; it paints the
+                # mean number, the centered scale bar, and ±std whiskers.
+                payload = {
+                    'mean':     st.mean if has_data else None,
+                    'std':      st.std if has_data else None,
+                    'n':        st.n if st is not None else 0,
+                    'in_range': in_range,
+                    'active':   (active_midi == midi_sounding),
+                }
+                item = QTableWidgetItem('')
+                item.setData(Qt.ItemDataRole.UserRole, payload)
                 self._table.setItem(r, c, item)
 
         if in_range_cells == 0:
