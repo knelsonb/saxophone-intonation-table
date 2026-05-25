@@ -46,6 +46,16 @@ class AppConfig:
     matrix_extra_octaves: int = 0
     # 'auto' (width-driven), 'single' (force list), 'matrix' (force grid).
     layout_mode_preference: str = 'auto'
+    # Pitch-detection response. 'fast' = minimal smoothing, snappy tuner.
+    # 'normal' = balanced (default). 'slow' = aggressive smoothing,
+    # ideal for long tones / tuning analysis. See _FILTER_PRESETS in
+    # sax_intonation_gui.py for the parameter values.
+    filter_mode: str = 'normal'
+    # Minimum measurement count for a note to appear in the table.
+    # Hides notes you only blipped accidentally so the analysis only
+    # shows notes you actually held. Defaults to 5 to match the
+    # threshold the autotune feature already uses.
+    min_n_visible: int = 5
 
     def effective_log_path(self) -> Optional[Path]:
         if not self.persistence_enabled:
@@ -82,6 +92,8 @@ def load_config() -> AppConfig:
             matrix_extra_octaves=int(data.get("matrix_extra_octaves", 0)),
             layout_mode_preference=str(
                 data.get("layout_mode_preference", "auto")),
+            filter_mode=str(data.get("filter_mode", "normal")),
+            min_n_visible=max(0, int(data.get("min_n_visible", 5))),
         )
     except (OSError, json.JSONDecodeError):
         return AppConfig()
