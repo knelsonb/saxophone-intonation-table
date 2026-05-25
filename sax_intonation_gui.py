@@ -49,7 +49,7 @@ from sax_instruments import (
 import sax_config
 
 APP_NAME = 'Intonation Analyzer'
-APP_VERSION = '0.2.0'
+APP_VERSION = '0.2.1'
 
 
 # =============================================================================
