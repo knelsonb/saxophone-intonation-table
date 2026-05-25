@@ -202,114 +202,100 @@ def display_name(instrument_key: str, lang: str = 'en') -> str:
 # instrument, so they immediately see what's "expected" for that horn. Notes
 # played outside this range (overtones, altissimo, extensions) still pop in
 # automatically through the normal _on_note path.
-# Ranges reconciled across three Haiku validators. Where the consensus
-# narrowed the range we kept it conservative; where common keyed extensions
-# pushed it wider on a 2-of-3 vote we adopted the wider value. Goal: cover
-# what most players reach most of the time, including standard extensions
-# like the high-F# key on tenor sax, the low-A extension on baritone sax,
-# and the F-attachment on bass trombone — but stopping short of altissimo,
-# pedal tones, and other virtuoso-only registers.
+# Ranges sourced from MuseScore's instruments.xml (their `aPitchRange`
+# — amateur range — converted from sounding to FINGERED via
+# `transposeChromatic`). MuseScore is an open-source notation app with
+# ~10M users; the ranges are vetted by orchestrators and notation
+# experts and are about as close to a single source of truth as we can
+# get programmatically. Real-player overrides (saxes at low A, contras
+# at low C) layered on top — see tools/musescore/sync_ranges.py for
+# the reproducible regeneration script.
 _RANGES: dict[str, tuple[int, int]] = {
-    # Saxophones — all saxes floor at fingered low A (57) per real-player
-    # feedback. The low-A key is the practical bottom across the family;
-    # horns without it just leave the A row unplayed (still useful for
-    # exports and comparison). High end stays at fingered F#6 (78).
-    'eb_sopranino':       (57, 78),
-    'bb_soprano':         (57, 78),
-    'eb_alto':            (57, 78),
-    'bb_tenor':           (57, 78),
-    'eb_bari':            (57, 78),
-    'bb_bass':            (57, 78),
-    'eb_contrabass':      (57, 78),
-    # Clarinets — Boehm horns span written D/E3 (50/52) up to altissimo
-    # G6 (91) for most pros. Bass and contra clarinets carry the low-C
-    # extension (48) on pro models.
-    'clar_bb':            (50, 89),
-    'clar_a':             (50, 89),
-    'clar_c':             (52, 89),
-    'clar_eb':            (55, 89),
-    'clar_d':             (55, 89),
-    'clar_basset_f':      (48, 89),
-    'clar_alto_eb':       (50, 86),
-    'clar_bass_bb':       (48, 86),
-    'clar_contraalto_eb': (48, 79),   # fingered low-C extension
-    'clar_contrabass_bb': (48, 79),   # fingered low-C extension
-    # Flutes — alto and bass flute use the SAME fingerings as concert C
-    # flute and read in their own transposed clefs. Their fingered range
-    # is C4 (60) to C7 (84), not the concert pitch they sound. Concert
-    # flute itself: B3 with B-foot up to high D7 reachable by intermediate
-    # players.
-    'flute_c':            (59, 86),
-    'flute_piccolo':      (62, 84),
-    'flute_alto_g':       (60, 84),
-    'flute_bass_c':       (60, 84),
-    # Trumpets — written F#3 (54) to high C (84) universal across the
-    # Bb/C/D/Eb/F family. Piccolo Bb/A trumpets shift up to G3 (55).
-    'trp_bb':             (54, 84),
-    'trp_c':              (54, 84),
-    'trp_d':              (54, 84),
-    'trp_eb':             (54, 84),
-    'trp_e':              (54, 84),
-    'trp_f':              (54, 84),
-    'trp_a':              (54, 84),
-    'trp_piccolo_bb':     (54, 84),
-    'trp_piccolo_a':      (54, 84),
-    'trp_bass_bb':        (40, 72),
-    'cornet_bb':          (54, 82),
-    'flugel_bb':          (54, 79),
-    # Horns — F horn / Bb horn / Eb alto: written F2 (41) to F5 (77).
-    'horn_f':             (41, 77),
-    'horn_bb':            (41, 77),
-    'horn_eb_alto':       (41, 77),
-    'mellophone_f':       (54, 79),
-    # Trombones — tenor with F-attachment widens the low end; bass
-    # trombone with double valves comfortably reaches C5 (72).
-    'tbn_alto_eb':        (50, 79),
-    'tbn_tenor':          (40, 72),
-    'tbn_bass':           (36, 72),
-    'tbn_contrabass':     (28, 65),
-    # Low brass — treble-clef baritone/euphonium parts read a major 9th
-    # higher than the bass-clef equivalents (British brass-band convention).
-    'euph_bc':            (40, 75),
-    'euph_tc':            (54, 89),
-    'baritone_bc':        (40, 72),
-    'baritone_tc':        (54, 86),
-    'tuba_f':             (29, 67),
-    'tuba_eb':            (27, 65),
-    'tuba_cc':            (24, 65),
-    'tuba_bbb':           (22, 63),
-    'sousaphone_bbb':     (22, 60),
-    # Double reeds.
-    'oboe':               (58, 89),
-    'oboe_damore':        (58, 86),
-    'english_horn':       (52, 81),
-    'bassoon':            (34, 75),
-    'contrabassoon':      (22, 60),
-    # Recorders — non-transposing instruments, each pitched at its
-    # nominal lowest note. Sopranino starts at F5, soprano at C5, alto
-    # at F4, tenor at C4, bass at F3.
-    'rec_sopranino_f':    (77, 98),
-    'rec_soprano_c':      (72, 93),
-    'rec_alto_f':         (65, 86),
-    'rec_tenor_c':        (60, 81),
-    'rec_bass_f':         (53, 74),
-    # Strings — violin to C7, cello pros into thumb position, double
-    # bass thumb-position high G4.
-    'violin':             (55, 96),
-    'viola':              (48, 86),
-    'cello':              (36, 81),
-    'double_bass':        (28, 67),
-    'mandolin':           (55, 88),
+    # Saxophones
+    'eb_sopranino':           ( 57,  78),   # override via sopranino-saxophone
+    'bb_soprano':             ( 57,  78),   # override via soprano-saxophone
+    'eb_alto':                ( 57,  78),   # override via alto-saxophone
+    'bb_tenor':               ( 57,  78),   # override via tenor-saxophone
+    'eb_bari':                ( 57,  78),   # override via baritone-saxophone
+    'bb_bass':                ( 57,  78),   # override via bass-saxophone
+    'eb_contrabass':          ( 57,  78),   # override via contrabass-saxophone
+    # Clarinets
+    'clar_eb':                ( 52,  91),   # MS via eb-clarinet
+    'clar_d':                 ( 52,  91),   # MS via d-clarinet
+    'clar_c':                 ( 52,  89),   # MS via c-clarinet
+    'clar_bb':                ( 52,  91),   # MS via bb-clarinet
+    'clar_a':                 ( 52,  91),   # MS via a-clarinet
+    'clar_basset_f':          ( 48,  91),   # MS via basset-horn
+    'clar_alto_eb':           ( 52,  89),   # MS via alto-clarinet
+    'clar_bass_bb':           ( 51,  89),   # MS via bb-bass-clarinet
+    'clar_contraalto_eb':     ( 48,  91),   # override-lo via contra-alto-clarinet
+    'clar_contrabass_bb':     ( 48,  91),   # override-lo via contrabass-clarinet
+    # Flutes
+    'flute_piccolo':          ( 62,  93),   # MS via piccolo
+    'flute_c':                ( 60,  93),   # MS via flute
+    'flute_alto_g':           ( 60,  93),   # MS via alto-flute
+    'flute_bass_c':           ( 60,  89),   # MS via bass-flute
+    # Trumpets
+    'trp_piccolo_bb':         ( 49,  76),   # MS via bb-piccolo-trumpet
+    'trp_piccolo_a':          ( 49,  76),   # MS via a-piccolo-trumpet
+    'trp_f':                  ( 60,  77),   # MS via f-trumpet
+    'trp_e':                  ( 54,  81),   # MS via e-trumpet
+    'trp_eb':                 ( 54,  81),   # MS via eb-trumpet
+    'trp_d':                  ( 54,  81),   # MS via d-trumpet
+    'trp_c':                  ( 54,  82),   # MS via c-trumpet
+    'trp_bb':                 ( 54,  82),   # MS via bb-trumpet
+    'trp_a':                  ( 54,  82),   # MS via a-trumpet
+    'trp_bass_bb':            ( 54,  81),   # MS via bb-bass-trumpet
+    'cornet_bb':              ( 54,  81),   # MS via bb-cornet
+    'flugel_bb':              ( 54,  81),   # MS via flugelhorn
+    # Horns
+    'horn_f':                 ( 48,  76),   # MS via horn
+    'horn_bb':                ( 46,  79),   # MS via bb-horn-alto
+    'horn_eb_alto':           ( 54,  81),   # MS via eb-alto-horn
+    'mellophone_f':           ( 54,  79),   # manual (no MuseScore entry)
+    # Trombones
+    'tbn_alto_eb':            ( 45,  74),   # MS via alto-trombone
+    'tbn_tenor':              ( 40,  71),   # MS via trombone
+    'tbn_bass':               ( 32,  65),   # MS via bass-trombone
+    'tbn_contrabass':         ( 28,  62),   # MS via contrabass-trombone
+    # Low brass
+    'euph_bc':                ( 40,  70),   # MS via euphonium
+    'euph_tc':                ( 54,  84),   # MS via euphonium-treble
+    'baritone_bc':            ( 43,  64),   # MS via baritone
+    'baritone_tc':            ( 54,  81),   # MS via baritone-horn-treble
+    'tuba_f':                 ( 26,  64),   # MS via f-tuba
+    'tuba_eb':                ( 26,  64),   # MS via eb-tuba
+    'tuba_cc':                ( 26,  60),   # MS via c-tuba
+    'tuba_bbb':               ( 28,  58),   # MS via bb-tuba
+    'sousaphone_bbb':         ( 44,  74),   # MS via bb-sousaphone
+    # Double reeds
+    'oboe':                   ( 58,  87),   # MS via oboe
+    'oboe_damore':            ( 59,  87),   # MS via oboe-d'amore
+    'english_horn':           ( 59,  88),   # MS via english-horn
+    'bassoon':                ( 34,  69),   # MS via bassoon
+    'contrabassoon':          ( 34,  69),   # MS via contrabassoon
+    # Recorders
+    'rec_sopranino_f':        ( 77, 100),   # MS via sopranino-recorder
+    'rec_soprano_c':          ( 72,  93),   # MS via soprano-recorder
+    'rec_alto_f':             ( 65,  88),   # MS via alto-recorder
+    'rec_tenor_c':            ( 60,  81),   # MS via tenor-recorder
+    'rec_bass_f':             ( 53,  74),   # MS via bass-recorder
+    # Strings
+    'violin':                 ( 55,  88),   # MS via violin
+    'viola':                  ( 48,  79),   # MS via viola
+    'cello':                  ( 36,  67),   # MS via violoncello
+    'double_bass':            ( 40,  74),   # MS via contrabass
+    'mandolin':               ( 55,  85),   # MS via mandolin
     # Plucked
-    'guitar':             (40, 84),
-    'bass_guitar':        (28, 67),
-    'ukulele':            (60, 84),
-    'banjo':              (50, 86),
-    'harp':               (23, 104),
+    'guitar':                 ( 40,  83),   # MS via guitar-steel
+    'bass_guitar':            ( 40,  77),   # MS via bass-guitar
+    'ukulele':                ( 60,  81),   # MS via ukulele
+    'banjo':                  ( 48,  87),   # MS via banjo
+    'harp':                   ( 23, 104),   # MS via harp
     # Concert / generic
-    'voice':              (40, 84),
-    'c':                  (48, 79),
-    'piano':              (21, 108),
+    'voice':                  ( 41,  79),   # MS via voice
+    'c':                      ( 48,  79),   # manual (generic concert-pitch fallback)
+    'piano':                  ( 21, 108),   # MS via piano
 }
 
 
