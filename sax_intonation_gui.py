@@ -49,7 +49,7 @@ from sax_instruments import (
 import sax_config
 
 APP_NAME = 'Intonation Analyzer'
-APP_VERSION = '0.5.2'
+APP_VERSION = '0.5.3'
 
 
 # =============================================================================
@@ -79,9 +79,9 @@ STRINGS = {
         'min_n_label':      'Mindest-Messungen pro Ton:',
         'min_n_tip':        'Töne mit weniger als dieser Anzahl Messungen werden ausgeblendet.\nVerhindert, dass kurze Versehen die Tabelle füllen.',
         # Diagnose-Panel (Spektrogramm + Live-Werte)
-        'show_diagnostics':     'Spektrogramm & Diagnose anzeigen',
-        'show_diagnostics_tip': 'Blendet ein Live-Spektrogramm und ein Diagnose-Feld unter dem Stimmgerät ein.\nNützlich zum Beobachten von Obertönen und zur Fehlersuche.',
-        'spectro_title':        'Spektrogramm',
+        'show_diagnostics':     'Spektrumanalysator & Diagnose anzeigen',
+        'show_diagnostics_tip': 'Blendet einen Live-Spektrumanalysator und ein Diagnose-Feld unter dem Stimmgerät ein.\nNützlich zum Beobachten von Obertönen und zur Fehlersuche.',
+        'spectro_title':        'Spektrumanalysator',
         'data_panel_title':     'Diagnose',
         'data_device':          'Audio-Eingang',
         'data_samplerate':      'Abtastrate',
@@ -297,9 +297,9 @@ STRINGS = {
         'min_n_label':      'Min measurements per note:',
         'min_n_tip':        'Notes with fewer than this many measurements are hidden.\nKeeps brief slips out of the analysis.',
         # Diagnostics panel (spectrogram + live values)
-        'show_diagnostics':     'Show spectrogram & diagnostics',
-        'show_diagnostics_tip': 'Reveals a live spectrogram and a diagnostics readout below the tuner.\nUseful for inspecting overtones and troubleshooting.',
-        'spectro_title':        'Spectrogram',
+        'show_diagnostics':     'Show spectrum analyzer & diagnostics',
+        'show_diagnostics_tip': 'Reveals a live spectrum analyzer and a diagnostics readout below the tuner.\nUseful for inspecting overtones and troubleshooting.',
+        'spectro_title':        'Spectrum analyzer',
         'data_panel_title':     'Diagnostics',
         'data_device':          'Audio input',
         'data_samplerate':      'Sample rate',
@@ -798,10 +798,12 @@ class TunerWidget(QWidget):
         t = QTimer(self)
         t.timeout.connect(self._fade)
         t.start(80)
-        # Reduced from 260 in v0.5.2 to make room for the spectrogram and
-        # diagnostics panels beneath the tuner. The needle still reads
-        # cleanly at 180px on typical desktop resolutions.
-        self.setMinimumHeight(180)
+        # Restored to 260 in v0.5.3 after feedback that the 180px tuner
+        # cramped the needle / note / cents readout once the diagnostics
+        # panel sat beneath it. The spectrum analyzer below has its own
+        # min height and the vertical layout pushes diagnostics down the
+        # left pane rather than compressing the tuner.
+        self.setMinimumHeight(260)
 
     def set_note(self, note, freq, cents):
         self.note, self.freq, self.cents = note, freq, cents
@@ -884,29 +886,33 @@ class TunerWidget(QWidget):
 
 
 # =============================================================================
-# Spektrogramm-Widget
+# Spektrumanalysator-Widget
 # =============================================================================
-class SpectrogramWidget(QWidget):
-    """Rolling FFT waterfall of the live audio buffer.
+class SpectrumAnalyzerWidget(QWidget):
+    """Live spectrum analyzer (FFT magnitude vs. log frequency).
 
-    Pulls slices of `AudioEngine._buf`, runs a Hann-windowed rfft, bins
-    the magnitude into log-spaced frequency rows (27 Hz .. 4000 Hz), and
-    shifts the column-history image left each tick so the newest column
-    paints on the right edge. ~25 fps refresh; the engine's hop is
-    ~46 ms so there is no point chasing higher rates.
+    Pulls slices of `AudioEngine._buf` on its own QTimer tick (~30 fps),
+    runs a Hann-windowed rfft, bins magnitudes into log-spaced frequency
+    buckets between 27 Hz and 4000 Hz, and paints them as a filled curve
+    in dBFS. A peak-hold envelope decays at a fixed rate so transient
+    spikes stay readable for a few hundred ms before sliding back down.
 
-    Magnitudes are converted to dBFS, clamped to [-80, -10] dB, and
-    mapped through a viridis-style palette. Display only — never gates
-    or feeds back into pitch detection.
+    The audio callback is never touched here — the timer reads `_buf`
+    cooperatively and tolerates a hop of staleness. Display only, never
+    gates or feeds back into pitch detection.
     """
 
     F_LO = 27.0
     F_HI = 4000.0
     DB_FLOOR = -80.0
     DB_CEIL  = -10.0
-    N_BINS = 192       # vertical resolution (frequency rows)
-    HISTORY_COLS = 256  # ~3 s at 25 fps × ~120 ms? actually 256 × 40 ms ≈ 10 s, sized for window width
-    REFRESH_MS = 40
+    N_BINS = 192          # horizontal resolution (frequency buckets)
+    REFRESH_MS = 33       # ~30 fps
+    # Peak hold decay in dB per second. 0.3 s "hang" then decay; we
+    # approximate the hang implicitly by capping decay to roughly 100
+    # dB/s, which means a 70 dB spike takes ~0.7 s to drop fully back
+    # to the live curve. Plenty visible without smearing.
+    PEAK_DECAY_DB_PER_S = 60.0
 
     def __init__(self, engine: 'AudioEngine | None'):
         super().__init__()
@@ -914,77 +920,55 @@ class SpectrogramWidget(QWidget):
         # Log-spaced bin edges used to bucket the rfft magnitudes.
         self._edges = np.logspace(math.log10(self.F_LO), math.log10(self.F_HI),
                                    self.N_BINS + 1)
+        # Bin center frequencies, used for the X axis mapping.
+        self._centers = np.sqrt(self._edges[:-1] * self._edges[1:])
         # Cached Hann window. BLOCK_SIZE is fixed for the life of the
         # process, so allocating once and reusing is safe.
         self._window = np.hanning(BLOCK_SIZE).astype(np.float32)
         # Pre-computed mapping from rfft bin index → log-bucket index.
-        # The rfft over BLOCK_SIZE samples has BLOCK_SIZE//2 + 1 bins, each
-        # spaced SAMPLE_RATE / BLOCK_SIZE Hz apart.
         fft_freqs = np.fft.rfftfreq(BLOCK_SIZE, d=1.0 / SAMPLE_RATE)
-        # np.searchsorted gives the bucket index per fft bin.
         self._bucket = np.searchsorted(self._edges, fft_freqs) - 1
         self._bucket = np.clip(self._bucket, -1, self.N_BINS - 1)
-        # Column history: N_BINS rows × HISTORY_COLS columns, dBFS values.
-        self._history = np.full((self.N_BINS, self.HISTORY_COLS),
-                                 self.DB_FLOOR, dtype=np.float32)
-        # Viridis-ish lookup table (256 entries, RGB tuples).
-        self._lut = self._build_lut()
-        self.setMinimumHeight(120)
+        # Window normalization for amplitude-preserving rfft.
+        self._win_norm = float(np.sum(self._window) * 0.5)
+        # Live curve and peak-hold envelope, both in dBFS.
+        self._levels = np.full(self.N_BINS, self.DB_FLOOR, dtype=np.float32)
+        self._peaks  = np.full(self.N_BINS, self.DB_FLOOR, dtype=np.float32)
+        # Powers-of-two grid lines in Hz, labeled along the bottom.
+        self._grid_hz = [32, 64, 128, 256, 512, 1024, 2048, 4096]
+
+        self.setMinimumHeight(150)
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
         self._timer.start(self.REFRESH_MS)
 
-    @staticmethod
-    def _build_lut() -> list[tuple[int, int, int]]:
-        """Approximate viridis. Five anchor stops, linearly interpolated."""
-        stops = [
-            (0.00, (68,   1,  84)),
-            (0.25, (59,  82, 139)),
-            (0.50, (33, 145, 140)),
-            (0.75, (94, 201,  98)),
-            (1.00, (253, 231, 37)),
-        ]
-        lut: list[tuple[int, int, int]] = []
-        for i in range(256):
-            t = i / 255.0
-            for (t0, c0), (t1, c1) in zip(stops, stops[1:]):
-                if t0 <= t <= t1:
-                    f = 0.0 if t1 == t0 else (t - t0) / (t1 - t0)
-                    r = int(c0[0] + (c1[0] - c0[0]) * f)
-                    g = int(c0[1] + (c1[1] - c0[1]) * f)
-                    b = int(c0[2] + (c1[2] - c0[2]) * f)
-                    lut.append((r, g, b))
-                    break
-            else:
-                lut.append(stops[-1][1])
-        return lut
-
     def _tick(self) -> None:
         if not AUDIO_OK or self._engine is None:
             return
         buf = self._engine._buf
-        # Defensive: buf is a numpy array allocated once at startup, but
-        # if the audio thread is mid-roll the read is still safe — np.roll
-        # returns a new array, so the cb's assignment is atomic at array-
-        # reference level. We accept a hop of staleness either way.
         if buf is None or len(buf) < 8:
             return
+        # Bucket the rfft magnitudes into log-spaced bins, take the max
+        # per bucket so narrow spikes survive the downsampling.
         windowed = buf * self._window
-        mag = np.abs(np.fft.rfft(windowed))
-        # Bucket-sum magnitudes into log-spaced rows. np.add.at handles
-        # repeated indices, which is exactly what happens at the low end
-        # where many fft bins fall in the same log bucket.
+        mag = np.abs(np.fft.rfft(windowed)) / self._win_norm
         col = np.full(self.N_BINS, 1e-12, dtype=np.float32)
         valid = self._bucket >= 0
-        np.add.at(col, self._bucket[valid], mag[valid])
-        # Normalize so 0 dBFS corresponds to a sinusoid at unity amplitude
-        # in the windowed buffer. Hann window sum / 2 is the right
-        # denominator for amplitude-preserving rfft.
-        col /= (np.sum(self._window) * 0.5)
+        # np.maximum.at handles repeated indices; per-bucket peak instead
+        # of sum keeps the curve from drifting upward at the low end
+        # where many fft bins fall into a single log bucket.
+        np.maximum.at(col, self._bucket[valid], mag[valid])
         db = 20.0 * np.log10(col + 1e-12)
-        self._history = np.roll(self._history, -1, axis=1)
-        self._history[:, -1] = db
+        db = np.clip(db, self.DB_FLOOR, 0.0)
+        # Light temporal smoothing on the live curve — single-pole IIR
+        # with a coefficient picked to settle in ~50 ms at 30 fps. The
+        # peak-hold envelope is what makes spikes legible; the live
+        # curve just needs to not strobe.
+        self._levels = 0.6 * self._levels + 0.4 * db
+        # Peak-hold: instantaneous capture, linear decay between ticks.
+        decay = self.PEAK_DECAY_DB_PER_S * (self.REFRESH_MS / 1000.0)
+        self._peaks = np.maximum(self._peaks - decay, self._levels)
         self.update()
 
     def paintEvent(self, _ev):
@@ -999,23 +983,98 @@ class SpectrogramWidget(QWidget):
                        'audio disabled')
             p.end()
             return
-        # Map history (N_BINS × HISTORY_COLS) to a QImage and draw.
-        from PyQt6.QtGui import QImage
-        norm = np.clip((self._history - self.DB_FLOOR) /
-                       (self.DB_CEIL - self.DB_FLOOR), 0.0, 1.0)
-        idx = (norm * 255).astype(np.uint8)
-        # Build RGB byte buffer: N_BINS rows (flipped so low freq is at
-        # the bottom of the image, where music expects it) × HISTORY_COLS.
-        lut_arr = np.array(self._lut, dtype=np.uint8)        # (256, 3)
-        rgb = lut_arr[idx]                                    # (N_BINS, COLS, 3)
-        rgb = np.flipud(rgb)                                  # low freq at bottom
-        rgb = np.ascontiguousarray(rgb)
-        img = QImage(rgb.data, self.HISTORY_COLS, self.N_BINS,
-                     3 * self.HISTORY_COLS, QImage.Format.Format_RGB888)
-        # Scale to widget. Smooth would blur the data; FastTransformation
-        # gives crisp pixel blocks that match the data resolution.
-        p.drawImage(QRectF(0, 0, W, H), img)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        # Plot area leaves room for axis labels along the bottom.
+        margin_l = 4
+        margin_r = 4
+        margin_t = 4
+        margin_b = 14
+        x0 = margin_l
+        y0 = margin_t
+        x1 = max(W - margin_r, x0 + 1)
+        y1 = max(H - margin_b, y0 + 1)
+        plot_w = x1 - x0
+        plot_h = y1 - y0
+
+        log_lo = math.log10(self.F_LO)
+        log_hi = math.log10(self.F_HI)
+        log_span = log_hi - log_lo
+
+        def x_of(freq: float) -> float:
+            return x0 + (math.log10(freq) - log_lo) / log_span * plot_w
+
+        def y_of(db: float) -> float:
+            # DB_CEIL maps to top (y0), DB_FLOOR to bottom (y1).
+            t = (db - self.DB_FLOOR) / (self.DB_CEIL - self.DB_FLOOR)
+            t = max(0.0, min(1.0, t))
+            return y1 - t * plot_h
+
+        # Vertical gridlines at powers of two, with thin labels.
+        p.setFont(QFont('Monospace', 8))
+        grid_pen = QPen(QColor(40, 44, 60))
+        grid_pen.setWidth(1)
+        p.setPen(grid_pen)
+        for hz in self._grid_hz:
+            if hz < self.F_LO or hz > self.F_HI:
+                continue
+            gx = x_of(hz)
+            p.drawLine(QPointF(gx, y0), QPointF(gx, y1))
+        p.setPen(QColor(120, 130, 150))
+        for hz in self._grid_hz:
+            if hz < self.F_LO or hz > self.F_HI:
+                continue
+            gx = x_of(hz)
+            label = f'{hz}' if hz < 1000 else f'{hz // 1000}k'
+            p.drawText(QRectF(gx - 20, y1 + 1, 40, margin_b),
+                       Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
+                       label)
+
+        # Horizontal dB gridline at -40 dBFS for visual reference.
+        p.setPen(QPen(QColor(40, 44, 60), 1, Qt.PenStyle.DashLine))
+        y_mid = y_of(-40.0)
+        p.drawLine(QPointF(x0, y_mid), QPointF(x1, y_mid))
+
+        # Live curve as a filled polygon under the line.
+        from PyQt6.QtGui import QPolygonF
+        poly = QPolygonF()
+        poly.append(QPointF(x_of(self._centers[0]), y1))
+        for i, f in enumerate(self._centers):
+            poly.append(QPointF(x_of(float(f)), y_of(float(self._levels[i]))))
+        poly.append(QPointF(x_of(self._centers[-1]), y1))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(58, 156, 220, 110))
+        p.drawPolygon(poly)
+
+        # Bright line on top of the fill.
+        line_pen = QPen(QColor(120, 200, 255))
+        line_pen.setWidth(2)
+        p.setPen(line_pen)
+        prev = None
+        for i, f in enumerate(self._centers):
+            pt = QPointF(x_of(float(f)), y_of(float(self._levels[i])))
+            if prev is not None:
+                p.drawLine(prev, pt)
+            prev = pt
+
+        # Peak-hold envelope as a thinner, paler line on top.
+        peak_pen = QPen(QColor(240, 220, 140))
+        peak_pen.setWidth(1)
+        p.setPen(peak_pen)
+        prev = None
+        for i, f in enumerate(self._centers):
+            pt = QPointF(x_of(float(f)), y_of(float(self._peaks[i])))
+            if prev is not None:
+                p.drawLine(prev, pt)
+            prev = pt
+
         p.end()
+
+
+# Backwards-compatible alias. v0.5.2 referenced SpectrogramWidget; the
+# rest of the file still uses the old name where harmless, but new
+# constructions in the splitter use the analyzer class directly.
+SpectrogramWidget = SpectrumAnalyzerWidget
 
 
 # =============================================================================
@@ -1683,19 +1742,24 @@ class MainWindow(QMainWindow):
         # when the panels are visible.
         self._tuner.setSizePolicy(QSizePolicy.Policy.Expanding,
                                    QSizePolicy.Policy.Preferred)
+        # Tuner takes its full minimum height (260px) at the top of the
+        # left pane. The spectrum analyzer + diagnostics panel sit below
+        # it and only consume space when diagnostics are enabled.
         ll3.addWidget(self._tuner)
         self._status_lbl = QLabel(self._t('no_signal'))
         self._status_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._status_lbl.setStyleSheet('color:#888;font-size:13px;padding:4px;')
         ll3.addWidget(self._status_lbl)
 
-        # Spectrogram + diagnostics panels. Always constructed so toggle
-        # is just show/hide — keeps the timer threading consistent and
-        # avoids reconstruction cost when flipped repeatedly.
+        # Spectrum analyzer + diagnostics panels. Always constructed so
+        # the toggle is just show/hide — keeps the timer threading
+        # consistent and avoids reconstruction cost when flipped
+        # repeatedly. Attribute name kept as _spectro to minimize churn
+        # against the rest of the file's references.
         self._spectro_grp = QGroupBox(self._t('spectro_title'))
         sg_l = QVBoxLayout(self._spectro_grp)
         sg_l.setContentsMargins(6, 6, 6, 6)
-        self._spectro = SpectrogramWidget(self._engine if AUDIO_OK else None)
+        self._spectro = SpectrumAnalyzerWidget(self._engine if AUDIO_OK else None)
         sg_l.addWidget(self._spectro)
         ll3.addWidget(self._spectro_grp, 1)
 
