@@ -202,17 +202,27 @@ def display_name(instrument_key: str, lang: str = 'en') -> str:
 # instrument, so they immediately see what's "expected" for that horn. Notes
 # played outside this range (overtones, altissimo, extensions) still pop in
 # automatically through the normal _on_note path.
+# Ranges reconciled across three Haiku validators. Where the consensus
+# narrowed the range we kept it conservative; where common keyed extensions
+# pushed it wider on a 2-of-3 vote we adopted the wider value. Goal: cover
+# what most players reach most of the time, including standard extensions
+# like the high-F# key on tenor sax, the low-A extension on baritone sax,
+# and the F-attachment on bass trombone — but stopping short of altissimo,
+# pedal tones, and other virtuoso-only registers.
 _RANGES: dict[str, tuple[int, int]] = {
-    # Saxophones — standard low Bb to high F# fingered (Bb3 to F#6 = 58..78).
+    # Saxophones — fingered Bb3 (58) to F#6 (78) covers the standard
+    # low-Bb / high-F# range. Eb baritone gets the low-A extension that
+    # most pro horns carry.
     'eb_sopranino':       (58, 78),
     'bb_soprano':         (58, 78),
     'eb_alto':            (58, 78),
     'bb_tenor':           (58, 78),
-    'eb_bari':            (58, 78),
+    'eb_bari':            (57, 78),   # low-A extension on pro baris
     'bb_bass':            (58, 78),
     'eb_contrabass':      (58, 78),
-    # Clarinet (Boehm Bb): E3 to high C7 in chalumeau+altissimo, but most
-    # students live around E3 to C6.
+    # Clarinets — E3 (52) up to high C6 (84) on standard pedagogical
+    # Boehm horns; bass clarinet often carries the low-C extension on
+    # pro models so the floor moves from D2 down to C2 (38 → 36).
     'clar_bb':            (52, 84),
     'clar_a':             (52, 84),
     'clar_c':             (52, 84),
@@ -220,15 +230,17 @@ _RANGES: dict[str, tuple[int, int]] = {
     'clar_d':             (52, 80),
     'clar_basset_f':      (48, 79),
     'clar_alto_eb':       (50, 78),
-    'clar_bass_bb':       (38, 74),
+    'clar_bass_bb':       (36, 74),   # low-C extension on pro bass clarinets
     'clar_contraalto_eb': (38, 74),
     'clar_contrabass_bb': (34, 70),
-    # Flutes — concert C: B3 to C7. Piccolo similar but written.
-    'flute_c':            (59, 84),
+    # Flutes — B3 (59) to high D7 (86) on the concert flute is reachable
+    # by most intermediate players with the standard B-foot.
+    'flute_c':            (59, 86),
     'flute_piccolo':      (62, 84),
     'flute_alto_g':       (55, 79),
     'flute_bass_c':       (48, 72),
-    # Trumpets, mostly the Bb range: F#3 to C6.
+    # Trumpets — F#3 (54) to high C6 (84) is the universal Bb/C/D/Eb range.
+    # Piccolo trumpets shift up to C4 (60). Bass trumpet drops to A#2 (46).
     'trp_bb':             (54, 84),
     'trp_c':              (54, 84),
     'trp_d':              (54, 84),
@@ -246,38 +258,43 @@ _RANGES: dict[str, tuple[int, int]] = {
     'horn_bb':            (43, 77),
     'horn_eb_alto':       (50, 78),
     'mellophone_f':       (54, 79),
-    # Trombones
+    # Trombones — tenor reaches D5 (74) easily for most players; bass
+    # trombone with F+Gb attachments fills the gap down to Bb1 (34) and
+    # comfortably reaches Bb4 (70).
     'tbn_alto_eb':        (50, 79),
-    'tbn_tenor':          (40, 72),
-    'tbn_bass':           (36, 67),
+    'tbn_tenor':          (40, 74),
+    'tbn_bass':           (34, 70),
     'tbn_contrabass':     (28, 60),
-    # Low brass
+    # Low brass — baritone horn often plays higher than euphonium on the
+    # treble-clef parts in British brass-band literature.
     'euph_bc':            (40, 72),
     'euph_tc':            (40, 72),
-    'baritone_bc':        (40, 72),
-    'baritone_tc':        (40, 72),
+    'baritone_bc':        (40, 74),
+    'baritone_tc':        (40, 74),
     'tuba_f':             (36, 67),
     'tuba_eb':            (34, 65),
     'tuba_cc':            (28, 60),
     'tuba_bbb':           (26, 58),
     'sousaphone_bbb':     (26, 58),
-    # Double reeds
+    # Double reeds — bassoon with the standard low-Bb extension and pro
+    # players reaching high F (77).
     'oboe':               (58, 84),
     'oboe_damore':        (55, 81),
     'english_horn':       (52, 79),
-    'bassoon':            (34, 67),
-    'contrabassoon':      (22, 55),
+    'bassoon':            (34, 74),
+    'contrabassoon':      (22, 56),
     # Recorders
     'rec_sopranino_f':    (65, 84),
     'rec_soprano_c':      (60, 82),
     'rec_alto_f':         (53, 77),
     'rec_tenor_c':        (48, 72),
     'rec_bass_f':         (41, 65),
-    # Strings
+    # Strings — cello pros reach E5/F5 (76); 5-string double bass extends
+    # up to G4 (67) on solo literature, common 4-string pros reach G4.
     'violin':             (55, 91),
     'viola':              (48, 84),
-    'cello':              (36, 72),
-    'double_bass':        (28, 60),
+    'cello':              (36, 76),
+    'double_bass':        (28, 65),
     'mandolin':           (55, 84),
     # Plucked
     'guitar':             (40, 76),
@@ -285,7 +302,7 @@ _RANGES: dict[str, tuple[int, int]] = {
     'ukulele':            (55, 79),
     'banjo':              (43, 76),
     'harp':               (24, 96),
-    # Concert
+    # Concert / generic
     'voice':              (48, 79),
     'c':                  (48, 79),
     'piano':              (21, 108),

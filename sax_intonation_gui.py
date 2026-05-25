@@ -798,13 +798,21 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(14, 10, 14, 10)
 
         # ── Toolbar ───────────────────────────────────────────────────────────
-        # FlowLayout wraps children onto a second row when the window is
-        # narrower than the combined toolbar width. Plain QHBoxLayout would
-        # truncate or scroll instead.
-        from sax_flow_layout import FlowLayout
+        # Always two predictable rows: inputs on top (instrument selection,
+        # display, A4, language, import), actions on bottom (autotune, record,
+        # reset, exports). When the window is wide enough, both rows breathe
+        # easily; when it's narrow, content stays grouped by intent instead
+        # of wrapping at arbitrary positions.
         toolbar_container = QWidget()
-        toolbar = FlowLayout(parent=toolbar_container, margin=0,
-                             hspacing=8, vspacing=6)
+        toolbar_v = QVBoxLayout(toolbar_container)
+        toolbar_v.setContentsMargins(0, 0, 0, 0)
+        toolbar_v.setSpacing(6)
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(8)
+        toolbar_actions = QHBoxLayout()
+        toolbar_actions.setSpacing(8)
+        toolbar_v.addLayout(toolbar)
+        toolbar_v.addLayout(toolbar_actions)
 
         # Instrument: family combo + sub-instrument combo + Custom + nickname.
         self._grp_instr = QGroupBox(self._t('grp_instrument'))
@@ -894,21 +902,22 @@ class MainWindow(QMainWindow):
         self._btn_chart    = self._make_btn(self._t('btn_chart'),    '#d35400', self._export_chart)
         self._btn_import   = self._make_btn(self._t('btn_import'),   '#7f8c8d', self._import_csv)
 
+        # Inputs row: instrument config + import (open belongs near inputs).
         toolbar.addWidget(self._grp_instr)
         toolbar.addWidget(self._grp_disp)
         toolbar.addWidget(self._grp_a4)
         toolbar.addWidget(self._grp_lang)
-        # Import sits on the left, separated from the export cluster — open
-        # belongs near the inputs, save belongs on the right.
         toolbar.addWidget(self._btn_import)
-        # No stretch — FlowLayout uses its own packing/reflow.
-        toolbar.addWidget(self._btn_autotune)
-        toolbar.addWidget(self._btn_record)
-        toolbar.addWidget(self._btn_reset)
-        toolbar.addWidget(self._btn_txt)
-        toolbar.addWidget(self._btn_pdf)
-        toolbar.addWidget(self._btn_chart)
-        toolbar.addWidget(self._btn_csv)
+        toolbar.addStretch()
+        # Actions row: autotune + recording controls + exports.
+        toolbar_actions.addWidget(self._btn_autotune)
+        toolbar_actions.addWidget(self._btn_record)
+        toolbar_actions.addWidget(self._btn_reset)
+        toolbar_actions.addStretch()
+        toolbar_actions.addWidget(self._btn_txt)
+        toolbar_actions.addWidget(self._btn_pdf)
+        toolbar_actions.addWidget(self._btn_chart)
+        toolbar_actions.addWidget(self._btn_csv)
         root.addWidget(toolbar_container)
 
         # ── Splitter ──────────────────────────────────────────────────────────
