@@ -51,7 +51,7 @@ from sax_instruments import (
 import sax_config
 
 APP_NAME = 'Intonation Analyzer'
-APP_VERSION = '0.5.5'
+APP_VERSION = '0.5.6'
 
 # v0.5.4: AudioEngine + pitch detection + filter presets live in their own
 # module so the engine has a state machine, host-API fallback chain, and
@@ -67,12 +67,15 @@ from sax_audio_engine import (
     FILTER_PRESETS as _FILTER_PRESETS_EXT,
     FILTER_MODE_DEFAULT as _FILTER_MODE_DEFAULT_EXT,
     HOP_MS as _HOP_MS_EXT,
+    BLOCK_MS as _BLOCK_MS_EXT,
     MIN_FREQ as _MIN_FREQ_EXT,
     MAX_FREQ as _MAX_FREQ_EXT,
     A4_DEFAULT as _A4_DEFAULT_EXT,
     DEFAULT_SAMPLE_RATE as _DEFAULT_SAMPLE_RATE_EXT,
     DEFAULT_HOP_SIZE as _DEFAULT_HOP_SIZE_EXT,
     DEFAULT_BLOCK_SIZE as _DEFAULT_BLOCK_SIZE_EXT,
+    SAMPLERATE_PREF_VALUES as _SAMPLERATE_PREF_VALUES_EXT,
+    SAMPLERATE_CANDIDATES as _SAMPLERATE_CANDIDATES_EXT,
     cents_dev as _cents_dev_ext,
     query_input_devices,
     VENDOR_REGEX,
@@ -213,7 +216,7 @@ STRINGS = {
         'ctx_discard_confirm': 'Alle Messungen für {note} löschen?',
         # Status
         'no_signal':     'Kein Signal',
-        'status_fmt':    'Gegriffen: {fingered}   Klingend: {sounding}   {freq:.1f} Hz   {sign}{cents:.1f} ct   (A={a4:.0f} Hz)',
+        'status_fmt':    'Gegriffen: {fingered}   Klingend: {sounding}   {freq:.1f} Hz   {cents_str} ct   (A={a4:.0f} Hz)',
         # Tabellen-Label
         'table_title':   'Intonationstabelle',
         'table_summary': 'Intonationstabelle  \u2013  {notes} Töne  |  {total} Messungen',
@@ -339,6 +342,14 @@ STRINGS = {
         'range_restore_default':   'Standard wiederherstellen',
         'range_restore_fallback':  'Auf ({lo}, {hi}) zur\u00fccksetzen',
         'range_cancel':            'Abbrechen',
+        # v0.5.6 — sample rate picker + adaptive cent precision diagnostics
+        'samplerate_label':        'Abtastrate',
+        'samplerate_auto':         'Auto (empfohlen)',
+        'samplerate_unsupported':  'Dieses Gerät unterstützt {rate} Hz nicht. Auf Auto zurückgesetzt.',
+        'data_rate_requested':     'Angeforderte Rate',
+        'data_rate_negotiated':    'Ausgehandelte Rate',
+        'data_block_hop':          'Block / Hop',
+        'data_halfcent_floor':     '½-¢-Grenze bei A4',
     },
     'en': {
         'window_title': 'Intonation Analyzer',
@@ -461,7 +472,7 @@ STRINGS = {
         'ctx_discard':   'Delete measurements for this note',
         'ctx_discard_confirm': 'Delete all measurements for {note}?',
         'no_signal':     'No signal',
-        'status_fmt':    'Fingered: {fingered}   Sounding: {sounding}   {freq:.1f} Hz   {sign}{cents:.1f} ct   (A={a4:.0f} Hz)',
+        'status_fmt':    'Fingered: {fingered}   Sounding: {sounding}   {freq:.1f} Hz   {cents_str} ct   (A={a4:.0f} Hz)',
         'table_title':   'Intonation Table',
         'table_summary': 'Intonation Table  \u2013  {notes} notes  |  {total} measurements',
         'table_empty_hint': 'Intonation Table  \u2013  play a note to begin; per-note mean and standard deviation appear here as you play.',
@@ -580,6 +591,14 @@ STRINGS = {
         'range_restore_default':   'Restore Default',
         'range_restore_fallback':  'Restore to ({lo}, {hi})',
         'range_cancel':            'Cancel',
+        # v0.5.6 — sample rate picker + adaptive cent precision diagnostics
+        'samplerate_label':        'Sample rate',
+        'samplerate_auto':         'Auto (recommended)',
+        'samplerate_unsupported':  'This device does not support {rate} Hz. Reverted to Auto.',
+        'data_rate_requested':     'Requested rate',
+        'data_rate_negotiated':    'Negotiated rate',
+        'data_block_hop':          'Block / Hop',
+        'data_halfcent_floor':     '½-¢ floor @ A4',
     },
 }
 
@@ -599,8 +618,52 @@ MIN_FREQ      = _MIN_FREQ_EXT
 MAX_FREQ      = _MAX_FREQ_EXT
 A4_DEFAULT    = _A4_DEFAULT_EXT
 HOP_MS        = _HOP_MS_EXT
+BLOCK_MS      = _BLOCK_MS_EXT
 _FILTER_PRESETS = _FILTER_PRESETS_EXT
 FILTER_MODE_DEFAULT = _FILTER_MODE_DEFAULT_EXT
+SAMPLERATE_PREF_VALUES = _SAMPLERATE_PREF_VALUES_EXT
+SAMPLERATE_CANDIDATES = _SAMPLERATE_CANDIDATES_EXT
+
+# v0.5.6: frequency-adaptive cent display precision.
+# Parabolic interpolation in YIN pins tau to about 0.1 samples; one cent
+# corresponds to tau * (ln(2)/1200) ~= tau * 5.78e-4 samples. The minimum
+# resolvable cent step at frequency f and sample rate sr is therefore
+# approximately 0.1 / (tau * 5.78e-4) = 173 * f / sr. We snap the
+# displayed precision to one of {tenths, halves, wholes} so the readout
+# never claims more resolution than the measurement actually delivers.
+CENT_PREC_TENTHS_MAX = 0.3
+CENT_PREC_HALVES_MAX = 0.7
+
+
+def cent_precision_floor(freq_hz: float, sample_rate: int) -> float:
+    """Return the minimum resolvable cent step at ``freq_hz`` given
+    ``sample_rate``. See the module-top derivation."""
+    sr = float(sample_rate) if sample_rate else float(_DEFAULT_SAMPLE_RATE_EXT)
+    if sr <= 0 or freq_hz <= 0:
+        return CENT_PREC_TENTHS_MAX
+    return 173.0 * float(freq_hz) / sr
+
+
+def format_cents(value_cents: float, freq_hz: float,
+                 sample_rate: int) -> str:
+    """Format a cent value at the precision the measurement supports.
+
+    Always emits a sign so neutral readouts read "+0" / "+0.0" rather
+    than the visually-jumpy bare "0". Negative-zero floats coerce to
+    "+0..." via the explicit ``>= 0`` test.
+    """
+    floor_ct = cent_precision_floor(freq_hz, sample_rate)
+    if floor_ct <= CENT_PREC_TENTHS_MAX:
+        snapped = float(value_cents)
+        sign = '+' if snapped >= 0 else '-'
+        return f"{sign}{abs(snapped):.1f}"
+    if floor_ct <= CENT_PREC_HALVES_MAX:
+        snapped = round(float(value_cents) * 2.0) / 2.0
+        sign = '+' if snapped >= 0 else '-'
+        return f"{sign}{abs(snapped):.1f}"
+    snapped = round(float(value_cents))
+    sign = '+' if snapped >= 0 else '-'
+    return f"{sign}{abs(int(snapped))}"
 
 CHROMA = ['C', 'C#/Db', 'D', 'D#/Eb', 'E', 'F',
           'F#/Gb', 'G', 'G#/Ab', 'A', 'A#/Bb', 'B']
@@ -687,6 +750,10 @@ class TunerWidget(QWidget):
         self.note   = ''
         self.active = False
         self._decay = 0.0
+        # v0.5.6: live engine sample rate, set by MainWindow whenever the
+        # engine successfully opens. Used to render cents at a precision
+        # the measurement can actually support.
+        self.sample_rate = _DEFAULT_SAMPLE_RATE_EXT
         t = QTimer(self)
         t.timeout.connect(self._fade)
         t.start(80)
@@ -765,7 +832,6 @@ class TunerWidget(QWidget):
                        f"{'+' if ct>0 else ''}{ct}")
 
         if self.active:
-            sign = '+' if self.cents >= 0 else ''
             p.setFont(QFont('Monospace', 32, QFont.Weight.Bold))
             if   abs(self.cents) <= 5:  cc = QColor(60,  220, 100, alpha)
             elif abs(self.cents) <= 15: cc = QColor(255, 200, 40,  alpha)
@@ -773,7 +839,7 @@ class TunerWidget(QWidget):
             p.setPen(cc)
             p.drawText(QRectF(0, sy + sh + 26, W, 55),
                        Qt.AlignmentFlag.AlignHCenter,
-                       f"{sign}{self.cents:.1f} ct")
+                       f"{format_cents(self.cents, self.freq, self.sample_rate)} ct")
         p.end()
 
 
@@ -1022,7 +1088,10 @@ class DataPanelWidget(QWidget):
         self._rows: dict[str, QLabel] = {}
         # Order matters — top-to-bottom layout of the panel.
         self._row_keys = [
-            'data_device', 'data_samplerate', 'data_blocksize', 'data_hopsize',
+            'data_device', 'data_rate_requested', 'data_rate_negotiated',
+            'data_samplerate', 'data_block_hop',
+            'data_blocksize', 'data_hopsize',
+            'data_halfcent_floor',
             'data_freqrange', 'data_filter_mode', 'data_filter_params',
             'data_a4', 'data_rms', 'data_aperiodicity', 'data_freq',
             'data_midi', 'data_notes_count',
@@ -1080,9 +1149,10 @@ class DataPanelWidget(QWidget):
                         'data_freq', 'data_midi', 'data_filter_mode',
                         'data_filter_params'):
                 self._rows[key].setText('—')
-            self._rows['data_samplerate'].setText('—')
-            self._rows['data_blocksize'].setText('—')
-            self._rows['data_hopsize'].setText('—')
+            for key in ('data_samplerate', 'data_blocksize', 'data_hopsize',
+                        'data_rate_requested', 'data_rate_negotiated',
+                        'data_block_hop', 'data_halfcent_floor'):
+                self._rows[key].setText('—')
             self._rows['data_notes_count'].setText(
                 str(int(self._get_notes_count())))
             return
@@ -1099,6 +1169,20 @@ class DataPanelWidget(QWidget):
         self._rows['data_blocksize'].setText(f'{diag.block_size} samples')
         self._rows['data_hopsize'].setText(
             f'{hop} samples ({hop_ms:.1f} ms)')
+        # v0.5.6 audio negotiation + precision rows.
+        cfg = self._get_cfg() if self._get_cfg else None
+        pref = (str(getattr(cfg, 'audio_samplerate_pref', 'auto'))
+                if cfg else 'auto')
+        if pref == 'auto':
+            self._rows['data_rate_requested'].setText('Auto')
+        else:
+            self._rows['data_rate_requested'].setText(f'{pref} Hz')
+        self._rows['data_rate_negotiated'].setText(f'{sr} Hz')
+        block_ms = 1000.0 * diag.block_size / sr
+        self._rows['data_block_hop'].setText(
+            f'{diag.block_size} / {hop} ({block_ms:.0f} ms / {hop_ms:.0f} ms)')
+        floor_a4 = cent_precision_floor(440.0, sr)
+        self._rows['data_halfcent_floor'].setText(f'{floor_a4:.2f} ¢')
         self._rows['data_filter_mode'].setText(mode)
         if params:
             self._rows['data_filter_params'].setText(
@@ -1128,16 +1212,35 @@ class DataPanelWidget(QWidget):
 # =============================================================================
 class CentBarDelegate(QStyledItemDelegate):
     """Zeichnet einen zentrierten, farbcodierten Balken für Cent-Abweichungen.
-    Der Wert wird als float-String im UserRole gespeichert."""
+    Cell payload is a dict {'cents': float, 'freq': float}; legacy bare
+    floats are still accepted so older callers keep working."""
 
     MAX_CENT = 50.0   # ±50 ct = volle Balkenhälfte
 
+    def __init__(self, parent=None, sample_rate_getter=None):
+        super().__init__(parent)
+        # v0.5.6: live sample rate for adaptive cent precision in the
+        # printed value beside each bar. The bar geometry itself uses
+        # the raw float so the visual position stays smooth.
+        self._sr_get = sample_rate_getter or (
+            lambda: _DEFAULT_SAMPLE_RATE_EXT)
+
     def paint(self, painter, option, index):
-        try:
-            cents = float(index.data(Qt.ItemDataRole.UserRole))
-        except (TypeError, ValueError):
-            super().paint(painter, option, index)
-            return
+        raw = index.data(Qt.ItemDataRole.UserRole)
+        freq = 0.0
+        if isinstance(raw, dict):
+            try:
+                cents = float(raw.get('cents'))
+                freq = float(raw.get('freq') or 0.0)
+            except (TypeError, ValueError):
+                super().paint(painter, option, index)
+                return
+        else:
+            try:
+                cents = float(raw)
+            except (TypeError, ValueError):
+                super().paint(painter, option, index)
+                return
 
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -1192,9 +1295,9 @@ class CentBarDelegate(QStyledItemDelegate):
         painter.setPen(QPen(QColor(180, 180, 200), 1))
         painter.drawLine(cx, bg_y - 2, cx, bg_y + bg_h + 2)
 
-        # Cent-Wert als Text rechts
-        sign = '+' if cents >= 0 else ''
-        txt = f"{sign}{cents:.1f} ct"
+        # Cent-Wert als Text rechts — adaptive precision (v0.5.6)
+        sr = self._sr_get() or _DEFAULT_SAMPLE_RATE_EXT
+        txt = f"{format_cents(cents, freq, sr)} ct"
         painter.setPen(bar_col)
         painter.setFont(QFont('Monospace', 9))
         txt_rect = option.rect.adjusted(0, 0, -4, 0)
@@ -1244,6 +1347,12 @@ class MatrixCellDelegate(QStyledItemDelegate):
 
     MAX_CENT = 50.0   # ±50 ct = bar saturated
 
+    def __init__(self, parent=None, sample_rate_getter=None):
+        super().__init__(parent)
+        # v0.5.6: live sample rate for adaptive cent precision.
+        self._sr_get = sample_rate_getter or (
+            lambda: _DEFAULT_SAMPLE_RATE_EXT)
+
     def paint(self, painter, option, index):
         data = index.data(Qt.ItemDataRole.UserRole)
         if not isinstance(data, dict):
@@ -1261,6 +1370,8 @@ class MatrixCellDelegate(QStyledItemDelegate):
         n        = int(data.get('n') or 0)
         fingered = data.get('fingered_name', '')
         sounding = data.get('sounding_name', '')
+        freq     = float(data.get('freq') or 0.0)
+        sr       = self._sr_get() or _DEFAULT_SAMPLE_RATE_EXT
 
         if not in_range:
             # Out-of-range cells render with NO border and NO text — they
@@ -1317,7 +1428,6 @@ class MatrixCellDelegate(QStyledItemDelegate):
         # ----- Mid strip: mean (color) + ±std ------------------------
         col = (QColor('#3a9e5f') if abs(mean) <= 5 else
                QColor('#c8a020') if abs(mean) <= 12 else QColor('#c03030'))
-        sign = '+' if mean >= 0 else ''
         mid_h = 18
         mid_y = r.top() + top_h
         painter.setPen(col)
@@ -1326,15 +1436,17 @@ class MatrixCellDelegate(QStyledItemDelegate):
             QRectF(r.left() + pad_x, mid_y,
                    r.width() * 0.62 - pad_x, mid_h),
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-            f"{sign}{mean:.1f}")
+            format_cents(mean, freq, sr))
         if n > 1 and std > 0:
             painter.setPen(QColor(170, 170, 200))
             painter.setFont(QFont('Monospace', 8))
+            # Strip sign from format_cents and prepend "±".
+            std_txt = format_cents(std, freq, sr).lstrip('+-')
             painter.drawText(
                 QRectF(r.left() + r.width() * 0.55, mid_y,
                        r.width() * 0.45 - pad_x, mid_h),
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
-                f"±{std:.1f}")
+                f"±{std_txt}")
 
         # ----- Bar with whiskers --------------------------------------
         scale_w = r.width() - 2 * pad_x
@@ -1602,6 +1714,39 @@ class AudioPickerDialog(QDialog):
         root.setContentsMargins(14, 12, 14, 12)
         root.setSpacing(8)
 
+        # v0.5.6: sample-rate preference row. Sits ABOVE the device list
+        # so the user reads the policy first and the chosen device second.
+        sr_row = QHBoxLayout()
+        sr_lbl = QLabel(self._t('samplerate_label') + ':')
+        sr_lbl.setStyleSheet('color:#bbb;font-size:12px;')
+        sr_row.addWidget(sr_lbl)
+        self._sr_combo = QComboBox()
+        self._sr_combo.addItem(self._t('samplerate_auto'), 'auto')
+        for hz in (192000, 96000, 88200, 48000, 44100):
+            # Number-with-thin-space formatting reads as "192 000 Hz" in
+            # both DE and EN locales without dragging in locale plumbing.
+            label = f'{hz:,}'.replace(',', ' ') + ' Hz'
+            self._sr_combo.addItem(label, str(hz))
+        cur_pref = str(getattr(self._cfg, 'audio_samplerate_pref',
+                                'auto') or 'auto')
+        idx = self._sr_combo.findData(cur_pref)
+        if idx < 0:
+            idx = 0
+        self._sr_combo.setCurrentIndex(idx)
+        self._sr_combo.currentIndexChanged.connect(self._on_sr_changed)
+        self._sr_combo.setStyleSheet(
+            'QComboBox{background:#1e1e2e;color:#ddd;border:1px solid #444;'
+            'border-radius:4px;padding:3px 8px;font-size:12px;}')
+        sr_row.addWidget(self._sr_combo, 1)
+        root.addLayout(sr_row)
+
+        self._sr_error_lbl = QLabel('')
+        self._sr_error_lbl.setStyleSheet(
+            'color:#e07070;font-size:11px;padding:0 2px;')
+        self._sr_error_lbl.setVisible(False)
+        self._sr_error_lbl.setWordWrap(True)
+        root.addWidget(self._sr_error_lbl)
+
         top = QHBoxLayout()
         self._btn_rescan = QPushButton(self._t('audio_picker_rescan'))
         self._btn_rescan.clicked.connect(self._refill)
@@ -1636,6 +1781,42 @@ class AudioPickerDialog(QDialog):
         btns.addWidget(self._btn_use)
         btns.addWidget(self._btn_cancel)
         root.addLayout(btns)
+
+    def _on_sr_changed(self, _idx: int) -> None:
+        """User picked a new sample-rate policy. Persist immediately,
+        then reopen the active device with the new pref. If the device
+        refuses the rate (UNSUPPORTED_RATE), revert combo to Auto and
+        surface an inline error so the user knows why."""
+        new_pref = str(self._sr_combo.currentData() or 'auto')
+        if new_pref not in SAMPLERATE_PREF_VALUES:
+            new_pref = 'auto'
+        self._cfg.audio_samplerate_pref = new_pref
+        sax_config.save_config(self._cfg)
+        self._sr_error_lbl.setVisible(False)
+        # If we have an active device, try to re-open it with the new pref.
+        dev = self._engine.active_device
+        if dev is None:
+            return
+        sel = DeviceSelection(name=dev.name, host_api=dev.host_api,
+                              samplerate=0)
+        self._engine.stop()
+        self._engine.open_device(sel, samplerate_pref=new_pref)
+        # If the open failed on UNSUPPORTED_RATE for a pinned rate,
+        # revert to Auto and warn. UNSUPPORTED with auto means the device
+        # rejects EVERY candidate — show the same error and revert.
+        if (self._engine.state == AudioEngineState.FAILED
+                and self._engine.last_error == AudioEngineError.UNSUPPORTED_RATE):
+            shown_rate = new_pref if new_pref != 'auto' else '—'
+            self._sr_error_lbl.setText(
+                self._t('samplerate_unsupported', rate=shown_rate))
+            self._sr_error_lbl.setVisible(True)
+            # Revert to Auto in both the combo and the saved cfg.
+            self._cfg.audio_samplerate_pref = 'auto'
+            sax_config.save_config(self._cfg)
+            self._sr_combo.blockSignals(True)
+            self._sr_combo.setCurrentIndex(0)
+            self._sr_combo.blockSignals(False)
+            self._engine.open_device(sel, samplerate_pref='auto')
 
     def _on_toggle_show_all(self, checked: bool) -> None:
         self._cfg.show_all_host_apis = bool(checked)
@@ -1972,7 +2153,9 @@ class MainWindow(QMainWindow):
         # state_changed. This is the v0.5.4 headline fix.
         if AUDIO_OK:
             saved = self._device_selection_from_cfg()
-            self._engine.start(preferred=saved)
+            pref = str(getattr(self._cfg, 'audio_samplerate_pref',
+                                'auto') or 'auto')
+            self._engine.start(preferred=saved, samplerate_pref=pref)
 
         # Hot-plug poller: 1 Hz per Legolas's measurements (cached
         # query_devices is ~0 ms; only re-init is expensive, and we
@@ -2314,7 +2497,8 @@ class MainWindow(QMainWindow):
                                   padding:6px;border:none;border-bottom:1px solid #444;}
         """)
         rl.addWidget(self._table)
-        self._bar_delegate = CentBarDelegate(self._table)
+        self._bar_delegate = CentBarDelegate(
+            self._table, sample_rate_getter=self._engine_sample_rate)
         self._table.setItemDelegateForColumn(5, self._bar_delegate)
         self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._table.customContextMenuRequested.connect(self._on_table_context_menu)
@@ -2516,11 +2700,13 @@ class MainWindow(QMainWindow):
         kl_name    = midi_note_name(midi_kl)
         gr_name    = midi_note_name(midi_gr)
         disp_name  = gr_name if self.display == 'griff' else kl_name
-        sign       = '+' if cents >= 0 else ''
+        sr_now = self._engine_sample_rate()
+        self._tuner.sample_rate = sr_now
         self._tuner.set_note(disp_name, freq, cents)
+        cents_str = format_cents(cents, freq, sr_now)
         self._status_lbl.setText(self._t(
             'status_fmt', fingered=gr_name, sounding=kl_name,
-            freq=freq, sign=sign, cents=cents, a4=self._engine.a4))
+            freq=freq, cents_str=cents_str, a4=self._engine.a4))
         # Highlight the row currently being played so the user can see
         # which entry in a long table just ticked. _refresh_table reads
         # this on its next tick (every 300ms via _refresh_timer).
@@ -2634,7 +2820,8 @@ class MainWindow(QMainWindow):
         if not hasattr(self, '_default_delegate'):
             self._default_delegate = QStyledItemDelegate(self._table)
         if not hasattr(self, '_matrix_delegate'):
-            self._matrix_delegate = MatrixCellDelegate(self._table)
+            self._matrix_delegate = MatrixCellDelegate(
+                self._table, sample_rate_getter=self._engine_sample_rate)
         if mode == 'matrix':
             n_oct = self._matrix_octave_count()
             self._table.clear()
@@ -2700,6 +2887,8 @@ class MainWindow(QMainWindow):
         self._table.setRowCount(len(items))
         played_n = 0
         active_midi = self._active_midi_now()
+        sr_now = self._engine_sample_rate()
+        a4 = self._engine.a4
         for row, (midi_kl, st) in enumerate(items):
             midi_gr = midi_kl - transp
             kl_name = midi_note_name(midi_kl)
@@ -2709,17 +2898,24 @@ class MainWindow(QMainWindow):
             has_data = st.n > 0
             if has_data:
                 played_n += 1
-            sign    = '+' if mean >= 0 else ''
 
             col = (QColor('#3a9e5f') if abs(mean) <= 5 else
                    QColor('#c8a020') if abs(mean) <= 12 else QColor('#c03030'))
             dim_col = QColor('#555')
 
+            # Nominal frequency for this MIDI: drives the precision floor.
+            note_freq = a4 * (2.0 ** ((midi_kl - 69) / 12.0))
+            mean_str = format_cents(mean, note_freq, sr_now) if has_data else '–'
+            if st.n > 1:
+                std_str = '±' + format_cents(st.std, note_freq, sr_now).lstrip('+-')
+            else:
+                std_str = '–'
+
             is_active = (active_midi == midi_kl)
             for c, val in enumerate([
                 n1, n2,
-                f"{sign}{mean:.1f}" if has_data else '–',
-                f"±{st.std:.1f}" if st.n > 1 else '–',
+                mean_str,
+                std_str,
                 str(st.n) if has_data else '–',
                 '',
             ]):
@@ -2730,7 +2926,8 @@ class MainWindow(QMainWindow):
                 elif not has_data:
                     item.setForeground(dim_col)
                 if c == 5 and has_data:
-                    item.setData(Qt.ItemDataRole.UserRole, mean)
+                    item.setData(Qt.ItemDataRole.UserRole,
+                                 {'cents': mean, 'freq': note_freq})
                 if is_active:
                     item.setBackground(QColor('#2c5a8a'))
                 self._table.setItem(row, c, item)
@@ -2802,6 +2999,9 @@ class MainWindow(QMainWindow):
                 # MatrixCellDelegate reads this dict and paints all six
                 # data fields the single-column view shows per row:
                 # fingered name, sounding name, mean, std, N, bar.
+                # Nominal frequency at A4 drives the precision floor.
+                note_freq = self._engine.a4 * (
+                    2.0 ** ((midi_sounding - 69) / 12.0))
                 payload = {
                     'mean':          st.mean if has_data else None,
                     'std':           st.std if has_data else None,
@@ -2810,6 +3010,7 @@ class MainWindow(QMainWindow):
                     'active':        (active_midi == midi_sounding),
                     'fingered_name': midi_note_name(midi_fingered),
                     'sounding_name': midi_note_name(midi_sounding),
+                    'freq':          note_freq,
                 }
                 item = QTableWidgetItem('')
                 item.setData(Qt.ItemDataRole.UserRole, payload)
@@ -2949,6 +3150,17 @@ class MainWindow(QMainWindow):
         self._refresh_table()
 
     # ── Audio-Geräteverwaltung (v0.5.4) ───────────────────────────────────
+    def _engine_sample_rate(self) -> int:
+        """Best-known live sample rate for adaptive cent precision.
+        Falls back to the constant default when the engine is FAILED or
+        audio is disabled — defensive; nothing should call the formatter
+        in those states, but a stale delegate paint can race teardown."""
+        try:
+            sr = int(getattr(self._engine, 'samplerate', 0) or 0)
+        except Exception:
+            sr = 0
+        return sr if sr > 0 else int(_DEFAULT_SAMPLE_RATE_EXT)
+
     def _device_selection_from_cfg(self) -> DeviceSelection:
         return DeviceSelection(
             name=str(getattr(self._cfg, 'audio_device_name', '') or ''),
@@ -2976,10 +3188,13 @@ class MainWindow(QMainWindow):
         if dlg.exec() == QDialog.DialogCode.Accepted:
             chosen = dlg.chosen()
             if chosen is not None:
-                self._engine.open_device(DeviceSelection(
-                    name=chosen.name, host_api=chosen.host_api,
-                    samplerate=int(getattr(self._cfg,
-                                            'audio_device_samplerate', 0) or 0)))
+                pref = str(getattr(self._cfg, 'audio_samplerate_pref',
+                                    'auto') or 'auto')
+                self._engine.open_device(
+                    DeviceSelection(name=chosen.name,
+                                    host_api=chosen.host_api,
+                                    samplerate=0),
+                    samplerate_pref=pref)
 
     def _retry_audio(self) -> None:
         if not AUDIO_OK:
@@ -3011,6 +3226,8 @@ class MainWindow(QMainWindow):
                 self._audio_banner.hide()
         if state == AudioEngineState.RUNNING:
             self._persist_active_device()
+            if hasattr(self, '_tuner') and sr:
+                self._tuner.sample_rate = sr
             # First-time-only notice if we wound up at a non-44.1k rate.
             if (sr and sr != 44100
                     and not bool(getattr(self._cfg,
@@ -3634,11 +3851,15 @@ class MainWindow(QMainWindow):
         ]
         with self._lock:
             items = sorted(self.stats.items())
+        sr_now = self._engine_sample_rate()
+        a4 = self._engine.a4
         for midi_kl, st in items:
-            sign = '+' if st.mean >= 0 else ''
+            note_freq = a4 * (2.0 ** ((midi_kl - 69) / 12.0))
+            mean_str = format_cents(st.mean, note_freq, sr_now)
+            std_str = format_cents(st.std, note_freq, sr_now).lstrip('+-')
             lines.append(
                 f"{midi_note_name(midi_kl - transp):<12} {midi_note_name(midi_kl):<12}"
-                f" {sign}{st.mean:>6.1f}   {st.std:>6.1f}  {st.n:>5}  {self._make_bar(st.mean, 24)}")
+                f" {mean_str:>7}   {std_str:>6}  {st.n:>5}  {self._make_bar(st.mean, 24)}")
         lines += ['', self._t('txt_total', total=sum(s.n for _,s in items), notes=len(items))]
         try:
             with open(path, 'w', encoding='utf-8') as f:
@@ -3712,12 +3933,16 @@ class MainWindow(QMainWindow):
             data = [[self._t('pdf_col_finger'), self._t('pdf_col_sound'),
                      self._t('pdf_col_mean'), self._t('pdf_col_std'),
                      self._t('pdf_col_n'), self._t('pdf_col_tend')]]
+            sr_now = self._engine_sample_rate()
+            a4 = self._engine.a4
             for midi_kl, st in items:
-                sign = '+' if st.mean >= 0 else ''
+                note_freq = a4 * (2.0 ** ((midi_kl - 69) / 12.0))
+                mean_str = format_cents(st.mean, note_freq, sr_now)
+                std_str = format_cents(st.std, note_freq, sr_now).lstrip('+-')
                 data.append([
                     midi_note_name(midi_kl - transp), midi_note_name(midi_kl),
-                    f"{sign}{st.mean:.1f}",
-                    f"\u00b1{st.std:.1f}" if st.n > 1 else '\u2013',
+                    mean_str,
+                    f"\u00b1{std_str}" if st.n > 1 else '\u2013',
                     str(st.n),
                     self._make_bar_ascii(st.mean),
                 ])
@@ -4017,12 +4242,15 @@ class MainWindow(QMainWindow):
 
         transp = TRANSP_MAP[self.instrument]
         disp_griff = (self.display == 'griff')
+        sr_now = self._engine_sample_rate()
+        a4 = self._engine.a4
         notes = []
         for midi_kl, st in items:
             midi_gr = midi_kl - transp
             display_name = (midi_note_name(midi_gr) if disp_griff
                             else midi_note_name(midi_kl))
-            notes.append((display_name, st.mean, st.std, st.n))
+            note_freq = a4 * (2.0 ** ((midi_kl - 69) / 12.0))
+            notes.append((display_name, st.mean, st.std, st.n, note_freq))
 
         instr_long = self._t(f'instr_long_{self.instrument}')
         dt = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
@@ -4045,6 +4273,7 @@ class MainWindow(QMainWindow):
                 subtitle=subtitle,
                 footer=footer,
                 output_path=path,
+                sample_rate=sr_now,
             )
             QMessageBox.information(self, self._t('export_title'),
                                     self._t('chart_saved', path=path))

@@ -63,17 +63,22 @@ _MAX_CENTS = 50.0
 
 def render_intonation_chart(
     *,
-    notes: list[tuple[str, float, float, int]],
+    notes: list[tuple],
     title: str,
     subtitle: str,
     footer: str,
     output_path: str,
+    sample_rate: int = 44100,
 ) -> None:
     """Render a bar chart and save to `output_path`.
 
-    `notes` is a list of (label, mean_cents, std_cents, n), one entry per
-    note, already sorted in display order. `label` is the short note name
-    shown under the bar (e.g. "C4" or "D#/Eb4").
+    `notes` is a list of tuples, one per note in display order:
+    * legacy 4-tuple: (label, mean_cents, std_cents, n)
+    * v0.5.6 5-tuple: (label, mean_cents, std_cents, n, freq_hz)
+
+    The 5-tuple feeds the frequency-adaptive cent precision used when
+    drawing the numeric value above each bar. ``sample_rate`` is the
+    engine's negotiated rate at chart time and gates that precision.
 
     The image format is inferred from the file extension by QPixmap.save —
     .png works without any extra plugins on the standard PyQt6 install.
@@ -87,7 +92,7 @@ def render_intonation_chart(
         _draw_header(p, title, subtitle)
         _draw_axes(p)
         if notes:
-            _draw_bars(p, notes)
+            _draw_bars(p, notes, sample_rate=sample_rate)
         else:
             _draw_no_data(p)
         _draw_footer(p, footer)
@@ -162,8 +167,29 @@ def _cent_to_y(cents: float, area: QRectF) -> float:
     return mid - norm * (area.height() / 2)
 
 
+def _format_cents_label(value_cents: float, freq_hz: float,
+                        sample_rate: int) -> str:
+    """Local mirror of sax_intonation_gui.format_cents to keep the chart
+    module dependency-free (no GUI import). See that helper for the
+    derivation behind the tier thresholds."""
+    sr = float(sample_rate) if sample_rate else 44100.0
+    if sr <= 0 or freq_hz <= 0:
+        floor_ct = 0.3
+    else:
+        floor_ct = 173.0 * float(freq_hz) / sr
+    if floor_ct <= 0.3:
+        v = float(value_cents)
+        return f"{'+' if v >= 0 else '-'}{abs(v):.1f}"
+    if floor_ct <= 0.7:
+        v = round(float(value_cents) * 2.0) / 2.0
+        return f"{'+' if v >= 0 else '-'}{abs(v):.1f}"
+    v = round(float(value_cents))
+    return f"{'+' if v >= 0 else '-'}{abs(int(v))}"
+
+
 def _draw_bars(p: QPainter,
-               notes: list[tuple[str, float, float, int]]) -> None:
+               notes: list[tuple],
+               sample_rate: int = 44100) -> None:
     area = _plot_area()
     n = len(notes)
     slot = area.width() / n
@@ -171,7 +197,13 @@ def _draw_bars(p: QPainter,
     zero_y = _cent_to_y(0, area)
 
     p.setFont(_mono(9))
-    for i, (label, mean, std, count) in enumerate(notes):
+    for i, row in enumerate(notes):
+        # Accept legacy 4-tuple and v0.5.6 5-tuple with note freq.
+        if len(row) >= 5:
+            label, mean, std, count, freq = row[0], row[1], row[2], row[3], row[4]
+        else:
+            label, mean, std, count = row[0], row[1], row[2], row[3]
+            freq = 0.0
         cx = area.left() + slot * (i + 0.5)
         top_y = _cent_to_y(mean, area)
         # Color by magnitude — same thresholds as the in-app tuner widget.
@@ -208,6 +240,22 @@ def _draw_bars(p: QPainter,
             p.drawLine(QPointF(cx, top_w), QPointF(cx, bot_w))
             p.drawLine(QPointF(cx - 4, top_w), QPointF(cx + 4, top_w))
             p.drawLine(QPointF(cx - 4, bot_w), QPointF(cx + 4, bot_w))
+
+        # Numeric cent label above (or below for negative) the bar tip,
+        # snapped to the precision the measurement supports at the
+        # negotiated sample rate.
+        if bar_w >= 14:
+            cent_txt = _format_cents_label(mean, freq, sample_rate)
+            p.setPen(QColor(220, 220, 235))
+            p.setFont(_mono(8))
+            if mean >= 0:
+                label_y = max(area.top(), top_y - 14)
+            else:
+                label_y = min(area.bottom() - 12, top_y + 2)
+            p.drawText(QRectF(cx - slot / 2, label_y, slot, 12),
+                       Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
+                       cent_txt)
+            p.setFont(_mono(9))
 
         # Note label below the chart.
         p.setPen(QColor(210, 210, 220))

@@ -66,8 +66,18 @@ except Exception:
 # ---------------------------------------------------------------------------
 DEFAULT_SAMPLE_RATE = 44100
 HOP_MS = 1000.0 * 2048.0 / 44100.0       # ~46 ms; preserved across rates
+BLOCK_MS = 1000.0 * 16384.0 / 44100.0    # ~372 ms; preserved across rates
 DEFAULT_HOP_SIZE = 2048
 DEFAULT_BLOCK_SIZE = 16384
+
+# v0.5.6: candidate sample rates probed highest-first when the user picks
+# "auto". Higher rates buy parabolic-interpolation precision (see
+# cent_precision_floor in sax_intonation_gui) — the engine tries them in
+# descending order so the user gets the best the device offers without
+# pinning a specific value.
+SAMPLERATE_CANDIDATES = (192000, 96000, 88200, 48000, 44100)
+SAMPLERATE_PREF_VALUES = ('auto', '44100', '48000', '88200', '96000',
+                          '192000')
 MIN_FREQ = 27.0
 MAX_FREQ = 1400.0
 YIN_THRESHOLD = 0.12
@@ -318,6 +328,10 @@ class AudioEngine:
         self.instr_key = 'eb_alto'
         self.filter_mode = FILTER_MODE_DEFAULT
         self.prefer_wdmks = False
+        # 'auto' (probe 192k..44.1k highest-first) or a specific rate
+        # string from SAMPLERATE_PREF_VALUES. The GUI sets this from
+        # cfg.audio_samplerate_pref before calling start/open_device.
+        self.samplerate_pref: str = 'auto'
 
         # Active stream parameters, set on successful open.
         self.samplerate = DEFAULT_SAMPLE_RATE
@@ -420,10 +434,22 @@ class AudioEngine:
                 host_api=self.active_device.host_api if self.active_device else '',
             )
 
-    def start(self, preferred: Optional[DeviceSelection] = None) -> None:
+    def set_samplerate_pref(self, pref: str) -> None:
+        """Update the in-memory rate preference. Does NOT reopen the stream;
+        the caller (GUI) decides whether to call ``open_device`` after.
+
+        Anything outside SAMPLERATE_PREF_VALUES degrades to 'auto' so a
+        stale config can't wedge the engine on an impossible rate."""
+        if pref not in SAMPLERATE_PREF_VALUES:
+            pref = 'auto'
+        self.samplerate_pref = pref
+
+    def start(self, preferred: Optional[DeviceSelection] = None,
+              samplerate_pref: str = 'auto') -> None:
         """Enumerate, then open the preferred device (or system default).
         Never raises. Sets state + emits signals on completion or failure.
         """
+        self.set_samplerate_pref(samplerate_pref)
         if not AUDIO_OK:
             self._set_state(AudioEngineState.FAILED,
                             AudioEngineError.NO_DEVICE,
@@ -456,10 +482,17 @@ class AudioEngine:
         finally:
             self._transitioning = False
 
-    def open_device(self, sel: DeviceSelection) -> None:
+    def open_device(self, sel: DeviceSelection,
+                    samplerate_pref: Optional[str] = None) -> None:
         """Switch to a user-picked device. Stops the current stream first.
         Never raises.
+
+        If ``samplerate_pref`` is None, the engine reuses whatever pref it
+        was started with. Pass the new value when the user changes the
+        rate combo so the next negotiation runs with the new policy.
         """
+        if samplerate_pref is not None:
+            self.set_samplerate_pref(samplerate_pref)
         if not AUDIO_OK:
             self._set_state(AudioEngineState.FAILED,
                             AudioEngineError.NO_DEVICE,
@@ -489,7 +522,7 @@ class AudioEngine:
                 host_api=self.active_device.host_api,
                 samplerate=int(self.samplerate) if self.samplerate else 0,
             )
-        self.start(preferred=prev)
+        self.start(preferred=prev, samplerate_pref=self.samplerate_pref)
 
     def stop(self) -> None:
         """Tear down the stream cleanly. Never raises."""
@@ -625,6 +658,56 @@ class AudioEngine:
         # Stable sort preserves the candidate ordering within each host API.
         return sorted(devices, key=score)
 
+    def _negotiate_sample_rate(self,
+                                dev: DeviceInfo) -> list[int]:
+        """Return a sample-rate probe list for ``dev`` ordered by
+        preference. The caller walks the list and attempts to open each
+        rate in turn; the first one that opens cleanly wins.
+
+        Policy (v0.5.6):
+        * If ``self.samplerate_pref`` pins a specific rate, the list
+          contains only that rate. A failure surfaces as
+          UNSUPPORTED_RATE — we do NOT silently fall back when the user
+          pinned a value.
+        * If pref is ``'auto'``, the list is SAMPLERATE_CANDIDATES
+          (192k → 44.1k highest-first) filtered through PortAudio's
+          ``check_input_settings`` so unsupported rates are skipped
+          before we pay the cost of an InputStream open. The device's
+          ``default_samplerate`` is appended at the bottom in case the
+          device only accepts exotic rates (cheap webcam mics report
+          22050 or 16000).
+        """
+        pref = self.samplerate_pref or 'auto'
+        if pref != 'auto':
+            try:
+                rate = int(pref)
+            except ValueError:
+                rate = 0
+            return [rate] if rate else []
+
+        out: list[int] = []
+        # Probe each candidate without opening the stream. Lying drivers
+        # may pass check_input_settings then fail at .start() — the
+        # caller catches that and walks to the next candidate.
+        for rate in SAMPLERATE_CANDIDATES:
+            try:
+                sd.check_input_settings(device=dev.index, channels=1,
+                                        dtype='float32', samplerate=rate)
+                out.append(rate)
+            except Exception:
+                continue
+        # Append device default as a last-ditch fallback for exotic rates.
+        dev_default = int(dev.default_samplerate or 0)
+        if dev_default and dev_default not in out:
+            try:
+                sd.check_input_settings(device=dev.index, channels=1,
+                                        dtype='float32',
+                                        samplerate=dev_default)
+                out.append(dev_default)
+            except Exception:
+                pass
+        return out
+
     def _open_with_fallback(self, sel: Optional[DeviceSelection],
                             devices: list[DeviceInfo]) -> None:
         """Walk the candidate list × sample-rate list until one opens.
@@ -634,33 +717,40 @@ class AudioEngine:
         """
         self._set_state(AudioEngineState.OPENING)
         candidates = self._resolve_candidates(sel, devices)
-        # Sample rates to try, in order. The saved selection's rate (if
-        # any) goes first, then the device default, then a generic list.
-        sr_seed = int(sel.samplerate) if sel and sel.samplerate else 0
+        pinned = (self.samplerate_pref or 'auto') != 'auto'
         last_err: AudioEngineError = AudioEngineError.UNKNOWN
         last_msg: str = ''
         for dev in candidates:
-            sr_list: list[int] = []
-            if sr_seed:
-                sr_list.append(sr_seed)
-            sr_list.extend([44100, int(dev.default_samplerate or 0),
-                            48000, 96000, 88200, 192000, 32000])
-            # Dedup while preserving order; drop zeros.
-            seen = set()
-            sr_clean = []
-            for s in sr_list:
-                if s and s not in seen:
-                    seen.add(s)
-                    sr_clean.append(s)
+            sr_clean = self._negotiate_sample_rate(dev)
+            if not sr_clean:
+                last_err = AudioEngineError.UNSUPPORTED_RATE
+                if pinned:
+                    last_msg = (
+                        f'{dev.name} [{dev.host_api}]: device does not '
+                        f'accept {self.samplerate_pref} Hz')
+                else:
+                    last_msg = (
+                        f'{dev.name} [{dev.host_api}]: device does not '
+                        f'accept any standard sample rate '
+                        f'(tried 192k / 96k / 88.2k / 48k / 44.1k)')
+                continue
             for sr in sr_clean:
                 ok, err_kind, err_msg = self._try_open(dev, sr)
                 if ok:
                     return
                 last_err, last_msg = err_kind, err_msg
-                # UNSUPPORTED_RATE → try the next sample rate; everything
-                # else → move on to the next device.
-                if err_kind != AudioEngineError.UNSUPPORTED_RATE:
+                # When the user pinned a rate, surface the failure;
+                # never silently fall back to another rate or device.
+                if pinned:
                     break
+                # In auto mode: UNSUPPORTED_RATE / HOSTAPI_FAILURE on
+                # this rate -> try the next rate; everything else means
+                # the device itself is wedged, so move to the next dev.
+                if err_kind not in (AudioEngineError.UNSUPPORTED_RATE,
+                                    AudioEngineError.HOSTAPI_FAILURE):
+                    break
+            if pinned:
+                break
         self._set_state(AudioEngineState.FAILED, last_err, last_msg)
 
     def _try_open(self, dev: DeviceInfo,

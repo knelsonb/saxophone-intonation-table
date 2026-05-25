@@ -68,6 +68,11 @@ class AppConfig:
     audio_device_host_api: str = ""
     # 0 = auto-negotiate (try 44100 → device default → fallback list).
     audio_device_samplerate: int = 0
+    # v0.5.6: user-facing sample rate policy. 'auto' walks
+    # SAMPLERATE_CANDIDATES highest-first; a specific value pins that
+    # rate and surfaces UNSUPPORTED_RATE if the device refuses. Tolerant
+    # default — see load_config below.
+    audio_samplerate_pref: str = "auto"
     # First-run-only banner telling the user we're running off 44100.
     audio_sr_notice_shown: bool = False
     # Power-user toggle: show every host API row in the picker instead of
@@ -158,6 +163,23 @@ def _as_int_list(v) -> list[int]:
     return out
 
 
+_SAMPLERATE_PREF_ALLOWED = frozenset(
+    ("auto", "44100", "48000", "88200", "96000", "192000")
+)
+
+
+def _as_samplerate_pref(v) -> str:
+    """Coerce the saved value into one of SAMPLERATE_PREF_VALUES. A stale
+    or malformed config silently degrades to 'auto' so the engine always
+    has a usable policy."""
+    if v is None:
+        return "auto"
+    s = str(v).strip().lower()
+    if s in _SAMPLERATE_PREF_ALLOWED:
+        return s
+    return "auto"
+
+
 def _as_str(v, default: str) -> str:
     if v is None:
         return default
@@ -196,6 +218,8 @@ def load_config() -> AppConfig:
         audio_device_host_api=_as_str(data.get("audio_device_host_api"), ""),
         audio_device_samplerate=max(
             0, _as_int(data.get("audio_device_samplerate"), 0)),
+        audio_samplerate_pref=_as_samplerate_pref(
+            data.get("audio_samplerate_pref")),
         audio_sr_notice_shown=_as_bool(
             data.get("audio_sr_notice_shown"), False),
         show_all_host_apis=_as_bool(data.get("show_all_host_apis"), False),
