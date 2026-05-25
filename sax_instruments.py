@@ -19,13 +19,17 @@ from __future__ import annotations
 #   [(instrument_key, transp, name_de, name_en), ...])
 _FAMILIES = [
     ('saxophone', 'Saxophon', 'Saxophone', [
+        # Real acoustic transpositions — sounding pitch is not octave-
+        # collapsed. Tenor sax really sounds M9 below written (octave +
+        # major 2nd); baritone an octave + M6 below; bass two octaves +
+        # M2 below; contrabass two octaves + M6 below.
         ('eb_sopranino',    +3, 'Eb-Sax · Sopranino', 'Eb Sax · Sopranino'),
         ('bb_soprano',      -2, 'Bb-Sax · Sopran',    'Bb Sax · Soprano'),
-        ('eb_alto',         +3, 'Eb-Sax · Alt',       'Eb Sax · Alto'),
-        ('bb_tenor',        -2, 'Bb-Sax · Tenor',     'Bb Sax · Tenor'),
-        ('eb_bari',         -9, 'Eb-Sax · Bariton',   'Eb Sax · Baritone'),
-        ('bb_bass',        -14, 'Bb-Sax · Bass',      'Bb Sax · Bass'),
-        ('eb_contrabass',  -21, 'Eb-Sax · Kontrabass', 'Eb Sax · Contrabass'),
+        ('eb_alto',         -9, 'Eb-Sax · Alt',       'Eb Sax · Alto'),
+        ('bb_tenor',       -14, 'Bb-Sax · Tenor',     'Bb Sax · Tenor'),
+        ('eb_bari',        -21, 'Eb-Sax · Bariton',   'Eb Sax · Baritone'),
+        ('bb_bass',        -26, 'Bb-Sax · Bass',      'Bb Sax · Bass'),
+        ('eb_contrabass',  -33, 'Eb-Sax · Kontrabass', 'Eb Sax · Contrabass'),
     ]),
     ('clarinet', 'Klarinette', 'Clarinet', [
         ('clar_eb',           +3, 'Eb-Klarinette',          'Eb Clarinet'),
@@ -211,14 +215,16 @@ def display_name(instrument_key: str, lang: str = 'en') -> str:
 # at low C) layered on top — see tools/musescore/sync_ranges.py for
 # the reproducible regeneration script.
 _RANGES: dict[str, tuple[int, int]] = {
-    # Saxophones
-    'eb_sopranino':           ( 57,  78),   # override via sopranino-saxophone
-    'bb_soprano':             ( 57,  78),   # override via soprano-saxophone
-    'eb_alto':                ( 57,  78),   # override via alto-saxophone
-    'bb_tenor':               ( 57,  78),   # override via tenor-saxophone
-    'eb_bari':                ( 57,  78),   # override via baritone-saxophone
-    'bb_bass':                ( 57,  78),   # override via bass-saxophone
-    'eb_contrabass':          ( 57,  78),   # override via contrabass-saxophone
+    # Saxophones — fingered low A (57) to high F#6 (90) covers the standard
+    # low-A key extension and the high-F# altissimo key. 33 semitones ≈
+    # 2.75 octaves, matching the real range of every modern sax model.
+    'eb_sopranino':           ( 57,  90),
+    'bb_soprano':             ( 57,  90),
+    'eb_alto':                ( 57,  90),
+    'bb_tenor':               ( 57,  90),
+    'eb_bari':                ( 57,  90),
+    'bb_bass':                ( 57,  90),
+    'eb_contrabass':          ( 57,  90),
     # Clarinets
     'clar_eb':                ( 52,  91),   # MS via eb-clarinet
     'clar_d':                 ( 52,  91),   # MS via d-clarinet
