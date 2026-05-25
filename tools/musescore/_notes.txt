@@ -1,0 +1,4 @@
+
+# Notes:
+#   - mellophone_f: no MuseScore id (manual range kept)
+#   - c: no MuseScore id (manual range kept)
