@@ -14,6 +14,7 @@ import sys
 import math
 import threading
 import datetime
+from pathlib import Path
 
 import numpy as np
 
@@ -29,13 +30,26 @@ from PyQt6.QtWidgets import (
     QComboBox, QSizePolicy, QFileDialog, QMessageBox,
     QAbstractItemView, QGroupBox, QSplitter,
     QDialog, QLineEdit, QDialogButtonBox, QFormLayout,
-    QStyledItemDelegate, QMenu,
+    QStyledItemDelegate, QMenu, QCheckBox, QSpinBox, QToolButton,
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QRectF, QPointF
-from PyQt6.QtGui import QPainter, QColor, QFont, QPen
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QRectF, QPointF, QLocale
+from PyQt6.QtGui import QPainter, QColor, QFont, QPen, QIcon
 
 from sax_intonation_log import MeasurementLog
 from sax_intonation_chart import render_intonation_chart
+import sax_instruments
+from sax_instruments import (
+    families as instrument_families,
+    instruments_in,
+    transp_map as build_transp_map,
+    display_name as instrument_display_name,
+    family_of as instrument_family_of,
+    register_custom,
+)
+import sax_config
+
+APP_NAME = 'Intonation Analyzer'
+APP_VERSION = '0.2.0'
 
 
 # =============================================================================
@@ -44,9 +58,33 @@ from sax_intonation_chart import render_intonation_chart
 STRINGS = {
     'de': {
         # Fenster
-        'window_title': 'Saxophon-Intonationsanalysator',
+        'window_title': 'Intonations-Analysator',
         # Gruppen
         'grp_instrument': 'Instrument',
+        'grp_family':       'Familie',
+        'grp_subinstrument':'Modell',
+        'grp_nickname':     'Spitzname',
+        'nickname_tip':     'Spitzname (z.B. "Tenor #1")',
+        'custom_label':     '+  Eigenes …',
+        'custom_dlg_title': 'Eigenes Instrument',
+        'custom_dlg_info':  ('Ein eigenes Instrument hinzufügen. Die Transposition '
+                              'ist die Differenz in Halbtönen vom gegriffenen C '
+                              'zum klingenden Ton (Bb-Tenor = -2, Eb-Alt = +3).'),
+        'custom_lbl_name':  'Anzeigename:',
+        'custom_lbl_transp':'Transposition (Halbtöne):',
+        'custom_err_name':  'Bitte einen Namen angeben.',
+        'welcome_title':    'Willkommen beim Intonations-Analysator',
+        'welcome_info':     ('Beim Spielen werden Cent-Abweichungen erkannt und '
+                              'pro Ton statistisch ausgewertet.\n\n'
+                              'Möchtest du den Verlauf zwischen Sitzungen speichern, '
+                              'damit du später daraus CSVs und Diagramme erzeugen kannst?'),
+        'welcome_persist':  'Messdatenverlauf dauerhaft speichern',
+        'welcome_path':     'Die Datei landet unter:\n{path}',
+        'welcome_continue': 'Loslegen',
+        'welcome_skip':     'Später entscheiden',
+        'csv_mode_per_nickname_note': 'Pro Spitzname und Ton (z.B. zwei Tenöre vergleichen)',
+        'csv_nick_label':   'Spitzname:',
+        'csv_all_nicks':    'Alle Spitznamen',
         'grp_display':    'Tondarstellung',
         'grp_a4':         'Kammerton A',
         'grp_language':   'Sprache',
@@ -203,8 +241,33 @@ STRINGS = {
         'transp_info_c':  'keine Transposition',
     },
     'en': {
-        'window_title': 'Saxophone Intonation Analyzer',
+        'window_title': 'Intonation Analyzer',
         'grp_instrument': 'Instrument',
+        'grp_family':       'Family',
+        'grp_subinstrument':'Model',
+        'grp_nickname':     'Nickname',
+        'nickname_tip':     'Nickname (e.g. "Tenor #1")',
+        'custom_label':     '+  Custom …',
+        'custom_dlg_title': 'Custom instrument',
+        'custom_dlg_info':  ('Add a custom instrument. Transposition is the '
+                              'number of semitones from written C to sounding '
+                              'pitch (Bb tenor = -2, Eb alto = +3).'),
+        'custom_lbl_name':  'Display name:',
+        'custom_lbl_transp':'Transposition (semitones):',
+        'custom_err_name':  'Please enter a name.',
+        'welcome_title':    'Welcome to Intonation Analyzer',
+        'welcome_info':     ('As you play, cent deviations are detected and '
+                              'aggregated per note.\n\n'
+                              'Would you like to save your measurement history '
+                              'between sessions, so you can export CSVs and '
+                              'charts from past data?'),
+        'welcome_persist':  'Save measurement history to disk',
+        'welcome_path':     'The file will live at:\n{path}',
+        'welcome_continue': 'Get started',
+        'welcome_skip':     'Decide later',
+        'csv_mode_per_nickname_note': 'Per nickname and note (e.g. compare two tenors)',
+        'csv_nick_label':   'Nickname:',
+        'csv_all_nicks':    'All nicknames',
         'grp_display':    'Note Display',
         'grp_a4':         'Concert Pitch A',
         'grp_language':   'Language',
@@ -370,19 +433,17 @@ TRANSP     = {'eb': 3, 'bb': 2, 'c': 0}
 # Alt (Eb):       klingt Db3 (49) – Ab5 (80)   → gegriffen Bb3–F6 (58–77)
 # Sopran (Bb):    klingt Ab3 (56) – Eb6 (87)   → gegriffen G4–D7  (67–86)
 SAX_MIDI   = range(21, 92)   # E0–G6: deckt alle Saxophon-Typen inkl. Bass ab
-INSTR_KEYS = ['eb_alto', 'eb_bari', 'bb_tenor', 'bb_soprano', 'bb_bass', 'c']
 
-# Transposition pro Instrumentschlüssel (Halbtöne: gegriffenes C → klingender Ton)
-TRANSP_MAP = {
-    # transp = klingend_midi - gegriffen_midi
-    # gegriffen = klingend - transp  (immer Minus in der Berechnung)
-    'eb_alto':    +3,   # greife C4(60) → klingt Eb4(63):  +3
-    'eb_bari':    -9,   # greife C4(60) → klingt Eb3(51):  -9  (Oktave tiefer als Alt)
-    'bb_tenor':   -2,   # greife C4(60) → klingt Bb3(58):  -2
-    'bb_soprano': -2,   # wie Tenor, aber eine Oktave höher notiert – gleiche Transposition
-    'bb_bass':   -14,   # greife C4(60) → klingt Bb2(46): -14  (Oktave + Sekunde tiefer)
-    'c':           0,
-}
+# Transposition map is now derived from sax_instruments.transp_map(), which
+# includes the original six saxophone/C-instrument keys plus everything else
+# in the catalog. Rebuilt on demand whenever a custom instrument is added.
+TRANSP_MAP: dict[str, int] = build_transp_map()
+
+
+def _rebuild_transp_map() -> None:
+    """Refresh TRANSP_MAP after a custom instrument is registered."""
+    global TRANSP_MAP
+    TRANSP_MAP = build_transp_map()
 
 
 def freq_to_midi(f, a4=None):
@@ -676,32 +737,46 @@ class CentBarDelegate(QStyledItemDelegate):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.lang       = 'de'
-        self.instrument = 'eb_alto'   # aktuell gewählter Instrumentschlüssel
+        # Pick the user's system language as the default. German-speaking
+        # locales get the original DE strings; anyone else gets English.
+        self.lang       = 'de' if QLocale.system().name().startswith('de') else 'en'
+        self.instrument = 'eb_alto'   # default; saxophone family, alto
         self.display    = 'griff'
         self.stats: dict[int, NoteStats] = {}
         self._lock = threading.Lock()
         self._recording = True   # Aufnahme läuft beim Start
 
+        # Load user config + previously-registered custom instruments before
+        # building the UI so the catalog reflects them at first paint.
+        self._cfg = sax_config.load_config()
+        for c in sax_config.load_customs():
+            register_custom(c.key, c.transp, c.name_de, c.name_en)
+        _rebuild_transp_map()
+
         self._engine = AudioEngine()
-        # Persistence is opt-in via env var. When unset, the log is in-memory
-        # only — exports cover the current session.
-        self._log = MeasurementLog(
-            path=os.environ.get('SAX_INTONATION_LOG_PATH') or None)
+        # Persistence comes from config (welcome dialog), with the env var
+        # SAX_INTONATION_LOG_PATH as a power-user override that always wins.
+        env_path = os.environ.get('SAX_INTONATION_LOG_PATH')
+        log_path = env_path if env_path else self._cfg.effective_log_path()
+        self._log = MeasurementLog(path=log_path or None)
         if AUDIO_OK:
-            # Only open a run when audio actually works; otherwise we'd write
-            # an empty run record on every launch with no microphone.
             self._log.start_run(instrument=self.instrument,
                                 a4_hz=self._engine.a4)
             self._engine.signals.note_detected.connect(self._on_note)
             self._engine.start()
 
         self._build_ui()
-        self._update_record_btn_style()   # initialer Stil
+        self._seed_expected_notes()
+        self._update_record_btn_style()
 
         if not AUDIO_OK:
             QMessageBox.information(self, self._t('audio_error_title'),
                                      self._t('audio_error'))
+
+        # First-boot welcome dialog asks about persistence. Skipped on every
+        # subsequent launch.
+        if not self._cfg.welcome_shown:
+            self._show_welcome_dialog()
 
         self._refresh_timer = QTimer(self)
         self._refresh_timer.timeout.connect(self._refresh_table)
@@ -721,22 +796,59 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(14, 10, 14, 10)
 
         # ── Toolbar ───────────────────────────────────────────────────────────
-        toolbar = QHBoxLayout()
-        toolbar.setSpacing(8)
+        # FlowLayout wraps children onto a second row when the window is
+        # narrower than the combined toolbar width. Plain QHBoxLayout would
+        # truncate or scroll instead.
+        from sax_flow_layout import FlowLayout
+        toolbar_container = QWidget()
+        toolbar = FlowLayout(parent=toolbar_container, margin=0,
+                             hspacing=8, vspacing=6)
 
-        # Instrument
+        # Instrument: family combo + sub-instrument combo + Custom + nickname.
         self._grp_instr = QGroupBox(self._t('grp_instrument'))
         il = QHBoxLayout(self._grp_instr)
         il.setContentsMargins(8, 4, 8, 4)
+        il.setSpacing(6)
+
+        self._family_combo = QComboBox()
+        for family_key, name_de, name_en in instrument_families():
+            label = name_de if self.lang == 'de' else name_en
+            self._family_combo.addItem(label, family_key)
+        self._family_combo.setMinimumWidth(130)
+        self._family_combo.currentIndexChanged.connect(self._on_family_changed)
+        il.addWidget(self._family_combo)
+
         self._instr_combo = QComboBox()
-        self._instr_combo.addItems([
-            self._t('instr_eb_alto'), self._t('instr_eb_bari'),
-            self._t('instr_bb_tenor'), self._t('instr_bb_soprano'),
-            self._t('instr_bb_bass'), self._t('instr_c'),
-        ])
-        self._instr_combo.setMinimumWidth(200)
+        self._instr_combo.setMinimumWidth(180)
         self._instr_combo.currentIndexChanged.connect(self._on_instr_changed)
         il.addWidget(self._instr_combo)
+
+        self._btn_custom = QPushButton(self._t('custom_label'))
+        self._btn_custom.setToolTip(self._t('custom_dlg_title'))
+        self._btn_custom.setMaximumWidth(110)
+        self._btn_custom.clicked.connect(self._on_add_custom)
+        self._btn_custom.setStyleSheet("""
+            QPushButton{background:#34495e;color:#eee;border:none;
+                         border-radius:5px;padding:6px 10px;font-size:12px;}
+            QPushButton:hover{background:#3d566e;}
+            QPushButton:pressed{background:#2c3e50;}
+        """)
+        il.addWidget(self._btn_custom)
+
+        self._nick_edit = QLineEdit()
+        self._nick_edit.setPlaceholderText(self._t('nickname_tip'))
+        self._nick_edit.setMaximumWidth(160)
+        self._nick_edit.editingFinished.connect(self._on_nickname_changed)
+        self._nick_edit.setStyleSheet("""
+            QLineEdit{background:#1e1e2e;border:1px solid #444;
+                       border-radius:5px;color:#ddd;padding:4px 8px;font-size:12px;}
+            QLineEdit:focus{border:1px solid #6699cc;}
+        """)
+        il.addWidget(self._nick_edit)
+
+        # Select the saxophone family + the default alto instrument.
+        self._select_family_for_instrument(self.instrument)
+        self._populate_instrument_combo(select_key=self.instrument)
 
         # Anzeige
         self._grp_disp = QGroupBox(self._t('grp_display'))
@@ -787,7 +899,7 @@ class MainWindow(QMainWindow):
         # Import sits on the left, separated from the export cluster — open
         # belongs near the inputs, save belongs on the right.
         toolbar.addWidget(self._btn_import)
-        toolbar.addStretch()
+        # No stretch — FlowLayout uses its own packing/reflow.
         toolbar.addWidget(self._btn_autotune)
         toolbar.addWidget(self._btn_record)
         toolbar.addWidget(self._btn_reset)
@@ -795,7 +907,7 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(self._btn_pdf)
         toolbar.addWidget(self._btn_chart)
         toolbar.addWidget(self._btn_csv)
-        root.addLayout(toolbar)
+        root.addWidget(toolbar_container)
 
         # ── Splitter ──────────────────────────────────────────────────────────
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -895,17 +1007,18 @@ class MainWindow(QMainWindow):
         self._grp_a4.setTitle(self._t('grp_a4'))
         self._grp_lang.setTitle(self._t('grp_language'))
 
-        # Instrument-Combo – Index merken, Einträge tauschen
-        idx_i = self._instr_combo.currentIndex()
-        self._instr_combo.blockSignals(True)
-        self._instr_combo.clear()
-        self._instr_combo.addItems([
-            self._t('instr_eb_alto'), self._t('instr_eb_bari'),
-            self._t('instr_bb_tenor'), self._t('instr_bb_soprano'),
-            self._t('instr_bb_bass'), self._t('instr_c'),
-        ])
-        self._instr_combo.setCurrentIndex(idx_i)
-        self._instr_combo.blockSignals(False)
+        # Family + sub-instrument combos re-populated in current language.
+        self._family_combo.blockSignals(True)
+        self._family_combo.clear()
+        for family_key, name_de, name_en in instrument_families():
+            label = name_de if self.lang == 'de' else name_en
+            self._family_combo.addItem(label, family_key)
+        self._family_combo.blockSignals(False)
+        self._select_family_for_instrument(self.instrument)
+        self._populate_instrument_combo(select_key=self.instrument)
+        self._btn_custom.setText(self._t('custom_label'))
+        self._btn_custom.setToolTip(self._t('custom_dlg_title'))
+        self._nick_edit.setPlaceholderText(self._t('nickname_tip'))
 
         # Display-Combo
         idx_d = self._disp_combo.currentIndex()
@@ -961,6 +1074,11 @@ class MainWindow(QMainWindow):
 
     # ── Tabelle ───────────────────────────────────────────────────────────────
     def _refresh_table(self):
+        # Can be called during initial UI construction (instrument combo
+        # populate fires _on_instr_changed before _build_ui finishes the
+        # right-hand panel). Bail out until the table widget exists.
+        if not hasattr(self, '_table'):
+            return
         transp     = TRANSP_MAP[self.instrument]
         disp_griff = (self.display == 'griff')
 
@@ -976,36 +1094,50 @@ class MainWindow(QMainWindow):
             items = sorted(self.stats.items())
 
         self._table.setRowCount(len(items))
+        played_n = 0
         for row, (midi_kl, st) in enumerate(items):
             midi_gr = midi_kl - transp
             kl_name = midi_note_name(midi_kl)
             gr_name = midi_note_name(midi_gr)
             n1, n2  = (gr_name, kl_name) if disp_griff else (kl_name, gr_name)
             mean    = st.mean
+            has_data = st.n > 0
+            if has_data:
+                played_n += 1
             sign    = '+' if mean >= 0 else ''
 
             col = (QColor('#3a9e5f') if abs(mean) <= 5 else
                    QColor('#c8a020') if abs(mean) <= 12 else QColor('#c03030'))
+            dim_col = QColor('#555')   # un-played pre-seeded notes
 
             for c, val in enumerate([
                 n1, n2,
-                f"{sign}{mean:.1f}",
+                f"{sign}{mean:.1f}" if has_data else '\u2013',
                 f"\u00b1{st.std:.1f}" if st.n > 1 else '\u2013',
-                str(st.n),
+                str(st.n) if has_data else '\u2013',
                 '',   # Balken wird vom Delegate gezeichnet
             ]):
                 item = QTableWidgetItem(val)
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 if c == 2:
-                    item.setForeground(col)
-                if c == 5:
+                    item.setForeground(col if has_data else dim_col)
+                elif not has_data:
+                    item.setForeground(dim_col)
+                if c == 5 and has_data:
                     item.setData(Qt.ItemDataRole.UserRole, mean)
+                # When N=0 the bar delegate sees no UserRole data and
+                # naturally draws nothing \u2014 the row stays visually quiet.
                 self._table.setItem(row, c, item)
 
         total = sum(s.n for _, s in items)
-        self._table_lbl.setText(
-            self._t('table_summary', notes=len(items), total=total)
-            if items else self._t('table_empty_hint'))
+        if not items:
+            label = self._t('table_empty_hint')
+        elif played_n == 0:
+            # Only seeded blanks visible \u2014 keep the play-a-note hint up.
+            label = self._t('table_empty_hint')
+        else:
+            label = self._t('table_summary', notes=played_n, total=total)
+        self._table_lbl.setText(label)
 
     def _make_bar(self, cents, w=20):
         half = w // 2
@@ -1017,15 +1149,285 @@ class MainWindow(QMainWindow):
         return ' '*half + '\u2502' + ' '*half
 
     # ── Instrument / Anzeige / A4 ─────────────────────────────────────────────
+    def _on_family_changed(self, _idx):
+        """Family combo changed → repopulate the sub-instrument combo with
+        the new family's entries and select the first one."""
+        self._populate_instrument_combo(select_key=None)
+
+    def _populate_instrument_combo(self, select_key: str | None) -> None:
+        family_key = self._family_combo.currentData()
+        if family_key is None:
+            return
+        self._instr_combo.blockSignals(True)
+        self._instr_combo.clear()
+        target_idx = 0
+        for i, (key, name_de, name_en) in enumerate(instruments_in(family_key)):
+            label = name_de if self.lang == 'de' else name_en
+            self._instr_combo.addItem(label, key)
+            if key == select_key:
+                target_idx = i
+        if self._instr_combo.count():
+            self._instr_combo.setCurrentIndex(target_idx)
+        self._instr_combo.blockSignals(False)
+        if self._instr_combo.count():
+            self._on_instr_changed(self._instr_combo.currentIndex())
+
+    def _select_family_for_instrument(self, instrument_key: str) -> None:
+        """Move the family combo to the family that contains the given key,
+        without triggering a sub-instrument repopulate."""
+        family_key = instrument_family_of(instrument_key)
+        if family_key is None:
+            return
+        for i in range(self._family_combo.count()):
+            if self._family_combo.itemData(i) == family_key:
+                self._family_combo.blockSignals(True)
+                self._family_combo.setCurrentIndex(i)
+                self._family_combo.blockSignals(False)
+                return
+
     def _on_instr_changed(self, idx):
-        self.instrument = INSTR_KEYS[idx]
+        key = self._instr_combo.itemData(idx)
+        if key is None:
+            return
+        self.instrument = key
         self._engine.instr_key = self.instrument
+        # Seed the stats with empty slots for every expected fingered note so
+        # the table immediately shows the player what the instrument's range
+        # looks like. Real measurements fill in as the player plays;
+        # out-of-range notes (overtones, accidentals) appear automatically
+        # via the existing _on_note path.
+        self._seed_expected_notes()
         # Instrument switch ⇒ new run, so per-run aggregates stay coherent.
         # Empty predecessor runs are coalesced inside `start_run`.
         if AUDIO_OK and self._recording:
             self._log.start_run(instrument=self.instrument,
-                                a4_hz=self._engine.a4)
+                                a4_hz=self._engine.a4,
+                                label=self._nick_edit.text().strip())
         self._refresh_table()
+
+    def _seed_expected_notes(self) -> None:
+        """Populate self.stats with empty NoteStats for the current
+        instrument's expected fingered range. Existing measurements are
+        preserved."""
+        transp = TRANSP_MAP.get(self.instrument, 0)
+        lo, hi = sax_instruments.fingered_range(self.instrument)
+        with self._lock:
+            for fingered in range(lo, hi + 1):
+                sounding = fingered + transp
+                if sounding in SAX_MIDI and sounding not in self.stats:
+                    self.stats[sounding] = NoteStats()
+
+    def _on_nickname_changed(self) -> None:
+        """User finished editing the nickname. Stamp the new label onto the
+        current run so the next CSV export and table summary pick it up."""
+        nickname = self._nick_edit.text().strip()
+        if AUDIO_OK and self._recording:
+            self._log.set_current_run_metadata(label=nickname)
+
+    def _on_add_custom(self) -> None:
+        """Prompt the user for a custom instrument and register it."""
+        result = self._ask_custom_instrument()
+        if result is None:
+            return
+        name, transp = result
+        # Build a stable key: 'custom_' + slugified name. Replacement on
+        # duplicate is handled by register_custom.
+        key = 'custom_' + ''.join(
+            c.lower() if c.isalnum() else '_' for c in name).strip('_')[:32]
+        if not key or key == 'custom_':
+            return
+        register_custom(key, transp, name, name)
+        _rebuild_transp_map()
+        # Persist for next session.
+        customs = sax_config.load_customs()
+        customs = [c for c in customs if c.key != key]
+        customs.append(sax_config.CustomInstrument(
+            key=key, transp=transp, name_de=name, name_en=name))
+        sax_config.save_customs(customs)
+        # Refresh combos and select the new instrument.
+        self._family_combo.blockSignals(True)
+        self._family_combo.clear()
+        for fk, de, en in instrument_families():
+            self._family_combo.addItem(de if self.lang == 'de' else en, fk)
+        self._family_combo.blockSignals(False)
+        self._select_family_for_instrument(key)
+        self._populate_instrument_combo(select_key=key)
+
+    def _add_dialog_lang_toggle(self, dlg, layout, on_change=None):
+        """Drop a tiny DE | EN toggle at the top of any modal dialog so the
+        user can switch language without having to cancel out and find the
+        main-window combo. `on_change`, if given, is called after the lang
+        switch so the dialog can repaint its own labels."""
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(4)
+        row.addStretch()
+
+        def make_btn(label, code):
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setChecked(self.lang == code)
+            btn.setFixedWidth(46)
+            btn.setStyleSheet("""
+                QPushButton{background:#2a2a3e;color:#bbb;border:1px solid #444;
+                             border-radius:4px;padding:3px 8px;font-size:11px;}
+                QPushButton:checked{background:#2c5282;color:white;border:1px solid #6699cc;}
+                QPushButton:hover:!checked{background:#34344a;}
+            """)
+            return btn
+
+        btn_de = make_btn('DE', 'de')
+        btn_en = make_btn('EN', 'en')
+
+        def switch(target):
+            if self.lang == target:
+                return
+            # Flip via the main window's combo so all subscribers (the main
+            # toolbar, labels, etc.) update too.
+            for i in range(self._lang_combo.count()):
+                if self._lang_combo.itemData(i) == target:
+                    self._lang_combo.setCurrentIndex(i)
+                    break
+            btn_de.setChecked(self.lang == 'de')
+            btn_en.setChecked(self.lang == 'en')
+            # Update the dialog's own window title.
+            dlg.setWindowTitle(self._t(dlg.property('_lang_title_key')
+                                        or 'window_title'))
+            if on_change is not None:
+                on_change()
+
+        btn_de.clicked.connect(lambda: switch('de'))
+        btn_en.clicked.connect(lambda: switch('en'))
+        row.addWidget(btn_de)
+        row.addWidget(btn_en)
+        layout.addLayout(row)
+
+    def _show_welcome_dialog(self) -> None:
+        """First-boot dialog. Offers opt-in for persistent JSONL log."""
+        dlg = QDialog(self)
+        dlg.setProperty('_lang_title_key', 'welcome_title')
+        dlg.setWindowTitle(self._t('welcome_title'))
+        dlg.setMinimumWidth(480)
+        dlg.setStyleSheet("""
+            QDialog { background: #1a1a2e; color: #ddd; }
+            QLabel  { color: #ccc; font-size: 13px; }
+            QCheckBox { color: #ddd; font-size: 13px; padding: 6px 0; }
+            QPushButton {
+                background: #2c5282; color: white; border: none;
+                border-radius: 5px; padding: 8px 18px; font-size: 13px;
+            }
+            QPushButton:hover  { background: #3a6da8; }
+        """)
+        layout = QVBoxLayout(dlg)
+        layout.setSpacing(14)
+        layout.setContentsMargins(24, 14, 24, 18)
+
+        # Language toggle at the top — load-bearing on first launch, since
+        # this dialog fires before the user has touched the main combo.
+        info = QLabel(self._t('welcome_info'))
+        info.setWordWrap(True)
+        cb = QCheckBox(self._t('welcome_persist'))
+        cb.setChecked(False)
+        default_path = sax_config.CONFIG_DIR / sax_config.DEFAULT_LOG_FILENAME
+        path_lbl = QLabel(self._t('welcome_path', path=str(default_path)))
+        path_lbl.setStyleSheet('color: #888; font-size: 11px;')
+        path_lbl.setWordWrap(True)
+        btns = QDialogButtonBox()
+        btn_go = btns.addButton(self._t('welcome_continue'),
+                                 QDialogButtonBox.ButtonRole.AcceptRole)
+        btn_later = btns.addButton(self._t('welcome_skip'),
+                                    QDialogButtonBox.ButtonRole.RejectRole)
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+
+        def relabel():
+            info.setText(self._t('welcome_info'))
+            cb.setText(self._t('welcome_persist'))
+            path_lbl.setText(self._t('welcome_path', path=str(default_path)))
+            btn_go.setText(self._t('welcome_continue'))
+            btn_later.setText(self._t('welcome_skip'))
+
+        self._add_dialog_lang_toggle(dlg, layout, on_change=relabel)
+        layout.addWidget(info)
+        layout.addWidget(cb)
+        layout.addWidget(path_lbl)
+        layout.addWidget(btns)
+        accepted = (dlg.exec() == QDialog.DialogCode.Accepted)
+        # Whether they accepted or skipped, mark welcome as shown so we don't
+        # ask again. Persistence is only enabled if they ticked the box.
+        self._cfg.welcome_shown = True
+        if accepted and cb.isChecked():
+            self._cfg.persistence_enabled = True
+            # Rebuild the log on the chosen path. Existing in-memory entries
+            # would be lost otherwise — but at this point the user has only
+            # been in the app a few seconds at most, so that's fine.
+            new_path = self._cfg.effective_log_path()
+            if new_path:
+                self._log = MeasurementLog(path=new_path)
+                if AUDIO_OK:
+                    self._log.start_run(instrument=self.instrument,
+                                        a4_hz=self._engine.a4,
+                                        label=self._nick_edit.text().strip())
+        sax_config.save_config(self._cfg)
+
+    def _ask_custom_instrument(self) -> tuple[str, int] | None:
+        dlg = QDialog(self)
+        dlg.setProperty('_lang_title_key', 'custom_dlg_title')
+        dlg.setWindowTitle(self._t('custom_dlg_title'))
+        dlg.setMinimumWidth(380)
+        dlg.setStyleSheet("""
+            QDialog { background: #1a1a2e; color: #ddd; }
+            QLabel  { color: #bbb; font-size: 13px; }
+            QLineEdit, QSpinBox {
+                background: #252540; border: 1px solid #444; border-radius: 5px;
+                color: #eee; padding: 6px 10px; font-size: 13px;
+            }
+            QLineEdit:focus, QSpinBox:focus { border: 1px solid #6699cc; }
+            QDialogButtonBox QPushButton {
+                background: #2c5282; color: white; border: none;
+                border-radius: 5px; padding: 6px 18px; font-size: 13px;
+            }
+        """)
+        layout = QVBoxLayout(dlg)
+        layout.setSpacing(10)
+        layout.setContentsMargins(20, 14, 20, 16)
+        info = QLabel(self._t('custom_dlg_info'))
+        info.setStyleSheet('color: #888; font-size: 12px;')
+        info.setWordWrap(True)
+        form = QFormLayout()
+        form.setSpacing(8)
+        edit_name = QLineEdit()
+        edit_name.setPlaceholderText('e.g. Eb Mezzo-Soprano')
+        name_lbl = QLabel(self._t('custom_lbl_name'))
+        form.addRow(name_lbl, edit_name)
+        spin_transp = QSpinBox()
+        spin_transp.setRange(-36, 36)
+        spin_transp.setValue(0)
+        transp_lbl = QLabel(self._t('custom_lbl_transp'))
+        form.addRow(transp_lbl, spin_transp)
+        btns = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel)
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+
+        def relabel():
+            info.setText(self._t('custom_dlg_info'))
+            name_lbl.setText(self._t('custom_lbl_name'))
+            transp_lbl.setText(self._t('custom_lbl_transp'))
+
+        self._add_dialog_lang_toggle(dlg, layout, on_change=relabel)
+        layout.addWidget(info)
+        layout.addLayout(form)
+        layout.addWidget(btns)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return None
+        name = edit_name.text().strip()
+        if not name:
+            QMessageBox.warning(self, self._t('err_title'),
+                                self._t('custom_err_name'))
+            return None
+        return (name, int(spin_transp.value()))
 
     def _on_disp_changed(self, idx):
         self.display = ['griff', 'klingend'][idx]
@@ -1040,7 +1442,8 @@ class MainWindow(QMainWindow):
         # `start_run` coalesces the predecessor if it never recorded.
         if AUDIO_OK and self._recording:
             self._log.start_run(instrument=self.instrument,
-                                a4_hz=self._engine.a4)
+                                a4_hz=self._engine.a4,
+                                label=self._nick_edit.text().strip())
         self._refresh_table()
 
     # ── Start / Stop ──────────────────────────────────────────────────────────
@@ -1050,7 +1453,8 @@ class MainWindow(QMainWindow):
             # Resumed recording ⇒ open a fresh run for the log.
             if AUDIO_OK:
                 self._log.start_run(instrument=self.instrument,
-                                    a4_hz=self._engine.a4)
+                                    a4_hz=self._engine.a4,
+                                    label=self._nick_edit.text().strip())
             self._btn_record.setText(self._t('btn_stop'))
             self._btn_record.setStyleSheet(self._btn_record.styleSheet().replace('#2ecc71', '#b7770d').replace('#27ae60', '#b7770d'))
             self._update_record_btn_style()
@@ -1177,8 +1581,9 @@ class MainWindow(QMainWindow):
             return (getattr(self, '_last_maker', ''),
                     getattr(self, '_last_model', ''))
         dlg = QDialog(self)
+        dlg.setProperty('_lang_title_key', 'model_dialog_title')
         dlg.setWindowTitle(self._t('model_dialog_title'))
-        dlg.setMinimumWidth(420)
+        dlg.setMinimumWidth(440)
         dlg.setStyleSheet("""
             QDialog { background: #1a1a2e; color: #ddd; }
             QLabel  { color: #bbb; font-size: 13px; }
@@ -1201,7 +1606,7 @@ class MainWindow(QMainWindow):
 
         info = QLabel(self._t('model_dialog_info'))
         info.setStyleSheet('color: #888; font-size: 12px;')
-        layout.addWidget(info)
+        info.setWordWrap(True)
 
         form = QFormLayout()
         form.setSpacing(10)
@@ -1209,7 +1614,6 @@ class MainWindow(QMainWindow):
 
         edit_maker = QLineEdit()
         edit_maker.setPlaceholderText(self._t('model_placeholder_maker'))
-        # Letzten Wert vorausfüllen falls vorhanden
         if hasattr(self, '_last_maker'):
             edit_maker.setText(self._last_maker)
 
@@ -1218,15 +1622,27 @@ class MainWindow(QMainWindow):
         if hasattr(self, '_last_model'):
             edit_model.setText(self._last_model)
 
-        form.addRow(self._t('model_label_maker'), edit_maker)
-        form.addRow(self._t('model_label_model'), edit_model)
-        layout.addLayout(form)
+        maker_lbl = QLabel(self._t('model_label_maker'))
+        model_lbl = QLabel(self._t('model_label_model'))
+        form.addRow(maker_lbl, edit_maker)
+        form.addRow(model_lbl, edit_model)
 
         btns = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok |
             QDialogButtonBox.StandardButton.Cancel)
         btns.accepted.connect(dlg.accept)
         btns.rejected.connect(dlg.reject)
+
+        def relabel():
+            info.setText(self._t('model_dialog_info'))
+            maker_lbl.setText(self._t('model_label_maker'))
+            model_lbl.setText(self._t('model_label_model'))
+            edit_maker.setPlaceholderText(self._t('model_placeholder_maker'))
+            edit_model.setPlaceholderText(self._t('model_placeholder_model'))
+
+        self._add_dialog_lang_toggle(dlg, layout, on_change=relabel)
+        layout.addWidget(info)
+        layout.addLayout(form)
         layout.addWidget(btns)
 
         if dlg.exec() != QDialog.DialogCode.Accepted:
@@ -1435,7 +1851,8 @@ class MainWindow(QMainWindow):
             n = self._log.export_csv(path,
                                      mode=sel['mode'],
                                      run_id=sel['run_id'],
-                                     instrument=sel['instrument'])
+                                     instrument=sel['instrument'],
+                                     nickname=sel['nickname'])
             QMessageBox.information(self, self._t('export_title'),
                                     self._t('csv_saved', rows=n, path=path))
         except Exception as e:
@@ -1447,8 +1864,9 @@ class MainWindow(QMainWindow):
         Returns {'mode', 'run_id', 'instrument'} or None if cancelled.
         """
         dlg = QDialog(self)
+        dlg.setProperty('_lang_title_key', 'csv_dialog_title')
         dlg.setWindowTitle(self._t('csv_dialog_title'))
-        dlg.setMinimumWidth(480)
+        dlg.setMinimumWidth(520)
         dlg.setStyleSheet("""
             QDialog { background: #1a1a2e; color: #ddd; }
             QLabel  { color: #bbb; font-size: 13px; }
@@ -1467,7 +1885,12 @@ class MainWindow(QMainWindow):
 
         layout = QVBoxLayout(dlg)
         layout.setSpacing(12)
-        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setContentsMargins(20, 14, 20, 16)
+
+        # Closing the dialog and re-opening it is the path to picking up a
+        # language switch — the captured labels here aren't re-bound. The
+        # toggle at least lets the user notice they're in the wrong language.
+        self._add_dialog_lang_toggle(dlg, layout)
 
         info = QLabel(self._t('csv_dialog_info'))
         info.setStyleSheet('color: #888; font-size: 12px;')
@@ -1502,6 +1925,16 @@ class MainWindow(QMainWindow):
         instr_lbl = QLabel(self._t('csv_instr_label'))
         form.addRow(instr_lbl, instr_combo)
 
+        # Nickname filter — collect from runs that have one. If nothing in the
+        # log has a nickname yet, the combo will only show "All nicknames".
+        nick_combo = QComboBox()
+        nick_combo.addItem(self._t('csv_all_nicks'), None)
+        seen_nicks = sorted({r.label for r in self._log.runs() if r.label})
+        for nk in seen_nicks:
+            nick_combo.addItem(nk, nk)
+        nick_lbl = QLabel(self._t('csv_nick_label'))
+        form.addRow(nick_lbl, nick_combo)
+
         layout.addLayout(form)
 
         n = len(self._log.measurements())
@@ -1522,12 +1955,17 @@ class MainWindow(QMainWindow):
             run_enabled = mode in ('raw', 'per_run_note')
             instr_required = mode == 'instrument_avg'
             instr_enabled = mode in ('raw', 'per_run_note',
-                                     'per_instrument_note', 'instrument_avg')
+                                     'per_instrument_note', 'instrument_avg',
+                                     'per_nickname_note')
+            nick_enabled = mode in ('raw', 'per_run_note',
+                                    'per_instrument_note', 'per_nickname_note')
 
             run_combo.setEnabled(run_enabled)
             run_lbl.setEnabled(run_enabled)
             instr_combo.setEnabled(instr_enabled)
             instr_lbl.setEnabled(instr_enabled)
+            nick_combo.setEnabled(nick_enabled)
+            nick_lbl.setEnabled(nick_enabled)
 
             # In instrument_avg mode the user must pick one instrument; the
             # "All instruments" sentinel at index 0 is removed and reinstated
@@ -1550,11 +1988,15 @@ class MainWindow(QMainWindow):
             'run_id': run_combo.currentData() if run_combo.isEnabled() else None,
             'instrument': (instr_combo.currentData()
                            if instr_combo.isEnabled() else None),
+            'nickname': (nick_combo.currentData()
+                          if nick_combo.isEnabled() else None),
         }
 
     def _instr_label(self, key: str) -> str:
         long_key = f'instr_long_{key}'
-        return self._t(long_key) if long_key in STRINGS[self.lang] else key
+        if long_key in STRINGS[self.lang]:
+            return self._t(long_key)
+        return instrument_display_name(key, self.lang)
 
     # ── Import CSV ────────────────────────────────────────────────────────────
     def _import_csv(self):
@@ -1660,9 +2102,36 @@ def _today():
 
 
 # =============================================================================
+def _load_app_icon() -> QIcon | None:
+    """Locate the bundled application icon. Returns None if it can't be
+    found — never crashes startup over a missing asset."""
+    candidates = [
+        Path(__file__).parent / 'assets' / 'icon.png',
+        Path(__file__).parent / 'assets' / 'icon.ico',
+    ]
+    # PyInstaller drops resources into sys._MEIPASS at runtime.
+    meipass = getattr(sys, '_MEIPASS', None)
+    if meipass:
+        candidates.insert(0, Path(meipass) / 'assets' / 'icon.png')
+        candidates.insert(0, Path(meipass) / 'assets' / 'icon.ico')
+    for p in candidates:
+        if p.exists():
+            icon = QIcon(str(p))
+            if not icon.isNull():
+                return icon
+    return None
+
+
 if __name__ == '__main__':
     app = QApplication(sys.argv)
-    app.setApplicationName('Sax-Intonation')
+    app.setApplicationName(APP_NAME)
+    app.setApplicationDisplayName(APP_NAME)
+    app.setApplicationVersion(APP_VERSION)
+    icon = _load_app_icon()
+    if icon is not None:
+        app.setWindowIcon(icon)
     win = MainWindow()
+    if icon is not None:
+        win.setWindowIcon(icon)
     win.show()
     sys.exit(app.exec())

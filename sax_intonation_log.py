@@ -242,6 +242,13 @@ class MeasurementLog:
 
     # -- import -----------------------------------------------------------
     RAW_CSV_HEADER = (
+        "timestamp", "run_id", "run_started_at", "instrument", "nickname",
+        "a4_hz", "midi_sounding", "sounding_note", "midi_fingered",
+        "fingered_note", "cents", "freq_hz", "maker", "model",
+    )
+    # Header from before the nickname column was added; accepted on import
+    # so old exports still round-trip cleanly.
+    RAW_CSV_HEADER_LEGACY = (
         "timestamp", "run_id", "run_started_at", "instrument", "a4_hz",
         "midi_sounding", "sounding_note", "midi_fingered", "fingered_note",
         "cents", "freq_hz", "maker", "model",
@@ -265,10 +272,14 @@ class MeasurementLog:
                 header = tuple(next(reader))
             except StopIteration:
                 return (0, 0)
-            if header != self.RAW_CSV_HEADER:
+            if header == self.RAW_CSV_HEADER:
+                legacy = False
+            elif header == self.RAW_CSV_HEADER_LEGACY:
+                legacy = True
+            else:
                 raise ValueError(
-                    "CSV header does not match the raw export format. "
-                    f"Expected {self.RAW_CSV_HEADER!r}, got {header!r}.")
+                    "CSV header does not match a known raw export format. "
+                    f"Got {header!r}.")
 
             with self._lock:
                 existing_runs = set(self._runs.keys())
@@ -277,11 +288,19 @@ class MeasurementLog:
             new_measurements: list[Measurement] = []
 
             for row in reader:
-                if len(row) != len(self.RAW_CSV_HEADER):
+                expected_len = (len(self.RAW_CSV_HEADER_LEGACY) if legacy
+                                else len(self.RAW_CSV_HEADER))
+                if len(row) != expected_len:
                     continue
-                (timestamp, run_id, run_started_at, instrument, a4_hz_s,
-                 midi_sounding_s, _sounding, midi_fingered_s, _fingered,
-                 cents_s, freq_s, maker, model) = row
+                if legacy:
+                    (timestamp, run_id, run_started_at, instrument, a4_hz_s,
+                     midi_sounding_s, _sounding, midi_fingered_s, _fingered,
+                     cents_s, freq_s, maker, model) = row
+                    nickname = ""
+                else:
+                    (timestamp, run_id, run_started_at, instrument, nickname,
+                     a4_hz_s, midi_sounding_s, _sounding, midi_fingered_s,
+                     _fingered, cents_s, freq_s, maker, model) = row
                 if not run_id or run_id in existing_runs:
                     continue
                 try:
@@ -301,6 +320,7 @@ class MeasurementLog:
                         a4_hz=a4_hz,
                         maker=maker,
                         model=model,
+                        label=nickname,
                     )
                 else:
                     # Reject rows whose instrument or A4 disagrees with the
@@ -347,6 +367,7 @@ class MeasurementLog:
         "raw",                    # one row per measurement
         "per_run_note",           # one row per (run, note) — mean/std/n
         "per_instrument_note",    # aggregated across runs, per instrument+note
+        "per_nickname_note",      # aggregated across runs sharing a nickname
         "instrument_avg",         # one instrument, aggregated per note
         "overall_per_note",       # aggregated across everything, per note
     )
@@ -354,8 +375,12 @@ class MeasurementLog:
     def export_csv(self, path: Path | str, *,
                    mode: str = "raw",
                    run_id: Optional[str] = None,
-                   instrument: Optional[str] = None) -> int:
-        """Write a CSV slice. Returns the number of data rows written."""
+                   instrument: Optional[str] = None,
+                   nickname: Optional[str] = None) -> int:
+        """Write a CSV slice. Returns the number of data rows written.
+
+        `nickname` filter: when set, only runs whose `label` matches exactly
+        are included. Only meaningful in modes that aggregate across runs."""
         if mode not in self.SLICE_MODES:
             raise ValueError(f"unknown mode: {mode!r}")
         if mode == "instrument_avg" and not instrument:
@@ -370,6 +395,9 @@ class MeasurementLog:
         if instrument is not None:
             measurements = [m for m in measurements
                             if m.instrument == instrument]
+        if nickname is not None:
+            keep_ids = {rid for rid, r in runs.items() if r.label == nickname}
+            measurements = [m for m in measurements if m.run_id in keep_ids]
 
         path = Path(path)
         with path.open("w", encoding="utf-8", newline="") as f:
@@ -379,7 +407,9 @@ class MeasurementLog:
             if mode == "per_run_note":
                 return _write_per_run_note(w, measurements, runs)
             if mode == "per_instrument_note":
-                return _write_per_instrument_note(w, measurements)
+                return _write_per_instrument_note(w, measurements, runs)
+            if mode == "per_nickname_note":
+                return _write_per_nickname_note(w, measurements, runs)
             if mode == "instrument_avg":
                 return _write_instrument_avg(w, measurements, instrument)
             return _write_overall(w, measurements)
@@ -404,9 +434,9 @@ def _agg_stats(values: list[float]) -> tuple[float, float, float, float]:
 def _write_raw(w, measurements: list[Measurement],
                runs: dict[str, RunMeta]) -> int:
     w.writerow([
-        "timestamp", "run_id", "run_started_at", "instrument", "a4_hz",
-        "midi_sounding", "sounding_note", "midi_fingered", "fingered_note",
-        "cents", "freq_hz", "maker", "model",
+        "timestamp", "run_id", "run_started_at", "instrument", "nickname",
+        "a4_hz", "midi_sounding", "sounding_note", "midi_fingered",
+        "fingered_note", "cents", "freq_hz", "maker", "model",
     ])
     n = 0
     for m in measurements:
@@ -414,7 +444,9 @@ def _write_raw(w, measurements: list[Measurement],
         w.writerow([
             m.timestamp, m.run_id,
             run.started_at if run else "",
-            m.instrument, f"{m.a4_hz:.2f}",
+            m.instrument,
+            run.label if run else "",
+            f"{m.a4_hz:.2f}",
             m.midi_sounding, midi_note_name(m.midi_sounding),
             m.midi_fingered, midi_note_name(m.midi_fingered),
             f"{m.cents:.3f}", f"{m.freq_hz:.3f}",
@@ -435,7 +467,7 @@ def _aggregate(measurements: Iterable[Measurement], key_fn):
 def _write_per_run_note(w, measurements: list[Measurement],
                          runs: dict[str, RunMeta]) -> int:
     w.writerow([
-        "run_id", "run_started_at", "instrument", "a4_hz",
+        "run_id", "run_started_at", "instrument", "nickname", "a4_hz",
         "midi_sounding", "sounding_note", "fingered_note",
         "n", "mean_cents", "std_cents", "min_cents", "max_cents",
         "maker", "model",
@@ -459,6 +491,7 @@ def _write_per_run_note(w, measurements: list[Measurement],
             run_id,
             run.started_at if run else "",
             rep.instrument,
+            run.label if run else "",
             f"{rep.a4_hz:.2f}",
             midi, midi_note_name(midi),
             midi_note_name(rep.midi_fingered),
@@ -471,10 +504,12 @@ def _write_per_run_note(w, measurements: list[Measurement],
     return n_rows
 
 
-def _write_per_instrument_note(w, measurements: list[Measurement]) -> int:
+def _write_per_instrument_note(w, measurements: list[Measurement],
+                                 runs: dict[str, RunMeta]) -> int:
     w.writerow([
-        "instrument", "midi_sounding", "sounding_note", "fingered_note",
-        "runs", "n", "mean_cents", "std_cents", "min_cents", "max_cents",
+        "instrument", "nicknames", "midi_sounding", "sounding_note",
+        "fingered_note", "runs", "n",
+        "mean_cents", "std_cents", "min_cents", "max_cents",
     ])
     buckets: dict = {}
     runs_seen: dict = {}
@@ -487,11 +522,52 @@ def _write_per_instrument_note(w, measurements: list[Measurement]) -> int:
     n_rows = 0
     for (instrument, midi), vals in sorted(buckets.items()):
         mean, std, mn, mx = _agg_stats(vals)
+        nick_set = sorted({
+            runs[rid].label for rid in runs_seen[(instrument, midi)]
+            if rid in runs and runs[rid].label
+        })
         w.writerow([
-            instrument, midi,
-            midi_note_name(midi),
+            instrument,
+            ";".join(nick_set),
+            midi, midi_note_name(midi),
             midi_note_name(fingered[(instrument, midi)]),
             len(runs_seen[(instrument, midi)]),
+            len(vals),
+            f"{mean:.3f}", f"{std:.3f}", f"{mn:.3f}", f"{mx:.3f}",
+        ])
+        n_rows += 1
+    return n_rows
+
+
+def _write_per_nickname_note(w, measurements: list[Measurement],
+                              runs: dict[str, RunMeta]) -> int:
+    """One row per (nickname, note). Runs without a nickname are bucketed
+    under an empty-string nickname so they're still visible."""
+    w.writerow([
+        "nickname", "instrument", "midi_sounding", "sounding_note",
+        "fingered_note", "runs", "n",
+        "mean_cents", "std_cents", "min_cents", "max_cents",
+    ])
+    buckets: dict = {}
+    runs_seen: dict = {}
+    fingered: dict = {}
+    instrument_seen: dict = {}
+    for m in measurements:
+        nick = runs[m.run_id].label if m.run_id in runs else ""
+        key = (nick, m.midi_sounding)
+        buckets.setdefault(key, []).append(m.cents)
+        runs_seen.setdefault(key, set()).add(m.run_id)
+        fingered.setdefault(key, m.midi_fingered)
+        instrument_seen.setdefault(key, set()).add(m.instrument)
+    n_rows = 0
+    for (nick, midi), vals in sorted(buckets.items()):
+        mean, std, mn, mx = _agg_stats(vals)
+        w.writerow([
+            nick or "(unnamed)",
+            ";".join(sorted(instrument_seen[(nick, midi)])),
+            midi, midi_note_name(midi),
+            midi_note_name(fingered[(nick, midi)]),
+            len(runs_seen[(nick, midi)]),
             len(vals),
             f"{mean:.3f}", f"{std:.3f}", f"{mn:.3f}", f"{mx:.3f}",
         ])
