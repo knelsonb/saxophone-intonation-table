@@ -224,16 +224,16 @@ _RANGES: dict[str, tuple[int, int]] = {
     # Clarinets — Boehm horns span written D/E3 (50/52) up to altissimo
     # G6 (91) for most pros. Bass and contra clarinets carry the low-C
     # extension (48) on pro models.
-    'clar_bb':            (50, 91),
-    'clar_a':             (50, 91),
-    'clar_c':             (50, 89),
-    'clar_eb':            (50, 91),
-    'clar_d':             (50, 91),
-    'clar_basset_f':      (44, 91),
-    'clar_alto_eb':       (46, 89),
-    'clar_bass_bb':       (48, 89),
-    'clar_contraalto_eb': (48, 84),   # fingered low-C extension
-    'clar_contrabass_bb': (48, 84),   # fingered low-C extension
+    'clar_bb':            (50, 89),
+    'clar_a':             (50, 89),
+    'clar_c':             (52, 89),
+    'clar_eb':            (55, 89),
+    'clar_d':             (55, 89),
+    'clar_basset_f':      (48, 89),
+    'clar_alto_eb':       (50, 86),
+    'clar_bass_bb':       (48, 86),
+    'clar_contraalto_eb': (48, 79),   # fingered low-C extension
+    'clar_contrabass_bb': (48, 79),   # fingered low-C extension
     # Flutes — alto and bass flute use the SAME fingerings as concert C
     # flute and read in their own transposed clefs. Their fingered range
     # is C4 (60) to C7 (84), not the concert pitch they sound. Concert
@@ -252,63 +252,62 @@ _RANGES: dict[str, tuple[int, int]] = {
     'trp_e':              (54, 84),
     'trp_f':              (54, 84),
     'trp_a':              (54, 84),
-    'trp_piccolo_bb':     (55, 84),
-    'trp_piccolo_a':      (55, 84),
+    'trp_piccolo_bb':     (54, 84),
+    'trp_piccolo_a':      (54, 84),
     'trp_bass_bb':        (40, 72),
-    'cornet_bb':          (52, 84),
-    'flugel_bb':          (52, 82),
-    # Horns — F horn covers Bb1 (34) to high F5 (77); Bb horn similar
-    # extended upper register.
-    'horn_f':             (34, 77),
-    'horn_bb':            (43, 82),
-    'horn_eb_alto':       (44, 79),
+    'cornet_bb':          (54, 82),
+    'flugel_bb':          (54, 79),
+    # Horns — F horn / Bb horn / Eb alto: written F2 (41) to F5 (77).
+    'horn_f':             (41, 77),
+    'horn_bb':            (41, 77),
+    'horn_eb_alto':       (41, 77),
     'mellophone_f':       (54, 79),
     # Trombones — tenor with F-attachment widens the low end; bass
-    # trombone with double valves comfortably reaches Bb4 (70).
+    # trombone with double valves comfortably reaches C5 (72).
     'tbn_alto_eb':        (50, 79),
     'tbn_tenor':          (40, 72),
-    'tbn_bass':           (34, 72),
-    'tbn_contrabass':     (28, 60),
-    # Low brass — treble-clef baritone/euphonium parts sit a major 9th
-    # higher than the bass-clef equivalent (transposing convention).
-    'euph_bc':            (34, 72),
-    'euph_tc':            (46, 84),
-    'baritone_bc':        (34, 72),
-    'baritone_tc':        (46, 84),
-    'tuba_f':             (29, 65),
+    'tbn_bass':           (36, 72),
+    'tbn_contrabass':     (28, 65),
+    # Low brass — treble-clef baritone/euphonium parts read a major 9th
+    # higher than the bass-clef equivalents (British brass-band convention).
+    'euph_bc':            (40, 75),
+    'euph_tc':            (54, 89),
+    'baritone_bc':        (40, 72),
+    'baritone_tc':        (54, 86),
+    'tuba_f':             (29, 67),
     'tuba_eb':            (27, 65),
-    'tuba_cc':            (24, 60),
-    'tuba_bbb':           (21, 60),
-    'sousaphone_bbb':     (21, 60),
-    # Double reeds — oboe reaches G6 (91) on pro horns; bassoon with the
-    # standard low-Bb extension and pros to high Eb (75).
-    'oboe':               (58, 91),
-    'oboe_damore':        (57, 88),
-    'english_horn':       (52, 83),
+    'tuba_cc':            (24, 65),
+    'tuba_bbb':           (22, 63),
+    'sousaphone_bbb':     (22, 60),
+    # Double reeds.
+    'oboe':               (58, 89),
+    'oboe_damore':        (58, 86),
+    'english_horn':       (52, 81),
     'bassoon':            (34, 75),
-    'contrabassoon':      (22, 58),
+    'contrabassoon':      (22, 60),
     # Recorders — non-transposing instruments, each pitched at its
     # nominal lowest note. Sopranino starts at F5, soprano at C5, alto
     # at F4, tenor at C4, bass at F3.
-    'rec_sopranino_f':    (77, 100),
-    'rec_soprano_c':      (72, 98),
-    'rec_alto_f':         (65, 91),
-    'rec_tenor_c':        (60, 86),
-    'rec_bass_f':         (53, 79),
-    # Strings — viola/cello pros reach into the 5th-position range.
-    'violin':             (55, 91),
-    'viola':              (48, 91),
+    'rec_sopranino_f':    (77, 98),
+    'rec_soprano_c':      (72, 93),
+    'rec_alto_f':         (65, 86),
+    'rec_tenor_c':        (60, 81),
+    'rec_bass_f':         (53, 74),
+    # Strings — violin to C7, cello pros into thumb position, double
+    # bass thumb-position high G4.
+    'violin':             (55, 96),
+    'viola':              (48, 86),
     'cello':              (36, 81),
-    'double_bass':        (28, 60),
+    'double_bass':        (28, 67),
     'mandolin':           (55, 88),
     # Plucked
     'guitar':             (40, 84),
-    'bass_guitar':        (28, 60),
-    'ukulele':            (60, 81),
-    'banjo':              (45, 81),
-    'harp':               (24, 103),
+    'bass_guitar':        (28, 67),
+    'ukulele':            (60, 84),
+    'banjo':              (50, 86),
+    'harp':               (23, 104),
     # Concert / generic
-    'voice':              (41, 81),
+    'voice':              (40, 84),
     'c':                  (48, 79),
     'piano':              (21, 108),
 }
