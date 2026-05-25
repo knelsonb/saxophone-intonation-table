@@ -216,6 +216,14 @@ class MeasurementLog:
         so the value reflects what was active when `start_run` was called —
         not what `self.instrument` might have changed to milliseconds later.
         """
+        # Snapshot the run + measurement JSONL strings inside the lock so a
+        # concurrent set_current_run_metadata() can't mutate maker/model/
+        # label between the snapshot and the disk write. File IO stays
+        # outside the lock to keep the audio callback non-blocking on slow
+        # disks. (Wave-2 race fix: previously `run` was captured under the
+        # lock but `run.to_jsonl()` ran without the lock, so a metadata
+        # write landing in between produced an on-disk record with the
+        # new fields but the timing of the old run-open.)
         with self._lock:
             run_id = self._current_run_id
             if run_id is None or run_id not in self._runs:
@@ -237,11 +245,15 @@ class MeasurementLog:
             needs_run_persist = run_id not in self._persisted_runs
             if needs_run_persist:
                 self._persisted_runs.add(run_id)
+                run_line = run.to_jsonl()
+            else:
+                run_line = None
+            measurement_line = m.to_jsonl()
         # Append the run record on the first measurement so coalesced empty
         # runs leave no disk footprint.
-        if needs_run_persist:
-            self._append_line(run.to_jsonl())
-        self._append_line(m.to_jsonl())
+        if run_line is not None:
+            self._append_line(run_line)
+        self._append_line(measurement_line)
 
     # -- inspection -------------------------------------------------------
     def runs(self) -> list[RunMeta]:
