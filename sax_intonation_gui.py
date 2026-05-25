@@ -120,11 +120,19 @@ STRINGS = {
         # Tabellen-Label
         'table_title':   'Intonationstabelle',
         'table_summary': 'Intonationstabelle  \u2013  {notes} Töne  |  {total} Messungen',
+        'table_empty_hint': 'Intonationstabelle  \u2013  spiel einen Ton, dann erscheinen hier Mittelwert und Standardabweichung pro Ton.',
         # Reset-Dialog
         'reset_title':   'Reset',
         'reset_msg':     'Alle Messungen zurücksetzen?',
         # Audio-Fehler
-        'audio_error':   'sounddevice nicht gefunden \u2013 kein Audio.',
+        'audio_error_title': 'Keine Audio-Eingabe',
+        'audio_error':   ('Die Bibliothek \u00bbsounddevice\u00ab ist nicht verf\u00fcgbar \u2014 '
+                          'die Live-Tonh\u00f6henerkennung ist deaktiviert.\n'
+                          'Gespeicherte CSVs lassen sich weiterhin \u00f6ffnen und anzeigen.\n\n'
+                          'Audio aktivieren:\n'
+                          '  Windows / macOS:   pip install sounddevice\n'
+                          '  Linux (Debian/Ubuntu):  sudo apt install portaudio19-dev && pip install sounddevice\n\n'
+                          'Danach das Programm neu starten.'),
         # Autotune
         'autotune_title':      'Kammerton ermitteln',
         'autotune_nodata':     'Bitte mindestens 3 Töne mit je \u2265 5 Messungen spielen,\nbevor der optimale Kammerton berechnet werden kann.',
@@ -261,9 +269,17 @@ STRINGS = {
         'status_fmt':    'Fingered: {fingered}   Sounding: {sounding}   {freq:.1f} Hz   {sign}{cents:.1f} ct   (A={a4:.0f} Hz)',
         'table_title':   'Intonation Table',
         'table_summary': 'Intonation Table  \u2013  {notes} notes  |  {total} measurements',
+        'table_empty_hint': 'Intonation Table  \u2013  play a note to begin; per-note mean and standard deviation appear here as you play.',
         'reset_title':   'Reset',
         'reset_msg':     'Reset all measurements?',
-        'audio_error':   'sounddevice not found \u2013 no audio.',
+        'audio_error_title': 'No audio input',
+        'audio_error':   ('The "sounddevice" library is not available \u2014 live '
+                          'pitch detection is disabled.\n'
+                          'You can still open and view saved CSVs.\n\n'
+                          'To enable audio:\n'
+                          '  Windows / macOS:   pip install sounddevice\n'
+                          '  Linux (Debian/Ubuntu):  sudo apt install portaudio19-dev && pip install sounddevice\n\n'
+                          'Then restart the program.'),
         'autotune_title':      'Detect Concert Pitch',
         'autotune_nodata':     'Please play at least 3 notes with \u2265 5 measurements each\nbefore the optimal concert pitch can be calculated.',
         'autotune_result':     ('<b>Concert Pitch Analysis Result</b><br><br>'
@@ -684,7 +700,8 @@ class MainWindow(QMainWindow):
         self._update_record_btn_style()   # initialer Stil
 
         if not AUDIO_OK:
-            QMessageBox.warning(self, 'Audio', self._t('audio_error'))
+            QMessageBox.information(self, self._t('audio_error_title'),
+                                     self._t('audio_error'))
 
         self._refresh_timer = QTimer(self)
         self._refresh_timer.timeout.connect(self._refresh_table)
@@ -800,8 +817,9 @@ class MainWindow(QMainWindow):
         right = QWidget()
         rl = QVBoxLayout(right)
         rl.setContentsMargins(6, 0, 0, 0)
-        self._table_lbl = QLabel(self._t('table_title'))
+        self._table_lbl = QLabel(self._t('table_empty_hint'))
         self._table_lbl.setStyleSheet('font-size:14px;font-weight:bold;color:#ccc;padding:2px 0 6px 0;')
+        self._table_lbl.setWordWrap(True)
         rl.addWidget(self._table_lbl)
 
         self._table = QTableWidget()
@@ -987,7 +1005,7 @@ class MainWindow(QMainWindow):
         total = sum(s.n for _, s in items)
         self._table_lbl.setText(
             self._t('table_summary', notes=len(items), total=total)
-            if items else self._t('table_title'))
+            if items else self._t('table_empty_hint'))
 
     def _make_bar(self, cents, w=20):
         half = w // 2

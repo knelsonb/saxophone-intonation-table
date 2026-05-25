@@ -302,6 +302,15 @@ class MeasurementLog:
                         maker=maker,
                         model=model,
                     )
+                else:
+                    # Reject rows whose instrument or A4 disagrees with the
+                    # first row of the same run_id. A hand-edited file with
+                    # mixed instruments under one run_id would otherwise
+                    # split silently across aggregators.
+                    head = new_runs[run_id]
+                    if (instrument != head.instrument
+                            or abs(a4_hz - head.a4_hz) > 0.01):
+                        continue
                 new_measurements.append(Measurement(
                     run_id=run_id,
                     timestamp=timestamp,
@@ -319,10 +328,18 @@ class MeasurementLog:
             for run in new_runs.values():
                 self._runs[run.run_id] = run
             self._measurements.extend(new_measurements)
-        for run in new_runs.values():
-            self._append_line(run.to_jsonl())
-        for m in new_measurements:
-            self._append_line(m.to_jsonl())
+        # Bulk-append: a 50k-row import opening the JSONL 50k times is wasteful
+        # and slow on Windows. One open() covers the whole batch.
+        if self._path and (new_runs or new_measurements):
+            try:
+                self._path.parent.mkdir(parents=True, exist_ok=True)
+                with self._path.open("a", encoding="utf-8") as f:
+                    for run in new_runs.values():
+                        f.write(run.to_jsonl() + "\n")
+                    for m in new_measurements:
+                        f.write(m.to_jsonl() + "\n")
+            except OSError:
+                pass
         return (len(new_runs), len(new_measurements))
 
     # -- export -----------------------------------------------------------
