@@ -83,7 +83,7 @@ STRINGS = {
         'chart_title':        'Intonationsanalyse',
         'chart_subtitle':     '{instr}  \u00b7  A = {a4:.0f} Hz  \u00b7  {dt}',
         'chart_subtitle_id':  '{instr}  \u00b7  {maker} {model}  \u00b7  A = {a4:.0f} Hz  \u00b7  {dt}',
-        'chart_footer':       '{notes} T\u00f6ne, {total} Messungen gesamt  \u00b7  Balken: Mittelwert, Whisker: \u00b11\u03c3',
+        'chart_footer':       'Aktuelle Sitzung: {notes} T\u00f6ne, {total} Messungen  \u00b7  Balken: Mittelwert, Whisker: \u00b11\u03c3',
         # CSV-Export
         'csv_dialog_title':  'CSV exportieren',
         'csv_dialog_info':   ('W\u00e4hle, wie die geloggten Messungen in der '
@@ -228,7 +228,7 @@ STRINGS = {
         'chart_title':        'Intonation Analysis',
         'chart_subtitle':     '{instr}  \u00b7  A = {a4:.0f} Hz  \u00b7  {dt}',
         'chart_subtitle_id':  '{instr}  \u00b7  {maker} {model}  \u00b7  A = {a4:.0f} Hz  \u00b7  {dt}',
-        'chart_footer':       '{notes} notes, {total} measurements total  \u00b7  Bars: mean, whiskers: \u00b11\u03c3',
+        'chart_footer':       'Current session: {notes} notes, {total} measurements  \u00b7  Bars: mean, whiskers: \u00b11\u03c3',
         'csv_dialog_title':  'Export CSV',
         'csv_dialog_info':   ('Choose how the logged measurements should be '
                               'summarised in the CSV file.'),
@@ -767,15 +767,17 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(self._grp_disp)
         toolbar.addWidget(self._grp_a4)
         toolbar.addWidget(self._grp_lang)
+        # Import sits on the left, separated from the export cluster — open
+        # belongs near the inputs, save belongs on the right.
+        toolbar.addWidget(self._btn_import)
         toolbar.addStretch()
         toolbar.addWidget(self._btn_autotune)
         toolbar.addWidget(self._btn_record)
         toolbar.addWidget(self._btn_reset)
         toolbar.addWidget(self._btn_txt)
         toolbar.addWidget(self._btn_pdf)
-        toolbar.addWidget(self._btn_csv)
         toolbar.addWidget(self._btn_chart)
-        toolbar.addWidget(self._btn_import)
+        toolbar.addWidget(self._btn_csv)
         root.addLayout(toolbar)
 
         # ── Splitter ──────────────────────────────────────────────────────────
@@ -1100,6 +1102,9 @@ class MainWindow(QMainWindow):
         ) == QMessageBox.StandardButton.Yes:
             with self._lock:
                 self.stats.clear()
+            # Reset implies "I might be switching instruments" — clear the
+            # cached maker/model so the next export re-prompts.
+            self._instr_info_asked = False
             self._refresh_table()
 
     # ── Kammerton ermitteln ───────────────────────────────────────────────────
@@ -1147,8 +1152,12 @@ class MainWindow(QMainWindow):
 
     # ── Instrument-Modell-Dialog ──────────────────────────────────────────────
     def _ask_instrument_model(self) -> tuple[str, str] | None:
-        """Zeigt einen kleinen Dialog für Hersteller + Modell.
-        Gibt (maker, model) zurück, oder None wenn abgebrochen."""
+        """Prompt for maker + model. After the first answer in a session,
+        subsequent calls return the cached values without re-prompting.
+        Reset clears the cache so a new instrument can be tagged."""
+        if getattr(self, '_instr_info_asked', False):
+            return (getattr(self, '_last_maker', ''),
+                    getattr(self, '_last_model', ''))
         dlg = QDialog(self)
         dlg.setWindowTitle(self._t('model_dialog_title'))
         dlg.setMinimumWidth(420)
@@ -1210,6 +1219,7 @@ class MainWindow(QMainWindow):
         # Für nächsten Export merken
         self._last_maker = maker
         self._last_model = model
+        self._instr_info_asked = True
         return maker, model
 
     # ── Export TXT ────────────────────────────────────────────────────────────
