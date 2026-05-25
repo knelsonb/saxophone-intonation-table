@@ -14,7 +14,9 @@ Dieses Programm nimmt Töne über das Mikrofon auf, erkennt die Tonhöhe in Echt
 - Wahl des Saxophontyps (Eb / Bb / C) und der Tondarstellung (gegriffen / klingend)
 - Einstellbarer Kammerton A (430–450 Hz)
 - Automatische Ermittlung des optimalen Kammertons aus den Messdaten
-- Export als TXT und PDF (mit Hersteller- und Modellangabe)
+- Export als TXT, PDF und CSV (mit Hersteller- und Modellangabe)
+- CSV-Export mit verschiedenen Aufteilungen: Rohdaten, pro Lauf, pro Instrument, ein Instrument über alle Läufe gemittelt, oder Gesamtmittel je Ton
+- Optionale sitzungsübergreifende Persistenz: Umgebungsvariable `SAX_INTONATION_LOG_PATH` auf einen Pfad setzen, dann werden alle Messungen zusätzlich als JSONL angehängt
 - Oberfläche auf Deutsch und Englisch umschaltbar
 
 ---
@@ -171,7 +173,9 @@ This program records notes via microphone, detects the pitch in real time, and m
 - Saxophone type selection (Eb / Bb / C) and note display (fingered / sounding)
 - Adjustable concert pitch A (430–450 Hz)
 - Automatic detection of optimal concert pitch from measurement data
-- Export as TXT and PDF (including manufacturer and model)
+- Export as TXT, PDF and CSV (including manufacturer and model)
+- CSV export with multiple slice modes: raw measurements, per run, per instrument, one instrument averaged across all runs, or overall per-note mean
+- Optional cross-session persistence: set the environment variable `SAX_INTONATION_LOG_PATH` to a file path and every measurement is appended there as JSONL
 - Interface switchable between German and English
 
 ---
