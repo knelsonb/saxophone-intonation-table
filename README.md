@@ -155,6 +155,14 @@ python -c "import sounddevice; print(sounddevice.query_devices())"
 - **Kammerton ändern:** Beim Ändern des Kammertons werden alle Messungen automatisch zurückgesetzt, da die Centabweichungen neu berechnet werden.
 - **Kammerton ermitteln:** Mindestens 3 Töne mit je ≥ 5 Messungen spielen, dann den Button „Kammerton ermitteln" drücken. Das Programm berechnet den optimalen Kammerton per gewichtetem Median.
 - **Export:** Beim Export wird nach Hersteller und Modell des Instruments gefragt (optional). Die Eingaben werden für die Sitzung gespeichert.
+- **CSV-Export:** Der Button „Export CSV" öffnet einen Dialog mit fünf Aufteilungsmodi:
+  - *Rohdaten* — eine Zeile pro Messung
+  - *Pro Lauf und Ton* — pro (Lauf, Ton) aggregiert (Mittel, Standardabw., Min, Max, N)
+  - *Pro Instrument und Ton* — über alle Läufe eines Instruments aggregiert
+  - *Ein Instrument, je Ton gemittelt* — verlangt die Wahl eines Instruments
+  - *Gesamtmittel je Ton* — über alles aggregiert
+  Filter für Lauf und Instrument werden je nach Modus aktiviert. Ein „Lauf" beginnt beim Programmstart, bei Instrument- oder Kammertonwechsel sowie nach dem Wiederaufnehmen einer pausierten Aufnahme.
+- **Sitzungsübergreifende Persistenz (optional):** Wenn die Umgebungsvariable `SAX_INTONATION_LOG_PATH` auf eine Datei zeigt, werden alle Messungen zusätzlich als JSONL angehängt. Beim nächsten Start sind sie wieder verfügbar und können über die CSV-Aufteilungen ausgewertet werden.
 - **Genauigkeit:** Ab ca. N = 20 Messungen pro Ton sind die Durchschnittswerte sehr zuverlässig. Am besten gleichmäßig und mittelstark spielen.
 
 ---
@@ -314,6 +322,14 @@ python -c "import sounddevice; print(sounddevice.query_devices())"
 - **Changing concert pitch:** Changing the concert pitch A automatically resets all measurements, as cent deviations need to be recalculated.
 - **Detect optimal pitch:** Play at least 3 notes with ≥ 5 measurements each, then press "Detect Concert Pitch". The program calculates the optimal concert pitch using a weighted median.
 - **Export:** When exporting, you will be prompted for the instrument manufacturer and model (both optional). The values are remembered for the current session.
+- **CSV export:** The "Export CSV" button opens a dialog with five slice modes:
+  - *Raw* — one row per measurement
+  - *Per run and note* — aggregated by (run, note): mean, std, min, max, N
+  - *Per instrument and note* — aggregated across all runs of an instrument
+  - *One instrument, per-note average* — requires picking one instrument
+  - *Overall mean per note* — aggregated across everything
+  Run and instrument filters are enabled depending on the mode. A "run" begins on app start, on instrument or concert-pitch change, and when recording is resumed after a pause.
+- **Cross-session persistence (optional):** If the environment variable `SAX_INTONATION_LOG_PATH` points to a file, every measurement is also appended as JSON Lines. On the next launch the history is reloaded so the CSV slice modes can summarise across sessions.
 - **Accuracy:** From approximately N = 20 measurements per note, averages become very reliable. Playing steadily at medium volume yields the best results.
 
 ---
