@@ -49,7 +49,32 @@ from sax_instruments import (
 import sax_config
 
 APP_NAME = 'Intonation Analyzer'
-APP_VERSION = '0.5.3'
+APP_VERSION = '0.5.4'
+
+# v0.5.4: AudioEngine + pitch detection + filter presets live in their own
+# module so the engine has a state machine, host-API fallback chain, and
+# hot-plug poller without dragging the GUI through every test path. The
+# names we re-export below keep the rest of this file's imports stable.
+from sax_audio_engine import (
+    AudioEngine,
+    AudioEngineState,
+    AudioEngineError,
+    AudioEngineDiagnostics,
+    DeviceInfo,
+    DeviceSelection,
+    FILTER_PRESETS as _FILTER_PRESETS_EXT,
+    FILTER_MODE_DEFAULT as _FILTER_MODE_DEFAULT_EXT,
+    HOP_MS as _HOP_MS_EXT,
+    MIN_FREQ as _MIN_FREQ_EXT,
+    MAX_FREQ as _MAX_FREQ_EXT,
+    A4_DEFAULT as _A4_DEFAULT_EXT,
+    DEFAULT_SAMPLE_RATE as _DEFAULT_SAMPLE_RATE_EXT,
+    DEFAULT_HOP_SIZE as _DEFAULT_HOP_SIZE_EXT,
+    DEFAULT_BLOCK_SIZE as _DEFAULT_BLOCK_SIZE_EXT,
+    cents_dev as _cents_dev_ext,
+    query_input_devices,
+    VENDOR_REGEX,
+)
 
 
 # =============================================================================
@@ -275,6 +300,32 @@ STRINGS = {
         'transp_info_eb': 'gegriffenes C  \u2192  klingt Eb',
         'transp_info_bb': 'gegriffenes C  \u2192  klingt Bb',
         'transp_info_c':  'keine Transposition',
+        # v0.5.4 audio chip / picker / recovery banners
+        'audio_chip_label':        'AUDIO-EINGANG',
+        'audio_chip_none':         'Kein Ger\u00e4t',
+        'audio_chip_opening':      '\u00d6ffne \u2026',
+        'audio_chip_tip':          'Audioeingang ausw\u00e4hlen oder \u00fcberpr\u00fcfen',
+        'audio_picker_title':      'Audioeingang',
+        'audio_picker_rescan':     '\u21bb  Erneut suchen',
+        'audio_picker_use':        'Ger\u00e4t verwenden',
+        'audio_picker_cancel':     'Abbrechen',
+        'audio_picker_show_all':   'Alle Host-APIs anzeigen',
+        'audio_picker_prefer_ks':  'WDM-KS (niedrige Latenz, kann blockieren) bevorzugen',
+        'audio_picker_current':    'aktuell',
+        'audio_picker_apis_more':  '{n} APIs',
+        'audio_picker_no_devices': 'Keine Eingabeger\u00e4te gefunden.',
+        'audio_picker_row_meta':   '{api} \u00b7 {ch} Ch \u00b7 {sr:.0f} Hz',
+        'audio_banner_no_device':  'Kein Audioeingang gefunden. Mikrofon oder Interface anschlie\u00dfen und \u00bbErneut versuchen\u00ab dr\u00fccken.',
+        'audio_banner_disconnect': 'Audioger\u00e4t getrennt: "{name}". Anderes Ger\u00e4t w\u00e4hlen oder wieder anschlie\u00dfen und \u00bbErneut versuchen\u00ab dr\u00fccken.',
+        'audio_banner_busy':       '"{name}" ist belegt \u2014 eine andere App nutzt das Ger\u00e4t. App schlie\u00dfen und \u00bbErneut versuchen\u00ab dr\u00fccken, oder anderes Ger\u00e4t w\u00e4hlen.',
+        'audio_banner_unsupported_rate': 'Abtastrate wird vom Ger\u00e4t nicht unterst\u00fctzt. Anderes Ger\u00e4t w\u00e4hlen oder \u00bbErneut versuchen\u00ab dr\u00fccken.',
+        'audio_banner_unknown':    'Audio-Fehler: {msg}',
+        'audio_banner_retry':      'Erneut versuchen',
+        'audio_banner_pick':       'Anderes Ger\u00e4t w\u00e4hlen',
+        'audio_toast_interface':   'Neues Interface gefunden: {name}',
+        'audio_toast_switch':      'Wechseln',
+        'audio_toast_dismiss':     'Ignorieren',
+        'audio_sr_notice':         'Audio l\u00e4uft mit {sr} Hz \u2014 das Ger\u00e4t unterst\u00fctzt 44100 Hz nicht.',
     },
     'en': {
         'window_title': 'Intonation Analyzer',
@@ -479,6 +530,32 @@ STRINGS = {
         'transp_info_eb': 'fingered C  \u2192  sounds Eb',
         'transp_info_bb': 'fingered C  \u2192  sounds Bb',
         'transp_info_c':  'no transposition',
+        # v0.5.4 audio chip / picker / recovery banners
+        'audio_chip_label':        'AUDIO IN',
+        'audio_chip_none':         'No device',
+        'audio_chip_opening':      'Opening \u2026',
+        'audio_chip_tip':          'Pick or inspect the audio input device',
+        'audio_picker_title':      'Audio Input',
+        'audio_picker_rescan':     '\u21bb  Rescan',
+        'audio_picker_use':        'Use selected device',
+        'audio_picker_cancel':     'Cancel',
+        'audio_picker_show_all':   'Show all host APIs',
+        'audio_picker_prefer_ks':  'Prefer WDM-KS (low latency, may lock device)',
+        'audio_picker_current':    'current',
+        'audio_picker_apis_more':  '{n} APIs',
+        'audio_picker_no_devices': 'No input devices found.',
+        'audio_picker_row_meta':   '{api} \u00b7 {ch} ch \u00b7 {sr:.0f} Hz',
+        'audio_banner_no_device':  'No audio input found. Plug in a microphone or interface and tap Retry.',
+        'audio_banner_disconnect': 'Audio device disconnected: "{name}". Pick a different device, or plug it back in and tap Retry.',
+        'audio_banner_busy':       '"{name}" is busy \u2014 another app is using it. Close that app and tap Retry, or pick a different device.',
+        'audio_banner_unsupported_rate': 'Sample rate not supported by this device. Pick a different device or tap Retry.',
+        'audio_banner_unknown':    'Audio error: {msg}',
+        'audio_banner_retry':      'Retry',
+        'audio_banner_pick':       'Pick different device',
+        'audio_toast_interface':   'New interface detected: {name}',
+        'audio_toast_switch':      'Switch',
+        'audio_toast_dismiss':     'Dismiss',
+        'audio_sr_notice':         'Running at {sr} Hz \u2014 this device does not support 44100 Hz.',
     },
 }
 
@@ -486,29 +563,20 @@ STRINGS = {
 # =============================================================================
 # Konstanten & Musik-Logik
 # =============================================================================
-SAMPLE_RATE   = 44100
-HOP_SIZE      = 2048   # größerer Hop für tiefe Frequenzen (Bass-Sax ~29 Hz)
-BLOCK_SIZE    = 16384  # ~372 ms – mindestens 2× tau_max bei 29 Hz (tau≈1521)
-MIN_FREQ      = 27.0   # C1 – tiefstes Bass-Sax-Fundament mit Sicherheitspuffer
-MAX_FREQ      = 1400.0
-YIN_THRESHOLD = 0.12   # etwas strenger für sauberere Erkennung tiefer Töne
-A4_DEFAULT    = 440.0
-HOP_MS        = 1000.0 * HOP_SIZE / SAMPLE_RATE   # ~46 ms
-
-# Filter-mode presets. Each callback fires every HOP_MS (~46 ms), so
-# `confirm` and `edge_hops` are quantized to that grid.
-#   window     — how many recent detections to keep for confirmation/median
-#   confirm    — required matching-MIDI detections in the window to lock a note
-#   yin_thr    — YIN aperiodicity ceiling (lower = stricter, rejects noise)
-#   rms_floor  — RMS gate below which the frame is treated as silence
-#   edge_hops  — attack/release transient guard (in hops). The first and
-#                last edge_hops detections of a held note are suppressed.
-_FILTER_PRESETS = {
-    'fast':   dict(window=2, confirm=2, yin_thr=0.16, rms_floor=8e-5,  edge_hops=1),
-    'normal': dict(window=4, confirm=3, yin_thr=0.11, rms_floor=1.5e-4, edge_hops=1),
-    'slow':   dict(window=7, confirm=5, yin_thr=0.08, rms_floor=3e-4,  edge_hops=2),
-}
-FILTER_MODE_DEFAULT = 'normal'
+# Audio constants live in sax_audio_engine. The aliases below preserve
+# the existing call sites in this file (spectrum widget, diagnostics
+# panel, etc.) without rewriting every line. SAMPLE_RATE / HOP_SIZE /
+# BLOCK_SIZE are the *defaults* — the live engine may negotiate a
+# different sample rate at startup and rescale block sizes accordingly.
+SAMPLE_RATE   = _DEFAULT_SAMPLE_RATE_EXT
+HOP_SIZE      = _DEFAULT_HOP_SIZE_EXT
+BLOCK_SIZE    = _DEFAULT_BLOCK_SIZE_EXT
+MIN_FREQ      = _MIN_FREQ_EXT
+MAX_FREQ      = _MAX_FREQ_EXT
+A4_DEFAULT    = _A4_DEFAULT_EXT
+HOP_MS        = _HOP_MS_EXT
+_FILTER_PRESETS = _FILTER_PRESETS_EXT
+FILTER_MODE_DEFAULT = _FILTER_MODE_DEFAULT_EXT
 
 CHROMA = ['C', 'C#/Db', 'D', 'D#/Eb', 'E', 'F',
           'F#/Gb', 'G', 'G#/Ab', 'A', 'A#/Bb', 'B']
@@ -548,36 +616,20 @@ def cents_dev(f, a4=None):
 
 
 # =============================================================================
-# YIN Pitch-Detektion
+# YIN Pitch-Detektion — moved to sax_audio_engine.yin_pitch in v0.5.4.
+# Local thin wrapper retained for any in-process call sites; the engine
+# uses its own implementation directly.
 # =============================================================================
-def yin_pitch(sig, sr=SAMPLE_RATE, fmin=MIN_FREQ, fmax=MAX_FREQ, thr=YIN_THRESHOLD):
-    N = len(sig)
-    tmin = max(1, int(sr / fmax))
-    tmax = min(N // 2, int(sr / fmin))
-    if tmax <= tmin:
-        return 0.0, 1.0
-    diff = np.array([np.dot(d := sig[:N-t] - sig[t:N], d) for t in range(tmax+1)])
-    cmnd = np.ones(tmax + 1)
-    run = 0.0
-    for t in range(1, tmax + 1):
-        run += diff[t]
-        cmnd[t] = diff[t] * t / run if run > 0 else 1.0
-    tau, mv = -1, 1.0
-    for t in range(tmin, tmax):
-        if cmnd[t] < thr:
-            while t + 1 < tmax and cmnd[t+1] < cmnd[t]:
-                t += 1
-            tau, mv = t, cmnd[t]
-            break
-    if tau == -1:
-        tau = tmin + int(np.argmin(cmnd[tmin:tmax]))
-        mv  = cmnd[tau]
-    if 1 < tau < tmax - 1:
-        s0, s1, s2 = cmnd[tau-1], cmnd[tau], cmnd[tau+1]
-        d = 2*s1 - s0 - s2
-        if d:
-            tau += 0.5 * (s0 - s2) / d
-    return (sr / tau if tau > 0 else 0.0), mv
+from sax_audio_engine import yin_pitch as _yin_pitch_ext
+
+
+def yin_pitch(sig, sr=SAMPLE_RATE, fmin=MIN_FREQ, fmax=MAX_FREQ,
+              thr=None):
+    return _yin_pitch_ext(sig, sr, fmin, fmax,
+                          thr if thr is not None else 0.12)
+
+
+# (legacy YIN body removed in v0.5.4 — see sax_audio_engine.yin_pitch)
 
 
 # =============================================================================
@@ -596,192 +648,8 @@ class NoteStats:
 
 
 # =============================================================================
-# Audio-Engine
+# Audio-Engine — moved to sax_audio_engine.AudioEngine in v0.5.4.
 # =============================================================================
-class AudioSignals(QObject):
-    note_detected = pyqtSignal(int, float, float)
-
-class AudioEngine:
-    """Pitch detection + filtering.
-
-    The raw YIN result is noisy: a single ~46 ms hop can hit a partial,
-    misread an attack transient, or latch onto background noise. The
-    engine sits on top of YIN and applies four layers of cleanup before
-    emitting a measurement, all driven by the active filter preset
-    (`fast` / `normal` / `slow`):
-
-    1. RMS gate — frames below `rms_floor` are silence, not pitch.
-    2. YIN aperiodicity gate — frames with `ap > yin_thr` are noise.
-    3. Confirmation window — the new MIDI note must repeat at least
-       `confirm` times within the last `window` valid frames before a
-       new pitch is locked in. This kills octave-flip glitches and
-       transient mis-detections.
-    4. Edge truncation — the first `edge_hops` and last `edge_hops`
-       valid frames of a held note are suppressed. Attack chiff and
-       release pitch-drop don't reach the log. The release is
-       implemented as a one-hop lookahead: each emit is held back by
-       one frame, and the held value is dropped if the *next* frame
-       turns out to be silence or a different note.
-
-    The value finally emitted is the median frequency over the
-    confirmation window of the same MIDI — so the live tuner display
-    sits still instead of flickering even within one note.
-    """
-
-    def __init__(self):
-        self.signals    = AudioSignals()
-        self._buf       = np.zeros(BLOCK_SIZE, dtype=np.float32)
-        self._stream    = None
-        self.a4         = A4_DEFAULT
-        self.instr_key  = 'eb_alto'   # aktuell ausgewähltes Instrument
-        self.filter_mode = FILTER_MODE_DEFAULT
-        # Per-frame diagnostic readouts. Written every callback regardless
-        # of whether the frame is gated out — the diagnostics panel reads
-        # these directly and never affects emission decisions. Keeping the
-        # writes to a handful of float/int stores keeps the callback hot
-        # path O(1).
-        self.last_rms_db: float = -120.0
-        self.last_ap: float = 1.0
-        self.last_freq: float = 0.0
-        self.last_locked_midi: int | None = None
-        self._reset_filter_state()
-
-    def _reset_filter_state(self) -> None:
-        # `_recent` holds (midi, freq) for the last few VALID detections,
-        # newest at the end. `_locked_midi` is the MIDI we've confirmed as
-        # the active note; `_hop_in_note` counts how many valid frames
-        # we've spent on it. `_pending` is the one-frame lookahead buffer:
-        # (midi, freq, cents) waiting one hop before being emitted, so we
-        # can retroactively drop the last `edge_hops` frames of a note.
-        self._recent: list[tuple[int, float]] = []
-        self._locked_midi: int | None = None
-        self._hop_in_note: int = 0
-        self._pending: list[tuple[int, float, float]] = []
-
-    def set_filter_mode(self, mode: str) -> None:
-        if mode not in _FILTER_PRESETS:
-            return
-        self.filter_mode = mode
-        self._reset_filter_state()
-
-    def _drop_pending_for_edge(self, params: dict) -> None:
-        """Discard the last `edge_hops` of pending emissions on release."""
-        keep = max(0, len(self._pending) - params['edge_hops'])
-        self._pending = self._pending[:keep]
-
-    def _emit_one(self) -> None:
-        """Flush one frame from `_pending` to the signal."""
-        if not self._pending:
-            return
-        midi, freq, cents = self._pending.pop(0)
-        self.signals.note_detected.emit(int(midi), float(freq), float(cents))
-
-    def start(self, device=None):
-        if not AUDIO_OK:
-            return
-
-        def cb(indata, frames, ti, st):
-            mono = indata[:, 0]
-            self._buf = np.roll(self._buf, -frames)
-            self._buf[-frames:] = mono
-
-            params = _FILTER_PRESETS[self.filter_mode]
-            rms = math.sqrt(float(np.mean(self._buf**2)))
-            # Diagnostic: dBFS = 20 log10(rms). Cap the log argument so an
-            # all-zero buffer doesn't produce -inf.
-            self.last_rms_db = 20.0 * math.log10(max(rms, 1e-9))
-
-            # Layer 1 + 2: silence + noise rejection. On a "silent" or
-            # noisy frame, the held note has ended. Drop the lookahead
-            # tail (release truncation) and reset the locked state.
-            if rms < params['rms_floor']:
-                self.last_ap = 1.0
-                self.last_freq = 0.0
-                self.last_locked_midi = self._locked_midi
-                self._on_silence(params)
-                return
-            sig = self._buf / (rms + 1e-9)
-            freq, ap = yin_pitch(sig)
-            self.last_ap = float(ap)
-            self.last_freq = float(freq)
-            if ap > params['yin_thr'] or not (MIN_FREQ < freq < MAX_FREQ):
-                self.last_locked_midi = self._locked_midi
-                self._on_silence(params)
-                return
-            mr, ct = cents_dev(freq, self.a4)
-            if mr not in SAX_MIDI:
-                self.last_locked_midi = self._locked_midi
-                self._on_silence(params)
-                return
-            self.last_locked_midi = self._locked_midi if self._locked_midi is not None else int(mr)
-
-            # Push the valid frame into the confirmation window.
-            self._recent.append((int(mr), float(freq)))
-            if len(self._recent) > params['window']:
-                self._recent.pop(0)
-
-            # Layer 3: confirmation. The latest MIDI must repeat at
-            # least `confirm` times in the window before we treat the
-            # note as locked. Otherwise this is still in attack/glitch
-            # territory and we hold off entirely.
-            latest_midi = self._recent[-1][0]
-            matches = sum(1 for m, _f in self._recent if m == latest_midi)
-            if matches < params['confirm']:
-                return
-
-            if self._locked_midi != latest_midi:
-                # New note locked. Treat any unflushed lookahead from the
-                # previous note as release-edge material and drop it.
-                self._drop_pending_for_edge(params)
-                # Flush whatever still survives the edge cut.
-                while self._pending:
-                    self._emit_one()
-                self._locked_midi = latest_midi
-                self._hop_in_note = 0
-
-            self._hop_in_note += 1
-            # Layer 4a: attack truncation. Suppress the first
-            # `edge_hops` valid frames of a fresh note.
-            if self._hop_in_note <= params['edge_hops']:
-                return
-
-            # Compute the smoothed value: median freq across the window
-            # entries that share the locked MIDI. Recompute cents from
-            # the median so what the tuner shows matches what gets
-            # logged, and neither floats with single-frame noise.
-            same = [f for m, f in self._recent if m == latest_midi]
-            median_freq = float(np.median(same))
-            _mr2, median_cents = cents_dev(median_freq, self.a4)
-
-            # Layer 4b: release truncation via one-frame lookahead.
-            # Queue this frame in `_pending`. If the NEXT frame turns
-            # out to be silence or a different note, the queued entries
-            # get dropped by `_drop_pending_for_edge`. Otherwise the
-            # oldest queued entry is flushed now.
-            self._pending.append((latest_midi, median_freq, median_cents))
-            if len(self._pending) > params['edge_hops']:
-                self._emit_one()
-
-        self._stream = sd.InputStream(
-            samplerate=SAMPLE_RATE, blocksize=HOP_SIZE,
-            channels=1, dtype='float32', callback=cb, device=device)
-        self._stream.start()
-
-    def _on_silence(self, params: dict) -> None:
-        """Frame is silent or noise. End any held note cleanly."""
-        if self._locked_midi is not None or self._pending or self._recent:
-            self._drop_pending_for_edge(params)
-            while self._pending:
-                self._emit_one()
-        self._recent.clear()
-        self._locked_midi = None
-        self._hop_in_note = 0
-
-    def stop(self):
-        if self._stream:
-            self._stream.stop()
-            self._stream.close()
-        self._reset_filter_state()
 
 
 # =============================================================================
@@ -922,14 +790,13 @@ class SpectrumAnalyzerWidget(QWidget):
                                    self.N_BINS + 1)
         # Bin center frequencies, used for the X axis mapping.
         self._centers = np.sqrt(self._edges[:-1] * self._edges[1:])
-        # Cached Hann window. BLOCK_SIZE is fixed for the life of the
-        # process, so allocating once and reusing is safe.
+        # Cached Hann window + bucket map. The engine may rebind _buf
+        # to a different size when it negotiates a non-44100 sample
+        # rate; _rebuild_for() regenerates the cache on the fly.
         self._window = np.hanning(BLOCK_SIZE).astype(np.float32)
-        # Pre-computed mapping from rfft bin index → log-bucket index.
         fft_freqs = np.fft.rfftfreq(BLOCK_SIZE, d=1.0 / SAMPLE_RATE)
         self._bucket = np.searchsorted(self._edges, fft_freqs) - 1
         self._bucket = np.clip(self._bucket, -1, self.N_BINS - 1)
-        # Window normalization for amplitude-preserving rfft.
         self._win_norm = float(np.sum(self._window) * 0.5)
         # Live curve and peak-hold envelope, both in dBFS.
         self._levels = np.full(self.N_BINS, self.DB_FLOOR, dtype=np.float32)
@@ -943,12 +810,37 @@ class SpectrumAnalyzerWidget(QWidget):
         self._timer.timeout.connect(self._tick)
         self._timer.start(self.REFRESH_MS)
 
+    def _rebuild_for(self, block_size: int, samplerate: int) -> None:
+        """Regenerate window + bucket map for a new buffer size / rate.
+
+        Called by _tick when the engine's buffer size shifts (sample-
+        rate renegotiation at startup or device change)."""
+        block_size = max(8, int(block_size))
+        samplerate = max(1, int(samplerate))
+        self._window = np.hanning(block_size).astype(np.float32)
+        fft_freqs = np.fft.rfftfreq(block_size, d=1.0 / samplerate)
+        self._bucket = np.searchsorted(self._edges, fft_freqs) - 1
+        self._bucket = np.clip(self._bucket, -1, self.N_BINS - 1)
+        self._win_norm = float(np.sum(self._window) * 0.5)
+
     def _tick(self) -> None:
         if not AUDIO_OK or self._engine is None:
             return
-        buf = self._engine._buf
+        # Pull a snapshot copy under the engine's lock so the audio
+        # callback can't half-roll the buffer while we FFT it. Fixes
+        # the v0.5.3 spectrum-widget data race documented in wave 1.
+        try:
+            buf = self._engine.get_buf_snapshot()
+        except Exception:
+            return
         if buf is None or len(buf) < 8:
             return
+        # Engine may have reallocated _buf at a different sample rate;
+        # if our cached window/bucket maps no longer match, rebuild.
+        if buf.size != self._window.size:
+            self._rebuild_for(buf.size,
+                              int(getattr(self._engine, 'samplerate',
+                                           SAMPLE_RATE)))
         # Bucket the rfft magnitudes into log-spaced bins, take the max
         # per bucket so narrow spikes survive the downsampling.
         windowed = buf * self._window
@@ -1140,21 +1032,21 @@ class DataPanelWidget(QWidget):
         self._refresh()
 
     def _resolve_device_label(self) -> str:
+        """Mirror what the engine reports if it's running. Falls back to
+        the PortAudio default *only* through the safe probe — never the
+        bare query_devices(kind='input') path that crashes when no
+        input device exists (the v0.5.3 silent-crash bug)."""
         if not AUDIO_OK:
             return '—'
-        try:
-            info = sd.query_devices(kind='input')
-            name = info.get('name') if isinstance(info, dict) else str(info)
-            return str(name) if name else '—'
-        except Exception:
-            return '—'
+        eng = self._engine
+        if eng is not None and getattr(eng, 'active_device', None) is not None:
+            d = eng.active_device
+            return f'{d.name}  [{d.host_api}]' if d.host_api else d.name
+        return '—'
 
     def _refresh_static(self) -> None:
         """Update fields that only change on instrument/config changes."""
-        self._rows['data_device'].setText(self._device_label)
-        self._rows['data_samplerate'].setText(f'{SAMPLE_RATE} Hz')
-        self._rows['data_blocksize'].setText(f'{BLOCK_SIZE} samples')
-        self._rows['data_hopsize'].setText(f'{HOP_SIZE} samples ({HOP_MS:.1f} ms)')
+        self._rows['data_device'].setText(self._resolve_device_label())
         self._rows['data_freqrange'].setText(
             f'{MIN_FREQ:.1f} – {MAX_FREQ:.1f} Hz')
 
@@ -1164,11 +1056,25 @@ class DataPanelWidget(QWidget):
                         'data_freq', 'data_midi', 'data_filter_mode',
                         'data_filter_params'):
                 self._rows[key].setText('—')
+            self._rows['data_samplerate'].setText('—')
+            self._rows['data_blocksize'].setText('—')
+            self._rows['data_hopsize'].setText('—')
             self._rows['data_notes_count'].setText(
                 str(int(self._get_notes_count())))
             return
+        # Pull a single atomic snapshot of the engine's diagnostic
+        # scalars; avoids reading half-updated last_* values mid-callback.
+        diag = self._engine.get_diagnostics()
         mode = self._engine.filter_mode
         params = _FILTER_PRESETS.get(mode, {})
+        self._rows['data_device'].setText(self._resolve_device_label())
+        sr = max(1, diag.samplerate)
+        hop = max(1, diag.hop_size)
+        hop_ms = 1000.0 * hop / sr
+        self._rows['data_samplerate'].setText(f'{sr} Hz')
+        self._rows['data_blocksize'].setText(f'{diag.block_size} samples')
+        self._rows['data_hopsize'].setText(
+            f'{hop} samples ({hop_ms:.1f} ms)')
         self._rows['data_filter_mode'].setText(mode)
         if params:
             self._rows['data_filter_params'].setText(
@@ -1177,13 +1083,13 @@ class DataPanelWidget(QWidget):
         else:
             self._rows['data_filter_params'].setText('—')
         self._rows['data_a4'].setText(f'{self._engine.a4:.2f} Hz')
-        self._rows['data_rms'].setText(f'{self._engine.last_rms_db:+.1f} dBFS')
-        self._rows['data_aperiodicity'].setText(f'{self._engine.last_ap:.3f}')
-        if self._engine.last_freq > 0:
-            self._rows['data_freq'].setText(f'{self._engine.last_freq:.2f} Hz')
+        self._rows['data_rms'].setText(f'{diag.rms_db:+.1f} dBFS')
+        self._rows['data_aperiodicity'].setText(f'{diag.aperiodicity:.3f}')
+        if diag.freq > 0:
+            self._rows['data_freq'].setText(f'{diag.freq:.2f} Hz')
         else:
             self._rows['data_freq'].setText('—')
-        m = self._engine.last_locked_midi
+        m = diag.locked_midi
         if m is not None:
             self._rows['data_midi'].setText(
                 f'{m}  ({midi_note_name(int(m))})')
@@ -1466,6 +1372,365 @@ class MatrixCellDelegate(QStyledItemDelegate):
 
 
 # =============================================================================
+# Audio-Eingang Chip + Banner + Picker (v0.5.4)
+# =============================================================================
+# Status-dot colour palette — matches the existing dark theme.
+_AUDIO_DOT_COLORS = {
+    AudioEngineState.RUNNING: '#2ecc71',
+    AudioEngineState.OPENING: '#b7770d',
+    AudioEngineState.ENUMERATING: '#b7770d',
+    AudioEngineState.FAILED:  '#c0392b',
+    AudioEngineState.STOPPED: '#666',
+    AudioEngineState.INIT:    '#666',
+}
+
+
+class _StatusDot(QWidget):
+    """8 px solid circle. Recoloured by the chip whenever engine state
+    changes — gives the user a glanceable health indicator without
+    needing to read text."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._color = QColor('#666')
+        self.setFixedSize(10, 10)
+
+    def set_color(self, hex_color: str) -> None:
+        c = QColor(hex_color)
+        if c != self._color:
+            self._color = c
+            self.update()
+
+    def paintEvent(self, _ev):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(self._color)
+        p.drawEllipse(0, 0, self.width(), self.height())
+        p.end()
+
+
+class AudioChip(QPushButton):
+    """Toolbar chip that shows current audio-input device + state.
+
+    Clicking opens the picker. State updates are driven by the engine's
+    ``state_changed`` signal — the chip never queries PortAudio
+    directly, which keeps the GUI thread off the cold-init path
+    documented in Legolas's perf memo."""
+
+    def __init__(self, t_func):
+        super().__init__()
+        self._t = t_func
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setMinimumHeight(36)
+        self.setStyleSheet("""
+            QPushButton{background:#34495e;color:#eee;border:none;
+                         border-radius:5px;padding:4px 10px;font-size:12px;
+                         text-align:left;}
+            QPushButton:hover{background:#3d566e;}
+            QPushButton:pressed{background:#2c3e50;}
+        """)
+        # Layout: dot · label · device name · chevron.
+        from PyQt6.QtWidgets import QHBoxLayout
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(8, 0, 8, 0)
+        lay.setSpacing(8)
+        self._dot = _StatusDot(self)
+        lay.addWidget(self._dot)
+        self._label = QLabel(self._t('audio_chip_label'))
+        self._label.setStyleSheet('color:#bdc3c7;font-size:10px;font-weight:bold;')
+        lay.addWidget(self._label)
+        self._name = QLabel(self._t('audio_chip_none'))
+        self._name.setStyleSheet('color:#eee;font-size:12px;')
+        lay.addWidget(self._name, 1)
+        self._chevron = QLabel('▾')
+        self._chevron.setStyleSheet('color:#888;font-size:12px;')
+        lay.addWidget(self._chevron)
+
+    def retranslate(self, t_func) -> None:
+        self._t = t_func
+        self._label.setText(self._t('audio_chip_label'))
+        self.setToolTip(self._t('audio_chip_tip'))
+
+    def update_from_state(self, state: AudioEngineState,
+                          device_name: str, host_api: str,
+                          samplerate: int) -> None:
+        color = _AUDIO_DOT_COLORS.get(state, '#666')
+        self._dot.set_color(color)
+        if state == AudioEngineState.RUNNING and device_name:
+            short = device_name if len(device_name) <= 24 else device_name[:23] + '…'
+            suffix = ''
+            # Only surface non-44.1k rates in the chip — keeps the chip
+            # clean when nothing unusual is happening.
+            if samplerate and samplerate != 44100:
+                suffix = f' · {samplerate / 1000:g} kHz'
+            self._name.setText(f'{short}{suffix}')
+            tip = device_name
+            if host_api:
+                tip += f'  [{host_api}]'
+            if samplerate:
+                tip += f'  · {samplerate} Hz'
+            self.setToolTip(tip)
+        elif state in (AudioEngineState.OPENING,
+                        AudioEngineState.ENUMERATING):
+            self._name.setText(self._t('audio_chip_opening'))
+            self.setToolTip(self._t('audio_chip_opening'))
+        else:
+            self._name.setText(self._t('audio_chip_none'))
+            self.setToolTip(self._t('audio_chip_tip'))
+
+
+class AudioRecoveryBanner(QWidget):
+    """Inline banner that appears when the engine is in FAILED state.
+
+    Sits above the tuner; carries two buttons (Retry, pick a different
+    device). The copy is selected by ``AudioEngineError`` per Frodo's
+    UX memo — never displays raw PortAudio error codes to the user."""
+
+    def __init__(self, t_func, on_retry, on_pick):
+        super().__init__()
+        self._t = t_func
+        self._on_retry = on_retry
+        self._on_pick = on_pick
+        self.setStyleSheet("""
+            QWidget{background:#1e1e2e;border:1px solid #444;border-left:4px solid #c0392b;border-radius:5px;}
+            QLabel{color:#eee;font-size:12px;}
+            QPushButton{background:#34495e;color:#eee;border:none;border-radius:4px;
+                         padding:5px 12px;font-size:12px;}
+            QPushButton:hover{background:#3d566e;}
+        """)
+        from PyQt6.QtWidgets import QHBoxLayout
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(10, 6, 10, 6)
+        lay.setSpacing(8)
+        self._msg = QLabel('')
+        self._msg.setWordWrap(True)
+        lay.addWidget(self._msg, 1)
+        self._btn_retry = QPushButton(self._t('audio_banner_retry'))
+        self._btn_retry.clicked.connect(lambda: self._on_retry())
+        lay.addWidget(self._btn_retry)
+        self._btn_pick = QPushButton(self._t('audio_banner_pick'))
+        self._btn_pick.clicked.connect(lambda: self._on_pick())
+        lay.addWidget(self._btn_pick)
+        self.hide()
+
+    def retranslate(self, t_func) -> None:
+        self._t = t_func
+        self._btn_retry.setText(self._t('audio_banner_retry'))
+        self._btn_pick.setText(self._t('audio_banner_pick'))
+
+    def show_for(self, err: AudioEngineError, device_name: str,
+                 raw_msg: str) -> None:
+        if err == AudioEngineError.NO_DEVICE:
+            self._msg.setText('⚠  ' + self._t('audio_banner_no_device'))
+        elif err == AudioEngineError.DEVICE_DISCONNECTED:
+            self._msg.setText('⚠  ' + self._t('audio_banner_disconnect',
+                                              name=device_name or '?'))
+        elif err == AudioEngineError.DEVICE_BUSY:
+            self._msg.setText('⚠  ' + self._t('audio_banner_busy',
+                                              name=device_name or '?'))
+        elif err == AudioEngineError.UNSUPPORTED_RATE:
+            self._msg.setText('⚠  '
+                              + self._t('audio_banner_unsupported_rate'))
+        else:
+            # HOSTAPI_FAILURE / UNKNOWN — surface a generic line. The
+            # raw PortAudio text goes to diagnostics, not here.
+            self._msg.setText('⚠  '
+                              + self._t('audio_banner_unknown', msg=raw_msg or '—'))
+        self.show()
+
+
+class AudioPickerDialog(QDialog):
+    """Modal device picker. Two-line rows, dedup-by-name with an
+    expandable host-API sublist. Vendor regex ranks external interfaces
+    to the top. The dialog never opens a stream itself — accepting the
+    selection just calls ``engine.open_device(spec)`` and lets the
+    state machine do the rest."""
+
+    def __init__(self, parent, t_func, engine: AudioEngine,
+                 cfg: sax_config.AppConfig, current: 'DeviceInfo | None'):
+        super().__init__(parent)
+        self._t = t_func
+        self._engine = engine
+        self._cfg = cfg
+        self._current = current
+        self._chosen: 'DeviceInfo | None' = None
+        self.setWindowTitle(self._t('audio_picker_title'))
+        self.setModal(True)
+        self.setMinimumWidth(560)
+        self.setStyleSheet("""
+            QDialog{background:#1e1e2e;color:#eee;}
+            QLabel{color:#eee;font-size:12px;}
+            QListWidget{background:#15151f;border:1px solid #444;
+                         color:#eee;font-size:12px;}
+            QListWidget::item{padding:6px;}
+            QListWidget::item:selected{background:#34495e;}
+            QPushButton{background:#34495e;color:#eee;border:none;
+                         border-radius:5px;padding:6px 14px;font-size:12px;}
+            QPushButton:hover{background:#3d566e;}
+            QCheckBox{color:#bbb;font-size:11px;}
+        """)
+        self._build()
+        self._refill()
+
+    def _build(self) -> None:
+        from PyQt6.QtWidgets import QListWidget, QListWidgetItem
+        root = QVBoxLayout(self)
+        root.setContentsMargins(14, 12, 14, 12)
+        root.setSpacing(8)
+
+        top = QHBoxLayout()
+        self._btn_rescan = QPushButton(self._t('audio_picker_rescan'))
+        self._btn_rescan.clicked.connect(self._refill)
+        top.addWidget(self._btn_rescan)
+        top.addStretch()
+        root.addLayout(top)
+
+        self._list = QListWidget()
+        self._list.itemDoubleClicked.connect(lambda _i: self._accept())
+        root.addWidget(self._list, 1)
+
+        opts = QHBoxLayout()
+        self._cb_show_all = QCheckBox(self._t('audio_picker_show_all'))
+        self._cb_show_all.setChecked(bool(getattr(self._cfg,
+                                                    'show_all_host_apis',
+                                                    False)))
+        self._cb_show_all.toggled.connect(self._on_toggle_show_all)
+        opts.addWidget(self._cb_show_all)
+        self._cb_ks = QCheckBox(self._t('audio_picker_prefer_ks'))
+        self._cb_ks.setChecked(bool(getattr(self._cfg, 'prefer_wdmks', False)))
+        self._cb_ks.toggled.connect(self._on_toggle_ks)
+        opts.addWidget(self._cb_ks)
+        opts.addStretch()
+        root.addLayout(opts)
+
+        btns = QHBoxLayout()
+        self._btn_use = QPushButton(self._t('audio_picker_use'))
+        self._btn_use.clicked.connect(self._accept)
+        self._btn_cancel = QPushButton(self._t('audio_picker_cancel'))
+        self._btn_cancel.clicked.connect(self.reject)
+        btns.addStretch()
+        btns.addWidget(self._btn_use)
+        btns.addWidget(self._btn_cancel)
+        root.addLayout(btns)
+
+    def _on_toggle_show_all(self, checked: bool) -> None:
+        self._cfg.show_all_host_apis = bool(checked)
+        sax_config.save_config(self._cfg)
+        self._refill()
+
+    def _on_toggle_ks(self, checked: bool) -> None:
+        self._cfg.prefer_wdmks = bool(checked)
+        sax_config.save_config(self._cfg)
+        self._engine.set_prefer_wdmks(bool(checked))
+
+    def _rank(self, d: DeviceInfo) -> int:
+        """Higher = sorts earlier. Vendor regex dominates."""
+        import re
+        score = 0
+        if re.search(VENDOR_REGEX, d.name, re.IGNORECASE):
+            score += 100
+        api = d.host_api.lower()
+        if 'wasapi' in api:
+            score += 20
+        elif 'wdm-ks' in api:
+            score += 10
+        if d.default_samplerate >= 48000:
+            score += 5
+        low = d.name.lower()
+        if any(x in low for x in ('webcam', 'hdmi', 'nvidia', 'amd')):
+            score -= 50
+        if any(x in low for x in ('microphone array', 'stereo mix')):
+            score -= 20
+        return score
+
+    def _refill(self) -> None:
+        from PyQt6.QtWidgets import QListWidgetItem
+        self._list.clear()
+        devices = self._engine.refresh_devices()
+        if not devices:
+            it = QListWidgetItem(self._t('audio_picker_no_devices'))
+            it.setFlags(Qt.ItemFlag.NoItemFlags)
+            self._list.addItem(it)
+            return
+        show_all = self._cb_show_all.isChecked()
+        # Group by canonical name unless show-all is on.
+        groups: dict[str, list[DeviceInfo]] = {}
+        order: list[str] = []
+        for d in devices:
+            key = d.name if not show_all else f'{d.name}\0{d.host_api}'
+            if key not in groups:
+                groups[key] = []
+                order.append(key)
+            groups[key].append(d)
+        # Pick a representative for each group (WASAPI > WDM-KS > MME > rest).
+        def api_pref(d: DeviceInfo) -> int:
+            api = d.host_api.lower()
+            if 'wasapi' in api:
+                return 0
+            if 'wdm-ks' in api:
+                return 1
+            if api == 'mme':
+                return 2
+            if 'directsound' in api:
+                return 3
+            return 9
+        rows: list[tuple[DeviceInfo, list[DeviceInfo]]] = []
+        for key in order:
+            members = sorted(groups[key], key=api_pref)
+            rows.append((members[0], members))
+        # Sort rows by rank, current device pinned to the top.
+        def sort_key(row):
+            primary = row[0]
+            is_current = (
+                self._current is not None
+                and primary.name == self._current.name
+                and primary.host_api == self._current.host_api)
+            return (0 if is_current else 1, -self._rank(primary),
+                    primary.name.lower())
+        rows.sort(key=sort_key)
+        for primary, members in rows:
+            self._add_row(primary, members)
+
+    def _add_row(self, primary: DeviceInfo,
+                 members: list[DeviceInfo]) -> None:
+        from PyQt6.QtWidgets import QListWidgetItem
+        is_current = (
+            self._current is not None
+            and primary.name == self._current.name
+            and primary.host_api == self._current.host_api)
+        meta = self._t('audio_picker_row_meta',
+                       api=primary.host_api or '—',
+                       ch=primary.max_input_channels,
+                       sr=primary.default_samplerate)
+        badge = ''
+        if is_current:
+            badge = f'  ◀ {self._t("audio_picker_current")}'
+        elif len(members) > 1:
+            badge = f'  ▸ {self._t("audio_picker_apis_more", n=len(members))}'
+        text = f'{primary.name}{badge}\n    {meta}'
+        it = QListWidgetItem(text)
+        it.setData(Qt.ItemDataRole.UserRole, primary)
+        self._list.addItem(it)
+        if is_current:
+            self._list.setCurrentItem(it)
+
+    def _accept(self) -> None:
+        it = self._list.currentItem()
+        if it is None:
+            self.reject()
+            return
+        dev = it.data(Qt.ItemDataRole.UserRole)
+        if not isinstance(dev, DeviceInfo):
+            self.reject()
+            return
+        self._chosen = dev
+        self.accept()
+
+    def chosen(self) -> 'DeviceInfo | None':
+        return self._chosen
+
+
+# =============================================================================
 # Haupt-Fenster
 # =============================================================================
 class MainWindow(QMainWindow):
@@ -1497,6 +1762,8 @@ class MainWindow(QMainWindow):
         self._engine = AudioEngine()
         self._engine.set_filter_mode(
             getattr(self._cfg, 'filter_mode', FILTER_MODE_DEFAULT))
+        self._engine.set_prefer_wdmks(
+            bool(getattr(self._cfg, 'prefer_wdmks', False)))
         # Persistence comes from config (welcome dialog), with the env var
         # SAX_INTONATION_LOG_PATH as a power-user override that always wins.
         env_path = os.environ.get('SAX_INTONATION_LOG_PATH')
@@ -1506,11 +1773,31 @@ class MainWindow(QMainWindow):
             self._log.start_run(instrument=self.instrument,
                                 a4_hz=self._engine.a4)
             self._engine.signals.note_detected.connect(self._on_note)
-            self._engine.start()
+            self._engine.signals.state_changed.connect(self._on_engine_state)
+            self._engine.signals.devices_changed.connect(
+                self._on_devices_changed)
+            self._engine.signals.interface_appeared.connect(
+                self._on_interface_appeared)
 
         self._build_ui()
         self._seed_expected_notes()
         self._update_record_btn_style()
+
+        # Start the engine AFTER the UI exists so a startup PortAudio
+        # failure paints a banner instead of crashing __init__. The
+        # engine's start() never raises — it sets state and emits
+        # state_changed. This is the v0.5.4 headline fix.
+        if AUDIO_OK:
+            saved = self._device_selection_from_cfg()
+            self._engine.start(preferred=saved)
+
+        # Hot-plug poller: 1 Hz per Legolas's measurements (cached
+        # query_devices is ~0 ms; only re-init is expensive, and we
+        # only re-init when the device set actually changed).
+        if AUDIO_OK:
+            self._device_poll = QTimer(self)
+            self._device_poll.timeout.connect(self._poll_devices)
+            self._device_poll.start(1000)
 
         if not AUDIO_OK:
             QMessageBox.information(self, self._t('audio_error_title'),
@@ -1708,12 +1995,26 @@ class MainWindow(QMainWindow):
         self._btn_chart    = self._make_btn(self._t('btn_chart'),    '#d35400', self._export_chart)
         self._btn_import   = self._make_btn(self._t('btn_import'),   '#7f8c8d', self._import_csv)
 
-        # Inputs row: instrument config + import (open belongs near inputs).
+        # AUDIO IN chip — Frodo-UX memo: between Language and Import.
+        # The chip is the user's at-a-glance health indicator when the
+        # tuner goes silent. Clicking opens the picker modal.
+        self._audio_chip = AudioChip(self._t)
+        self._audio_chip.clicked.connect(self._open_audio_picker)
+        self._audio_chip.setMinimumWidth(220)
+        # Reflect whatever state the engine has at this point. The
+        # engine may not have run start() yet (we wait for the UI to
+        # finish building); the chip will repaint when state_changed
+        # fires.
+        self._audio_chip.update_from_state(
+            self._engine.state, '', '', 0)
+
+        # Inputs row: instrument config + audio chip + import.
         toolbar.addWidget(self._grp_instr)
         toolbar.addWidget(self._grp_disp)
         toolbar.addWidget(self._grp_a4)
         toolbar.addWidget(self._grp_filter)
         toolbar.addWidget(self._grp_lang)
+        toolbar.addWidget(self._audio_chip)
         toolbar.addWidget(self._btn_import)
         toolbar.addStretch()
         # Actions row: autotune + recording controls + exports.
@@ -1735,6 +2036,12 @@ class MainWindow(QMainWindow):
         left = QWidget()
         ll3 = QVBoxLayout(left)
         ll3.setContentsMargins(0, 0, 6, 0)
+        # Recovery banner — appears only when the engine is in FAILED.
+        # Hidden by default; show_for() makes it visible with the right copy.
+        self._audio_banner = AudioRecoveryBanner(
+            self._t, self._retry_audio, self._open_audio_picker)
+        ll3.addWidget(self._audio_banner)
+
         self._tuner = TunerWidget()
         # Tuner gets a fixed-ish vertical slot now that it shares the
         # pane with optional panels. Expanding horizontally but only
@@ -1963,6 +2270,10 @@ class MainWindow(QMainWindow):
             self._data_grp.setTitle(self._t('data_panel_title'))
         if hasattr(self, '_data_panel'):
             self._data_panel.retranslate(self._t)
+        if hasattr(self, '_audio_chip'):
+            self._audio_chip.retranslate(self._t)
+        if hasattr(self, '_audio_banner'):
+            self._audio_banner.retranslate(self._t)
 
         self._refresh_table()
 
@@ -2407,6 +2718,116 @@ class MainWindow(QMainWindow):
         Internally we store the inverse as `allow_out_of_range`."""
         self._cfg.allow_out_of_range = not checked
         sax_config.save_config(self._cfg)
+        # Wave-1 bug #7: the docstring above promises a refresh; the
+        # v0.5.3 implementation forgot to actually call _refresh_table,
+        # so toggling "Filter to instrument range" only took effect on
+        # the next other refresh.
+        self._refresh_table()
+
+    # ── Audio-Geräteverwaltung (v0.5.4) ───────────────────────────────────
+    def _device_selection_from_cfg(self) -> DeviceSelection:
+        return DeviceSelection(
+            name=str(getattr(self._cfg, 'audio_device_name', '') or ''),
+            host_api=str(getattr(self._cfg, 'audio_device_host_api', '') or ''),
+            samplerate=int(getattr(self._cfg, 'audio_device_samplerate', 0) or 0),
+        )
+
+    def _persist_active_device(self) -> None:
+        """Write the engine's currently-active device back to config.
+        Index is deliberately NOT stored — only name + host API + rate,
+        per Gandalf's persistence design."""
+        dev = self._engine.active_device
+        if dev is None:
+            return
+        self._cfg.audio_device_name = dev.name
+        self._cfg.audio_device_host_api = dev.host_api
+        self._cfg.audio_device_samplerate = int(self._engine.samplerate or 0)
+        sax_config.save_config(self._cfg)
+
+    def _open_audio_picker(self) -> None:
+        if not AUDIO_OK:
+            return
+        dlg = AudioPickerDialog(self, self._t, self._engine, self._cfg,
+                                self._engine.active_device)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            chosen = dlg.chosen()
+            if chosen is not None:
+                self._engine.open_device(DeviceSelection(
+                    name=chosen.name, host_api=chosen.host_api,
+                    samplerate=int(getattr(self._cfg,
+                                            'audio_device_samplerate', 0) or 0)))
+
+    def _retry_audio(self) -> None:
+        if not AUDIO_OK:
+            return
+        self._engine.retry()
+
+    def _poll_devices(self) -> None:
+        if not AUDIO_OK:
+            return
+        # refresh_devices() emits signals on diff — we just kick it.
+        try:
+            self._engine.refresh_devices()
+        except Exception:
+            pass
+
+    def _on_engine_state(self, state, err, msg) -> None:
+        """React to engine state transitions: update chip, banner, and
+        diagnostics panel device label."""
+        dev = self._engine.active_device
+        name = dev.name if dev else ''
+        host = dev.host_api if dev else ''
+        sr = int(getattr(self._engine, 'samplerate', 0) or 0)
+        if hasattr(self, '_audio_chip'):
+            self._audio_chip.update_from_state(state, name, host, sr)
+        if hasattr(self, '_audio_banner'):
+            if state == AudioEngineState.FAILED:
+                self._audio_banner.show_for(err, name, msg)
+            else:
+                self._audio_banner.hide()
+        if state == AudioEngineState.RUNNING:
+            self._persist_active_device()
+            # First-time-only notice if we wound up at a non-44.1k rate.
+            if (sr and sr != 44100
+                    and not bool(getattr(self._cfg,
+                                          'audio_sr_notice_shown', False))):
+                self._cfg.audio_sr_notice_shown = True
+                sax_config.save_config(self._cfg)
+                # Surface as a passive status-bar line, not a modal —
+                # Frodo-UX memo: never block the user with a dialog
+                # over sample-rate disclosure.
+                if hasattr(self, '_status_lbl'):
+                    self._status_lbl.setText(
+                        self._t('audio_sr_notice', sr=sr))
+
+    def _on_devices_changed(self, _devices) -> None:
+        # Nothing to do at the MainWindow level — the picker reads
+        # devices lazily on each open, and the chip is driven by state
+        # changes, not the device list. Hook kept so unit tests / future
+        # toasts can subscribe without rewiring the engine.
+        pass
+
+    def _on_interface_appeared(self, device: 'DeviceInfo') -> None:
+        """Hot-plug toast for vendor-class interfaces. Polite, non-modal,
+        Frodo-UX memo policy: only fires for matched vendor names so the
+        user isn't trained to dismiss it on every wake-from-sleep."""
+        # Use a QMessageBox with a short title — close enough to a toast
+        # for v0.5.4. A custom non-blocking widget is v0.5.5 work.
+        if self._engine.active_device is not None and (
+                self._engine.active_device.name == device.name):
+            return
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setWindowTitle(self._t('audio_chip_label'))
+        box.setText(self._t('audio_toast_interface', name=device.name))
+        btn_switch = box.addButton(self._t('audio_toast_switch'),
+                                   QMessageBox.ButtonRole.AcceptRole)
+        box.addButton(self._t('audio_toast_dismiss'),
+                      QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        if box.clickedButton() is btn_switch:
+            self._engine.open_device(DeviceSelection(
+                name=device.name, host_api=device.host_api, samplerate=0))
 
     def _on_diagnostics_toggled(self, checked: bool) -> None:
         """Show or hide the spectrogram + diagnostics panels and persist
@@ -2683,16 +3104,27 @@ class MainWindow(QMainWindow):
         Re-derive the table by walking the log's measurements at the new
         A4 instead of throwing away everything the user just recorded."""
         new_a4 = float(self._a4_combo.itemData(idx))
-        self._engine.a4 = new_a4
-
-        remapped: dict[int, NoteStats] = {}
-        for m in self._log.measurements():
-            midi_round, cents = cents_dev(m.freq_hz, new_a4)
-            if midi_round in SAX_MIDI:
-                ns = remapped.setdefault(midi_round, NoteStats())
-                ns.add(cents)
-        with self._lock:
-            self.stats = remapped
+        # Wave-1 bug #5: A4-change race. The audio callback can fire
+        # _on_note between the moment we build `remapped` and the moment
+        # we assign it to self.stats, dropping a measurement into the
+        # old dict that's about to be discarded — or worse, into a
+        # half-built dict. pause_emissions() tells the engine to drop
+        # incoming detections while we rebuild; we hold self._lock
+        # across the swap so any future emission seeing the new stats
+        # never partially-overlaps with the rebuild.
+        self._engine.pause_emissions()
+        try:
+            self._engine.set_a4(new_a4)
+            remapped: dict[int, NoteStats] = {}
+            for m in self._log.measurements():
+                midi_round, cents = cents_dev(m.freq_hz, new_a4)
+                if midi_round in SAX_MIDI:
+                    ns = remapped.setdefault(midi_round, NoteStats())
+                    ns.add(cents)
+            with self._lock:
+                self.stats = remapped
+        finally:
+            self._engine.resume_emissions()
         # Re-seed expected blank rows on top of the remapped data so the
         # instrument's range still shows even after a clean re-derive.
         self._seed_expected_notes()

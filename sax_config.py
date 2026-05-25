@@ -48,8 +48,8 @@ class AppConfig:
     layout_mode_preference: str = 'auto'
     # Pitch-detection response. 'fast' = minimal smoothing, snappy tuner.
     # 'normal' = balanced (default). 'slow' = aggressive smoothing,
-    # ideal for long tones / tuning analysis. See _FILTER_PRESETS in
-    # sax_intonation_gui.py for the parameter values.
+    # ideal for long tones / tuning analysis. See FILTER_PRESETS in
+    # sax_audio_engine.py for the parameter values.
     filter_mode: str = 'normal'
     # Minimum measurement count for a note to appear in the table.
     # Hides notes you only blipped accidentally so the analysis only
@@ -60,6 +60,22 @@ class AppConfig:
     # Off by default so casual users get the uncluttered tuner-only view;
     # power users flip it on to inspect FFT and runtime metrics.
     show_diagnostics: bool = False
+
+    # ---- v0.5.4 audio device selection -----------------------------------
+    # Persistence-friendly device identifier. Index is intentionally NOT
+    # stored — it shifts every time the user plugs in a USB hub.
+    audio_device_name: str = ""
+    audio_device_host_api: str = ""
+    # 0 = auto-negotiate (try 44100 → device default → fallback list).
+    audio_device_samplerate: int = 0
+    # First-run-only banner telling the user we're running off 44100.
+    audio_sr_notice_shown: bool = False
+    # Power-user toggle: show every host API row in the picker instead of
+    # collapsing duplicates by device name.
+    show_all_host_apis: bool = False
+    # Opt-in low-latency exclusive mode. Off by default because WDM-KS is
+    # the source of the GLE 0xAA busy crash on Windows.
+    prefer_wdmks: bool = False
 
     def effective_log_path(self) -> Optional[Path]:
         if not self.persistence_enabled:
@@ -79,6 +95,40 @@ class CustomInstrument:
 
 
 # ---------------------------------------------------------------------------
+# Helpers — tolerant coercion. A corrupt config field should fall back to
+# the default, never crash the GUI on startup.
+# ---------------------------------------------------------------------------
+def _as_bool(v, default: bool) -> bool:
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return bool(v)
+    if isinstance(v, str):
+        s = v.strip().lower()
+        if s in ('1', 'true', 'yes', 'on'):
+            return True
+        if s in ('0', 'false', 'no', 'off', ''):
+            return False
+    return default
+
+
+def _as_int(v, default: int) -> int:
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def _as_str(v, default: str) -> str:
+    if v is None:
+        return default
+    try:
+        return str(v)
+    except Exception:
+        return default
+
+
+# ---------------------------------------------------------------------------
 # Config load / save
 # ---------------------------------------------------------------------------
 def load_config() -> AppConfig:
@@ -87,21 +137,31 @@ def load_config() -> AppConfig:
     try:
         with CONFIG_PATH.open("r", encoding="utf-8") as f:
             data = json.load(f)
-        # Tolerate missing keys for forward/backward compat.
-        return AppConfig(
-            welcome_shown=bool(data.get("welcome_shown", False)),
-            persistence_enabled=bool(data.get("persistence_enabled", False)),
-            log_path=str(data.get("log_path", "")),
-            allow_out_of_range=bool(data.get("allow_out_of_range", True)),
-            matrix_extra_octaves=int(data.get("matrix_extra_octaves", 0)),
-            layout_mode_preference=str(
-                data.get("layout_mode_preference", "auto")),
-            filter_mode=str(data.get("filter_mode", "normal")),
-            min_n_visible=max(0, int(data.get("min_n_visible", 5))),
-            show_diagnostics=bool(data.get("show_diagnostics", False)),
-        )
     except (OSError, json.JSONDecodeError):
         return AppConfig()
+    if not isinstance(data, dict):
+        return AppConfig()
+    # Tolerate missing or malformed keys for forward/backward compat.
+    return AppConfig(
+        welcome_shown=_as_bool(data.get("welcome_shown"), False),
+        persistence_enabled=_as_bool(data.get("persistence_enabled"), False),
+        log_path=_as_str(data.get("log_path"), ""),
+        allow_out_of_range=_as_bool(data.get("allow_out_of_range"), True),
+        matrix_extra_octaves=_as_int(data.get("matrix_extra_octaves"), 0),
+        layout_mode_preference=_as_str(
+            data.get("layout_mode_preference"), "auto"),
+        filter_mode=_as_str(data.get("filter_mode"), "normal"),
+        min_n_visible=max(0, _as_int(data.get("min_n_visible"), 5)),
+        show_diagnostics=_as_bool(data.get("show_diagnostics"), False),
+        audio_device_name=_as_str(data.get("audio_device_name"), ""),
+        audio_device_host_api=_as_str(data.get("audio_device_host_api"), ""),
+        audio_device_samplerate=max(
+            0, _as_int(data.get("audio_device_samplerate"), 0)),
+        audio_sr_notice_shown=_as_bool(
+            data.get("audio_sr_notice_shown"), False),
+        show_all_host_apis=_as_bool(data.get("show_all_host_apis"), False),
+        prefer_wdmks=_as_bool(data.get("prefer_wdmks"), False),
+    )
 
 
 def save_config(cfg: AppConfig) -> None:
