@@ -93,6 +93,11 @@ class MeasurementLog:
         self._current_run_id: Optional[str] = None
         # Count of measurements in the current run; used to coalesce empties.
         self._current_run_count: int = 0
+        # Tracks which runs have already been appended to the JSONL file. We
+        # defer the run-record append until the first measurement lands so
+        # that a run coalesced before it ever recorded leaves zero footprint
+        # on disk.
+        self._persisted_runs: set[str] = set()
         self._path = Path(path) if path else None
         self._load()
 
@@ -117,6 +122,9 @@ class MeasurementLog:
                         except TypeError:
                             continue
                         self._runs[run.run_id] = run
+                        # Already on disk — don't re-write it next time a
+                        # measurement for this run is added in-session.
+                        self._persisted_runs.add(run.run_id)
                     elif kind == "measurement":
                         try:
                             m = Measurement(**obj)
@@ -142,7 +150,12 @@ class MeasurementLog:
                   maker: str = "", model: str = "",
                   label: str = "") -> str:
         """Open a new run. If the *current* run has no measurements yet, it is
-        replaced rather than left behind as an empty run record."""
+        replaced rather than left behind as an empty run record.
+
+        No JSONL append happens here — the run record is written the first
+        time `add_measurement` lands a row for it. That way coalesced empty
+        runs (the result of A4 / family / instrument scrubs) leave no
+        footprint on disk."""
         run = RunMeta(
             run_id=uuid.uuid4().hex[:12],
             started_at=datetime.datetime.now().isoformat(timespec="seconds"),
@@ -156,13 +169,12 @@ class MeasurementLog:
             prev_id = self._current_run_id
             if (prev_id is not None and self._current_run_count == 0
                     and prev_id in self._runs):
-                # Coalesce: drop the empty predecessor so A4-scrubbing
+                # Coalesce: drop the empty predecessor so scrubbing controls
                 # doesn't litter the log with one-second runs.
                 del self._runs[prev_id]
             self._runs[run.run_id] = run
             self._current_run_id = run.run_id
             self._current_run_count = 0
-        self._append_line(run.to_jsonl())
         return run.run_id
 
     def end_run(self) -> None:
@@ -222,6 +234,13 @@ class MeasurementLog:
             )
             self._measurements.append(m)
             self._current_run_count += 1
+            needs_run_persist = run_id not in self._persisted_runs
+            if needs_run_persist:
+                self._persisted_runs.add(run_id)
+        # Append the run record on the first measurement so coalesced empty
+        # runs leave no disk footprint.
+        if needs_run_persist:
+            self._append_line(run.to_jsonl())
         self._append_line(m.to_jsonl())
 
     # -- inspection -------------------------------------------------------
@@ -347,6 +366,7 @@ class MeasurementLog:
         with self._lock:
             for run in new_runs.values():
                 self._runs[run.run_id] = run
+                self._persisted_runs.add(run.run_id)
             self._measurements.extend(new_measurements)
         # Bulk-append: a 50k-row import opening the JSONL 50k times is wasteful
         # and slow on Windows. One open() covers the whole batch.
