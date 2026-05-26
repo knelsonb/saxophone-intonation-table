@@ -51,7 +51,7 @@ from sax_instruments import (
 import sax_config
 
 APP_NAME = 'Intonation Analyzer'
-APP_VERSION = '0.5.7.2'
+APP_VERSION = '0.5.7.3'
 
 # v0.5.4: AudioEngine + pitch detection + filter presets live in their own
 # module so the engine has a state machine, host-API fallback chain, and
@@ -749,9 +749,21 @@ class NoteStats:
         self.vals: list[float] = []
     def add(self, c): self.vals.append(c)
     @property
-    def mean(self): return float(np.mean(self.vals)) if self.vals else 0.0
+    def mean(self):
+        # v0.5.7.3: snapshot vals before evaluating. A concurrent
+        # clear/reassign could shrink the list between the truthiness
+        # check and np.mean, returning NaN that then propagates into the
+        # matrix delegate's paint path (drawRoundedRect with NaN width
+        # is undefined Qt behaviour). The list is bounded (a few dozen
+        # entries per note in practice), so the copy is cheap.
+        vals = list(self.vals)
+        return float(np.mean(vals)) if vals else 0.0
     @property
-    def std(self):  return float(np.std(self.vals))  if len(self.vals) > 1 else 0.0
+    def std(self):
+        # Same snapshot rationale as mean — np.std on a list that gets
+        # cleared mid-call returns NaN.
+        vals = list(self.vals)
+        return float(np.std(vals)) if len(vals) > 1 else 0.0
     @property
     def n(self):    return len(self.vals)
 
@@ -1455,7 +1467,12 @@ class MatrixCellDelegate(QStyledItemDelegate):
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
                 sounding)
 
-        if mean is None:
+        # v0.5.7.3: belt-and-suspenders against NaN sneaking through
+        # from NoteStats (despite the source-side snapshot). NaN in
+        # `mean` makes the bar width / fill width NaN and Qt's
+        # drawRoundedRect with a NaN width is undefined. Treat NaN/inf
+        # the same as "no measurement yet" — show the seeded dot.
+        if mean is None or not math.isfinite(float(mean)):
             # In-range but no measurement yet — show a centered dot to
             # acknowledge the seeded slot.
             painter.setPen(QColor(80, 80, 100))
@@ -1796,6 +1813,14 @@ class AudioPickerDialog(QDialog):
         # could slip in around the worker boundary.
         self._sr_switch_in_flight: bool = False
         self._sr_prev_pref: str = 'auto'
+        # v0.5.7.3: close-during-worker UAF guard. If the user closes the
+        # dialog while an sr-reopen worker is still running, the worker's
+        # finally block used to emit `_sr_reopen_done` on a QObject that
+        # Qt had already destroyed (segfault / undefined behaviour). The
+        # threading.Event lets the worker bail out of the emit, and we
+        # also disconnect the signal in closeEvent as a second line of
+        # defence.
+        self._closing_event: threading.Event = threading.Event()
         self._sr_reopen_done.connect(
             self._on_sr_reopen_done, Qt.ConnectionType.QueuedConnection)
         self.setWindowTitle(self._t('audio_picker_title'))
@@ -1946,14 +1971,29 @@ class AudioPickerDialog(QDialog):
         self._sr_combo.setEnabled(False)
         QGuiApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
 
+        # v0.5.7.3: capture the event by closure (not self.) so the
+        # worker can check it even if the dialog is mid-teardown. The
+        # event lives independently of the QObject's lifetime.
+        closing_event = self._closing_event
+
         def _worker() -> None:
             try:
                 self._engine.stop()
                 self._engine.open_device(sel, samplerate_pref=new_pref)
             finally:
                 # Even if the engine raises, hand control back to the
-                # GUI thread so the combo gets re-enabled.
-                self._sr_reopen_done.emit(prev_pref, new_pref)
+                # GUI thread so the combo gets re-enabled — UNLESS the
+                # dialog is being closed, in which case the QObject
+                # may already be destroyed and emitting on a dead
+                # receiver is undefined behaviour.
+                if not closing_event.is_set():
+                    try:
+                        self._sr_reopen_done.emit(prev_pref, new_pref)
+                    except RuntimeError:
+                        # "wrapped C/C++ object has been deleted" —
+                        # raced past our event check. Swallow; there's
+                        # no receiver to hand off to anyway.
+                        pass
 
         t = threading.Thread(target=_worker, name='sr-reopen',
                              daemon=True)
@@ -2008,6 +2048,27 @@ class AudioPickerDialog(QDialog):
             self._sr_prev_pref = new_pref
         self._sr_combo.setEnabled(True)
         self._sr_switch_in_flight = False
+
+    def closeEvent(self, event) -> None:
+        """v0.5.7.3: signal any in-flight sr-reopen worker that we're
+        going away so it skips its emit (which would otherwise land on a
+        deleted QObject). Also disconnect the signal as belt-and-
+        suspenders — if a queued emission is already sitting in the
+        event loop, the disconnect makes it a no-op."""
+        self._closing_event.set()
+        try:
+            self._sr_reopen_done.disconnect(self._on_sr_reopen_done)
+        except (TypeError, RuntimeError):
+            # Already disconnected or signal/slot already torn down.
+            pass
+        super().closeEvent(event)
+
+    def done(self, result: int) -> None:
+        """``accept()`` / ``reject()`` route through here, so set the
+        closing flag here too. closeEvent isn't always called on
+        programmatic accept/reject paths."""
+        self._closing_event.set()
+        super().done(result)
 
     def _on_toggle_show_all(self, checked: bool) -> None:
         self._cfg.show_all_host_apis = bool(checked)
@@ -3854,7 +3915,15 @@ class MainWindow(QMainWindow):
             self._engine.set_a4(new_a4)
             remapped: dict[int, NoteStats] = {}
             for m in self._log.measurements():
-                midi_round, cents = cents_dev(m.freq_hz, new_a4)
+                # v0.5.7.3: skip non-positive / non-finite freqs. An
+                # imported CSV row with freq_hz=0 (or NaN/inf) would
+                # otherwise call freq_to_midi -> math.log2(0) -> ValueError
+                # and crash the A4 combo handler. Such rows carry no
+                # tuning information; drop them silently.
+                f = float(m.freq_hz)
+                if not math.isfinite(f) or f <= 0.0:
+                    continue
+                midi_round, cents = cents_dev(f, new_a4)
                 if midi_round in SAX_MIDI:
                     ns = remapped.setdefault(midi_round, NoteStats())
                     ns.add(cents)
