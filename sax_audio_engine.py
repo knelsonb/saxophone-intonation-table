@@ -291,7 +291,12 @@ def yin_pitch(sig: np.ndarray, sr: int,
         d = 2 * s1 - s0 - s2
         if d:
             tau += 0.5 * (s0 - s2) / d
-    return (sr / tau if tau > 0 else 0.0), mv
+    # Clamp tau to >= 1 before the division: parabolic interpolation can
+    # in principle drag tau below 1.0 if s0 dominates and d is tiny, which
+    # would inflate sr/tau into a nonsense high frequency.  The threshold-
+    # pick loop only accepts tau >= tmin >= 1 to begin with, so a sub-1.0
+    # value is unphysical regardless of arithmetic path.
+    return (sr / tau if tau >= 1.0 else 0.0), mv
 
 
 # ---------------------------------------------------------------------------
