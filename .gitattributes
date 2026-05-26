@@ -1,0 +1,33 @@
+# Normalize all text files to LF in the repo. Working-tree EOLs follow
+# core.autocrlf on Windows checkouts (which converts back to CRLF) and stay
+# LF everywhere else. Without this, four files (sax_instruments,
+# sax_intonation_chart, sax_intonation_gui, sax_intonation_log) carry CRLF
+# and the rest carry LF, generating spurious diffs across platforms.
+
+* text=auto eol=lf
+
+# Source files: always LF
+*.py    text eol=lf
+*.md    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.txt   text eol=lf
+*.json  text eol=lf
+*.cfg   text eol=lf
+*.toml  text eol=lf
+*.spec  text eol=lf
+*.xml   text eol=lf
+
+# Windows-only scripts: always CRLF
+*.bat   text eol=crlf
+*.ps1   text eol=crlf
+*.cmd   text eol=crlf
+
+# Binaries: leave alone
+*.png   binary
+*.ico   binary
+*.icns  binary
+*.jpg   binary
+*.jpeg  binary
+*.pdf   binary
+*.zip   binary
