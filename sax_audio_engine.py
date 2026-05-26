@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import datetime
 import math
+import re
 import sys
 import threading
 import time
@@ -132,6 +133,10 @@ VENDOR_REGEX = (
     r'fiio|apogee|roland|native instruments|\bni\b|\bssl\b|'
     r'antelope|ik multimedia'
 )
+# Compiled form of VENDOR_REGEX — used by refresh_devices() and
+# _auto_recover_after_hotplug(). Keep VENDOR_REGEX (string) for any
+# caller that constructs its own pattern (e.g. sax_intonation_gui).
+VENDOR_RE = re.compile(VENDOR_REGEX, re.IGNORECASE)
 
 
 # ---------------------------------------------------------------------------
@@ -237,8 +242,23 @@ def yin_pitch(sig: np.ndarray, sr: int,
     tmax = min(N // 2, int(sr / fmin))
     if tmax <= tmin:
         return 0.0, 1.0
-    diff = np.array(
-        [np.dot(d := sig[:N - t] - sig[t:N], d) for t in range(tmax + 1)])
+    x = sig.astype(np.float64)  # fp64 for stable cumulative-energy sums at large N
+    # Linear autocorrelation via FFT: zero-pad to next power of 2 >= 2N-1
+    # so the circular convolution gives the correct linear result on [0, tmax].
+    M = 1 << (2 * N - 1).bit_length()
+    X = np.fft.rfft(x, M)
+    r_full = np.fft.irfft(X * np.conj(X), M)
+    r = r_full[:tmax + 1]
+    # YIN difference function: d(τ) = E1(τ) + E2(τ) − 2·r(τ)
+    #   E1(τ) = Σ_{j∈[0,N-τ)} x[j]²  (energy of the left window)
+    #   E2(τ) = Σ_{j∈[τ,N)} x[j]²    (energy of the right window)
+    # The naive 2·(r0 − r) shortcut is biased for windowed signals.
+    xsq = x * x
+    S = np.concatenate(([0.0], np.cumsum(xsq)))  # prefix sums, length N+1
+    t = np.arange(tmax + 1)
+    E1 = S[N - t]
+    E2 = S[N] - S[t]
+    diff = E1 + E2 - 2.0 * r
     cmnd = np.ones(tmax + 1)
     run = 0.0
     for t in range(1, tmax + 1):
@@ -368,7 +388,13 @@ class AudioEngine:
 
         # Shared mutable state — protected by self._lock.
         self._lock = threading.Lock()
-        self._buf = np.zeros(DEFAULT_BLOCK_SIZE, dtype=np.float32)
+        # _buf_ring: underlying circular storage, allocated once per
+        # sample-rate negotiation; _buf_head: next-write index into the ring.
+        # _buf: contiguous chronological snapshot, rebuilt each callback.
+        self._buf_ring: np.ndarray = np.zeros(DEFAULT_BLOCK_SIZE,
+                                              dtype=np.float32)
+        self._buf_head: int = 0
+        self._buf: np.ndarray = np.zeros(DEFAULT_BLOCK_SIZE, dtype=np.float32)
         self._stream = None
         self._emissions_paused = False
         self._transitioning = False
@@ -718,10 +744,8 @@ class AudioEngine:
                             f'Device disconnected: {active.name}')
         # Vendor-class device appearing? Emit toast.
         if appeared and self.signals is not None:
-            import re
-            vendor = re.compile(VENDOR_REGEX, re.IGNORECASE)
             for d in devices:
-                if d.name in appeared and vendor.search(d.name):
+                if d.name in appeared and VENDOR_RE.search(d.name):
                     try:
                         self.signals.interface_appeared.emit(d)
                     except Exception:
@@ -757,11 +781,9 @@ class AudioEngine:
                         name=d.name, host_api=d.host_api, samplerate=0)
                     break
         if sel is None:
-            import re
-            vendor = re.compile(VENDOR_REGEX, re.IGNORECASE)
             best: Optional[DeviceInfo] = None
             for d in devices:
-                if vendor.search(d.name):
+                if VENDOR_RE.search(d.name):
                     if (best is None
                             or d.default_samplerate > best.default_samplerate):
                         best = d
@@ -1061,6 +1083,8 @@ class AudioEngine:
             self.samplerate = int(samplerate)
             self.block_size = int(block)
             self.hop_size = int(hop)
+            self._buf_ring = np.zeros(block, dtype=np.float32)
+            self._buf_head = 0
             self._buf = np.zeros(block, dtype=np.float32)
             self._overflow_count = 0
             self._underflow_count = 0
@@ -1121,19 +1145,38 @@ class AudioEngine:
                 with engine._lock:
                     if engine._emissions_paused:
                         return
-                    if engine._buf is None or engine._buf.size < frames:
+                    if engine._buf_ring is None or engine._buf_ring.size < frames:
                         # Reallocate if a rebind happened mid-callback.
-                        engine._buf = np.zeros(max(DEFAULT_BLOCK_SIZE,
-                                                    frames * 8),
-                                                dtype=np.float32)
-                    engine._buf = np.roll(engine._buf, -frames)
-                    engine._buf[-frames:] = mono
-                    buf = engine._buf
+                        new_size = max(DEFAULT_BLOCK_SIZE, frames * 8)
+                        engine._buf_ring = np.zeros(new_size, dtype=np.float32)
+                        engine._buf_head = 0
+                    # Write incoming samples into the ring via at most two
+                    # slice assignments (one if no wrap, two at the boundary).
+                    n = mono.shape[0]
+                    end = engine._buf_head + n
+                    if end <= engine._buf_ring.size:
+                        engine._buf_ring[engine._buf_head:end] = mono
+                    else:
+                        first = engine._buf_ring.size - engine._buf_head
+                        engine._buf_ring[engine._buf_head:] = mono[:first]
+                        engine._buf_ring[:n - first] = mono[first:]
+                    engine._buf_head = (engine._buf_head + n) % engine._buf_ring.size
+                    # Materialise a contiguous chronological view for YIN and
+                    # for get_buf_snapshot() readers outside the lock.
+                    h = engine._buf_head
+                    buf_local = np.concatenate(
+                        (engine._buf_ring[h:], engine._buf_ring[:h]))
+                    engine._buf = buf_local
+                    buf = buf_local
                     mode = engine.filter_mode
                     a4 = engine.a4
                 params = FILTER_PRESETS.get(mode, FILTER_PRESETS['normal'])
 
-                rms = math.sqrt(float(np.mean(buf ** 2)))
+                rms = math.sqrt(float(np.dot(buf, buf)) / buf.size)
+                # Guard against a corrupt/overflow PortAudio buffer that
+                # produces NaN — bail on the frame, resume clean on the next.
+                if not math.isfinite(rms):
+                    return
                 # CPython GIL note: last_rms_db / last_ap / last_freq are
                 # written unlocked deliberately. Simple float assignments are
                 # atomic under the GIL, so get_diagnostics() reads either the
