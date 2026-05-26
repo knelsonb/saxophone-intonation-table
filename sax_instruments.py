@@ -16,9 +16,9 @@ transposition values so old CSV exports round-trip cleanly.
 from __future__ import annotations
 
 import json
-import os
-import tempfile
 from pathlib import Path
+
+from sax_atomic import atomic_write_json
 
 # (family_key, family_name_de, family_name_en,
 #   [(instrument_key, transp, name_de, name_en), ...])
@@ -400,20 +400,8 @@ def load_range_overrides() -> dict[str, tuple[int, int]]:
 def _write_overrides_atomic(payload: dict) -> None:
     """Write JSON to the overrides file via a temp file + rename so a
     crashed write never leaves a half-baked file behind."""
-    _RANGES_FILE.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_path = tempfile.mkstemp(
-        prefix=".instrument_ranges.", suffix=".tmp",
-        dir=str(_RANGES_FILE.parent))
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(payload, f, indent=2)
-        os.replace(tmp_path, _RANGES_FILE)
-    except OSError:
-        # Clean up the temp file if the rename failed.
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
+    atomic_write_json(
+        _RANGES_FILE, payload, tmp_prefix=".instrument_ranges.")
 
 
 def save_range_override(key: str, lo: int, hi: int) -> None:
