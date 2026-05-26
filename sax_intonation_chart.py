@@ -16,7 +16,7 @@ import math
 
 from PyQt6.QtCore import QPointF, QRectF, Qt
 from PyQt6.QtGui import (
-    QColor, QFont, QPainter, QPen, QPixmap,
+    QColor, QFont, QPainter, QPen, QPixmap, QPolygonF,
 )
 
 
@@ -262,10 +262,10 @@ def _draw_bars(p: QPainter,
         if abs(mean) > _MAX_CENTS:
             arrow_y = area.top() if mean > 0 else area.bottom() - 6
             p.setBrush(col)
-            poly = [QPointF(cx, arrow_y),
-                    QPointF(cx - 6, arrow_y + (6 if mean > 0 else -6)),
-                    QPointF(cx + 6, arrow_y + (6 if mean > 0 else -6))]
-            p.drawPolygon(*poly)
+            poly = QPolygonF([QPointF(cx, arrow_y),
+                              QPointF(cx - 6, arrow_y + (6 if mean > 0 else -6)),
+                              QPointF(cx + 6, arrow_y + (6 if mean > 0 else -6))])
+            p.drawPolygon(poly)
 
         # Std-deviation whisker at the top of the bar.
         if count > 1 and std > 0:

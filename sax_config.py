@@ -296,9 +296,26 @@ def load_customs() -> list[CustomInstrument]:
 
 
 def save_customs(customs: list[CustomInstrument]) -> None:
+    """Persist custom instruments atomically (tempfile + os.replace), same
+    pattern as save_config — a crash mid-write must not nuke the user's
+    instrument DB."""
     try:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        with CUSTOMS_PATH.open("w", encoding="utf-8") as f:
+    except OSError:
+        return
+    tmp_path: Optional[str] = None
+    try:
+        fd, tmp_path = tempfile.mkstemp(
+            prefix=".customs.", suffix=".tmp", dir=str(CONFIG_DIR))
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump([asdict(c) for c in customs], f, indent=2)
+        os.replace(tmp_path, CUSTOMS_PATH)
+        tmp_path = None
     except OSError:
         pass
+    finally:
+        if tmp_path is not None:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass

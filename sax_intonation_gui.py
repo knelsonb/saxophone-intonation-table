@@ -2592,7 +2592,7 @@ class MainWindow(QMainWindow):
         # same handlers + persistence — the only thing that changed
         # is the parent layout.
 
-        # Select the saxophone family + the default alto instrument.
+        # Select the saxophone family + the default instrument (Bb tenor since v0.5.7.1).
         self._select_family_for_instrument(self.instrument)
         self._populate_instrument_combo(select_key=self.instrument)
 
