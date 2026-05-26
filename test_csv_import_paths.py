@@ -464,3 +464,58 @@ def test_two_runs_in_one_file(tmp_path):
 
     run_ids = {r.run_id for r in log.runs()}
     assert run_ids == {"run_a", "run_b"}
+
+
+# ---------------------------------------------------------------------------
+# Test 10: import refuses files larger than MAX_IMPORT_BYTES (v0.6 cap)
+# ---------------------------------------------------------------------------
+
+def test_file_size_cap_refuses_outsized_files(tmp_path, monkeypatch):
+    """A CSV whose on-disk size exceeds MAX_IMPORT_BYTES must raise
+    ValueError before any reader I/O happens.  Monkeypatch the cap down
+    so we don't have to write 50 MB to disk."""
+    monkeypatch.setattr(MeasurementLog, "MAX_IMPORT_BYTES", 100)
+    rows = [_current_row(midi_sounding=str(60 + i % 12)) for i in range(50)]
+    p = tmp_path / "big.csv"
+    _write_csv(p, HEADER, rows)
+    assert p.stat().st_size > 100  # sanity — the test file IS over the cap
+
+    log = _fresh_log()
+    with pytest.raises(ValueError, match="too large"):
+        log.import_raw_csv(p)
+    assert len(list(log.runs())) == 0  # nothing was imported
+
+
+# ---------------------------------------------------------------------------
+# Test 11: import refuses files with more rows than MAX_IMPORT_ROWS (v0.6 cap)
+# ---------------------------------------------------------------------------
+
+def test_row_count_cap_refuses_too_many_rows(tmp_path, monkeypatch):
+    """Once the row counter exceeds MAX_IMPORT_ROWS, the loop must raise
+    ValueError.  Monkeypatch the cap to 10 so the test stays cheap."""
+    monkeypatch.setattr(MeasurementLog, "MAX_IMPORT_ROWS", 10)
+    rows = [_current_row(midi_sounding=str(60 + i % 12)) for i in range(20)]
+    p = tmp_path / "many.csv"
+    _write_csv(p, HEADER, rows)
+
+    log = _fresh_log()
+    with pytest.raises(ValueError, match="exceeds"):
+        log.import_raw_csv(p)
+
+
+# ---------------------------------------------------------------------------
+# Test 12: imports at the row-cap boundary succeed
+# ---------------------------------------------------------------------------
+
+def test_row_count_at_cap_is_accepted(tmp_path, monkeypatch):
+    """Exactly MAX_IMPORT_ROWS rows must be accepted; the cap is a strict
+    > comparison, not >=."""
+    monkeypatch.setattr(MeasurementLog, "MAX_IMPORT_ROWS", 5)
+    rows = [_current_row(midi_sounding=str(60 + i)) for i in range(5)]
+    p = tmp_path / "edge.csv"
+    _write_csv(p, HEADER, rows)
+
+    log = _fresh_log()
+    runs_added, meas_added = log.import_raw_csv(p)
+    assert runs_added == 1
+    assert meas_added == 5
