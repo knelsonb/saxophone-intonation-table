@@ -51,7 +51,7 @@ from sax_instruments import (
 import sax_config
 
 APP_NAME = 'Intonation Analyzer'
-APP_VERSION = '0.5.7.1'
+APP_VERSION = '0.5.7.2'
 
 # v0.5.4: AudioEngine + pitch detection + filter presets live in their own
 # module so the engine has a state machine, host-API fallback chain, and
@@ -665,7 +665,15 @@ def format_cents(value_cents: float, freq_hz: float,
     Always emits a sign so neutral readouts read "+0" / "+0.0" rather
     than the visually-jumpy bare "0". Negative-zero floats coerce to
     "+0..." via the explicit ``>= 0`` test.
+
+    v0.5.7.2: guard against non-finite inputs. NoteStats.mean can be
+    NaN after a reset race (empty vals → np.mean), and int(round(NaN))
+    raises ValueError. Returning the canonical "–" placeholder matches
+    the other no-data cells in the matrix paint path.
     """
+    if (not math.isfinite(value_cents) or not math.isfinite(freq_hz)
+            or freq_hz <= 0):
+        return '–'
     floor_ct = cent_precision_floor(freq_hz, sample_rate)
     if floor_ct <= CENT_PREC_TENTHS_MAX:
         snapped = float(value_cents)
@@ -1729,8 +1737,13 @@ def _promote_vendor_prefix(name: str) -> str:
     # Strip "(...vendor...)" runs from the body so we don't end up with
     # "FIIO · Headset (FIIO DSP Audio)". Conservative: only nuke a
     # parenthesised fragment that contains the matched vendor token.
-    body = name
-    paren_re = re.compile(r'\s*\([^)]*\)\s*')
+    # v0.5.7.2: previous version used r'\s*\([^)]*\)\s*' which ate the
+    # space adjacent to the removed paren, so
+    #   "Line In (FIIO) - ASUS Sound Card"
+    # collapsed to "Line In- ASUS Sound Card" (no space before the dash).
+    # Replace the matched paren with a single space, then collapse runs
+    # of whitespace and re-normalise the " - " separator.
+    paren_re = re.compile(r'\([^)]*\)')
     cleaned_parts: list[str] = []
     pos = 0
     for pm in paren_re.finditer(name):
@@ -1739,11 +1752,18 @@ def _promote_vendor_prefix(name: str) -> str:
         inner = pm.group(0)
         if re.search(VENDOR_REGEX, inner, re.IGNORECASE) is None:
             cleaned_parts.append(inner)
+        else:
+            cleaned_parts.append(' ')
         pos = pm.end()
     cleaned_parts.append(name[pos:])
-    body = ''.join(cleaned_parts).strip(' -·:|')
+    body = ''.join(cleaned_parts)
+    body = re.sub(r'\s+', ' ', body).strip(' -·:|')
+    body = re.sub(r'\s*-\s*', ' - ', body)
     if not body:
-        body = name
+        # Input was effectively just "(VENDOR)" with nothing else of
+        # substance — return the vendor token bare rather than echoing
+        # the original parenthesised form back at the user.
+        return vendor
     return f'{vendor} · {body}'
 
 
@@ -1754,6 +1774,14 @@ class AudioPickerDialog(QDialog):
     selection just calls ``engine.open_device(spec)`` and lets the
     state machine do the rest."""
 
+    # v0.5.7.2: sample-rate re-open runs on a worker thread (open_device
+    # internally walks candidates with t.join(timeout=0.8) per attempt,
+    # which would freeze the UI for multiple seconds on a slow device).
+    # The worker emits this signal carrying (prev_pref, new_pref) and a
+    # QueuedConnection on the receiving slot marshals back to the GUI
+    # thread for the UI updates.
+    _sr_reopen_done = pyqtSignal(str, str)
+
     def __init__(self, parent, t_func, engine: AudioEngine,
                  cfg: sax_config.AppConfig, current: 'DeviceInfo | None'):
         super().__init__(parent)
@@ -1762,6 +1790,14 @@ class AudioPickerDialog(QDialog):
         self._cfg = cfg
         self._current = current
         self._chosen: 'DeviceInfo | None' = None
+        # v0.5.7.2: debounce flag — ignore further combo changes while
+        # an open is in flight. The combo is also disabled, but the
+        # flag guards against programmatic edits / queued signals that
+        # could slip in around the worker boundary.
+        self._sr_switch_in_flight: bool = False
+        self._sr_prev_pref: str = 'auto'
+        self._sr_reopen_done.connect(
+            self._on_sr_reopen_done, Qt.ConnectionType.QueuedConnection)
         self.setWindowTitle(self._t('audio_picker_title'))
         self.setModal(True)
         self.setMinimumWidth(560)
@@ -1813,6 +1849,8 @@ class AudioPickerDialog(QDialog):
         if idx < 0:
             idx = 0
         self._sr_combo.setCurrentIndex(idx)
+        # v0.5.7.2: snapshot for revert-on-failure path.
+        self._sr_prev_pref = cur_pref
         self._sr_combo.currentIndexChanged.connect(self._on_sr_changed)
         self._sr_combo.setStyleSheet(
             'QComboBox{background:#1e1e2e;color:#ddd;border:1px solid #444;'
@@ -1871,42 +1909,105 @@ class AudioPickerDialog(QDialog):
 
     def _on_sr_changed(self, _idx: int) -> None:
         """User picked a new sample-rate policy. Persist immediately,
-        then reopen the active device with the new pref. If the device
-        refuses the rate (UNSUPPORTED_RATE), revert combo to Auto and
-        surface an inline error so the user knows why."""
+        then reopen the active device with the new pref on a worker
+        thread.
+
+        v0.5.7.2: open_device walks candidates and runs
+        ``t.join(timeout=0.8)`` per attempt, which on Qt's main thread
+        froze the dialog for multiple seconds. We now spawn a worker,
+        disable the combo while it runs, and marshal the UI updates
+        back through ``_sr_reopen_done`` (QueuedConnection) so all
+        widget mutation happens on the GUI thread again. The engine's
+        internal lock (v0.5.4) makes the off-thread call safe.
+        """
+        if self._sr_switch_in_flight:
+            # Debounce: ignore further changes until the current worker
+            # finishes. The combo is disabled below, so this only fires
+            # for queued signals that slipped past the disable.
+            return
         new_pref = str(self._sr_combo.currentData() or 'auto')
         if new_pref not in SAMPLERATE_PREF_VALUES:
             new_pref = 'auto'
+        prev_pref = self._sr_prev_pref
+        if new_pref == prev_pref:
+            return
         self._cfg.audio_samplerate_pref = new_pref
         sax_config.save_config(self._cfg)
         self._sr_error_lbl.setVisible(False)
-        # If we have an active device, try to re-open it with the new pref.
-        # v0.5.7.1: go through the thread-safe getter — the engine's
-        # active_device is written under the lock on every successful
-        # open, and the worker thread could be mid-swap right now.
         dev = self._engine.get_active_device()
         if dev is None:
+            self._sr_prev_pref = new_pref
             return
         sel = DeviceSelection(name=dev.name, host_api=dev.host_api,
                               samplerate=0)
-        self._engine.stop()
-        self._engine.open_device(sel, samplerate_pref=new_pref)
-        # If the open failed on UNSUPPORTED_RATE for a pinned rate,
-        # revert to Auto and warn. UNSUPPORTED with auto means the device
-        # rejects EVERY candidate — show the same error and revert.
-        if (self._engine.state == AudioEngineState.FAILED
-                and self._engine.last_error == AudioEngineError.UNSUPPORTED_RATE):
-            shown_rate = new_pref if new_pref != 'auto' else '—'
+
+        # Block the GUI from issuing more re-opens until this one lands.
+        self._sr_switch_in_flight = True
+        self._sr_combo.setEnabled(False)
+        QGuiApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+
+        def _worker() -> None:
+            try:
+                self._engine.stop()
+                self._engine.open_device(sel, samplerate_pref=new_pref)
+            finally:
+                # Even if the engine raises, hand control back to the
+                # GUI thread so the combo gets re-enabled.
+                self._sr_reopen_done.emit(prev_pref, new_pref)
+
+        t = threading.Thread(target=_worker, name='sr-reopen',
+                             daemon=True)
+        t.start()
+
+    def _on_sr_reopen_done(self, prev_pref: str, new_pref: str) -> None:
+        """Runs on the GUI thread (QueuedConnection). Re-enables the
+        combo, surfaces the inline error on UNSUPPORTED_RATE, and
+        reverts the selection if the new pref was refused."""
+        try:
+            QGuiApplication.restoreOverrideCursor()
+        except Exception:
+            pass
+        failed_rate = (
+            self._engine.state == AudioEngineState.FAILED
+            and self._engine.last_error == AudioEngineError.UNSUPPORTED_RATE
+        )
+        if failed_rate:
+            shown_rate = new_pref if new_pref != 'auto' else '–'
             self._sr_error_lbl.setText(
                 self._t('samplerate_unsupported', rate=shown_rate))
             self._sr_error_lbl.setVisible(True)
-            # Revert to Auto in both the combo and the saved cfg.
-            self._cfg.audio_samplerate_pref = 'auto'
+            # Revert to previous pref in combo + cfg, then retry the
+            # open with the previous pref so the user is left in the
+            # same audio state they started with.
+            self._cfg.audio_samplerate_pref = prev_pref
             sax_config.save_config(self._cfg)
             self._sr_combo.blockSignals(True)
-            self._sr_combo.setCurrentIndex(0)
+            revert_idx = self._sr_combo.findData(prev_pref)
+            if revert_idx < 0:
+                revert_idx = 0
+            self._sr_combo.setCurrentIndex(revert_idx)
             self._sr_combo.blockSignals(False)
-            self._engine.open_device(sel, samplerate_pref='auto')
+            dev = self._engine.get_active_device()
+            if dev is not None:
+                sel = DeviceSelection(name=dev.name, host_api=dev.host_api,
+                                      samplerate=0)
+                # Retry on a worker too so we don't re-introduce the
+                # main-thread block we just removed. Best-effort: fire
+                # and forget — failure here just leaves the engine in
+                # FAILED, which the banner handles separately.
+                def _retry() -> None:
+                    try:
+                        self._engine.open_device(sel,
+                                                 samplerate_pref=prev_pref)
+                    except Exception:
+                        pass
+                threading.Thread(target=_retry, name='sr-revert',
+                                 daemon=True).start()
+            self._sr_prev_pref = prev_pref
+        else:
+            self._sr_prev_pref = new_pref
+        self._sr_combo.setEnabled(True)
+        self._sr_switch_in_flight = False
 
     def _on_toggle_show_all(self, checked: bool) -> None:
         self._cfg.show_all_host_apis = bool(checked)
