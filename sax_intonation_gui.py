@@ -50,6 +50,7 @@ from sax_instruments import (
 )
 import sax_config
 from sax_i18n import STRINGS
+from sax_session_state import SessionStateController
 
 APP_NAME = 'Intonation Analyzer'
 APP_VERSION = '0.5.8'
@@ -2156,6 +2157,21 @@ class MainWindow(QMainWindow):
                 self._on_interface_appeared)
 
         self._build_ui()
+        # Phase-5 extraction: persistable session state (geometry,
+        # splitter, instrument/nickname/display/A4/lang) lives on the
+        # SessionStateController. Instantiated here, AFTER _build_ui,
+        # because every widget reference it captures must already
+        # exist. The two thin MainWindow methods below delegate to it.
+        self._session_state = SessionStateController(
+            self, self._cfg,
+            engine=self._engine,
+            splitter=self._splitter,
+            instr_combo=self._instr_combo,
+            nick_edit=self._nick_edit,
+            disp_combo=self._disp_combo,
+            a4_combo=self._a4_combo,
+            lang_combo=self._lang_combo,
+        )
         self._restore_session_state()
         self._seed_expected_notes()
         self._update_record_btn_style()
@@ -4446,93 +4462,11 @@ class MainWindow(QMainWindow):
         return ' '*half + '|' + ' '*half
 
     def _restore_session_state(self) -> None:
-        """Apply persisted window geometry, splitter sizes, nickname,
-        language/instrument/display/A4 to the freshly-built widgets.
-
-        Called from __init__ right after _build_ui. Lang / instrument /
-        display were already applied earlier (they affect _build_ui's
-        first paint); here we sync the combos to those values plus the
-        widget-level state. First launch (empty cfg) is a no-op."""
-        cfg = self._cfg
-
-        # Window geometry — only restore if the saved rect still fits on
-        # at least one connected screen. A user who unplugged a monitor
-        # should not get a window stranded off-screen.
-        geom_b64 = getattr(cfg, 'window_geometry', "")
-        if geom_b64:
-            try:
-                ba = QByteArray.fromBase64(geom_b64.encode('ascii'))
-                if not ba.isEmpty() and self.restoreGeometry(ba):
-                    screens = QGuiApplication.screens()
-                    if screens:
-                        visible = False
-                        win_geom = self.frameGeometry()
-                        for scr in screens:
-                            if scr.availableGeometry().intersects(win_geom):
-                                visible = True
-                                break
-                        if not visible:
-                            # Off-screen — let Qt's default placement
-                            # take over by clearing the geometry.
-                            self.resize(1100, 700)
-                            primary = QGuiApplication.primaryScreen()
-                            if primary is not None:
-                                center = primary.availableGeometry().center()
-                                self.move(center.x() - self.width() // 2,
-                                          center.y() - self.height() // 2)
-            except Exception:
-                pass
-        state_b64 = getattr(cfg, 'window_state', "")
-        if state_b64:
-            try:
-                ba = QByteArray.fromBase64(state_b64.encode('ascii'))
-                if not ba.isEmpty():
-                    self.restoreState(ba)
-            except Exception:
-                pass
-
-        # Splitter widths.
-        sizes = list(getattr(cfg, 'splitter_sizes', []) or [])
-        if (hasattr(self, '_splitter') and len(sizes) == 2
-                and all(s >= 0 for s in sizes) and sum(sizes) > 0):
-            self._splitter.setSizes(sizes)
-
-        # Nickname text.
-        nick = getattr(cfg, 'last_nickname', "")
-        if nick and hasattr(self, '_nick_edit'):
-            self._nick_edit.setText(nick)
-
-        # Language combo — match self.lang set earlier in __init__.
-        if hasattr(self, '_lang_combo'):
-            for i in range(self._lang_combo.count()):
-                if self._lang_combo.itemData(i) == self.lang:
-                    self._lang_combo.blockSignals(True)
-                    self._lang_combo.setCurrentIndex(i)
-                    self._lang_combo.blockSignals(False)
-                    break
-            # _build_ui used the lang in effect at construction; if we
-            # overrode it post-load, retranslate now to repaint labels.
-            self._retranslate()
-
-        # Display combo — match self.display.
-        if hasattr(self, '_disp_combo'):
-            target_idx = 0 if self.display == 'griff' else 1
-            if self._disp_combo.currentIndex() != target_idx:
-                self._disp_combo.blockSignals(True)
-                self._disp_combo.setCurrentIndex(target_idx)
-                self._disp_combo.blockSignals(False)
-
-        # A4 — apply to combo and engine.
-        a4 = int(getattr(cfg, 'last_a4_hz', 440))
-        if 430 <= a4 <= 450:
-            if hasattr(self, '_a4_combo'):
-                self._a4_combo.blockSignals(True)
-                self._a4_combo.setCurrentIndex(a4 - 430)
-                self._a4_combo.blockSignals(False)
-            try:
-                self._engine.a4 = float(a4)
-            except Exception:
-                pass
+        """Thin delegator — the implementation lives on
+        SessionStateController (sax_session_state.py). Kept as a method
+        so external/internal call sites that reference this name keep
+        working without change."""
+        self._session_state.restore()
 
     def closeEvent(self, ev):
         # v0.5.5: snapshot the full session state to the config file so the
@@ -4548,36 +4482,14 @@ class MainWindow(QMainWindow):
         ev.accept()
 
     def _save_session_state(self) -> None:
-        """Assemble a full AppConfig snapshot from current widget state
-        and persist. Called from closeEvent. The per-setting saves
+        """Thin delegator + persistence. The snapshot work lives on
+        SessionStateController; the save_config call stays here because
+        the controller is intentionally agnostic about *when* to
+        persist. Called from closeEvent. The per-setting saves
         scattered through the GUI remain as a belt; this is the
         suspenders."""
-        cfg = self._cfg
-        # Window geometry + state — QByteArray base64 round-trip.
-        geom = self.saveGeometry()
-        state = self.saveState()
-        try:
-            cfg.window_geometry = bytes(geom.toBase64()).decode('ascii')
-        except Exception:
-            cfg.window_geometry = ""
-        try:
-            cfg.window_state = bytes(state.toBase64()).decode('ascii')
-        except Exception:
-            cfg.window_state = ""
-        # Splitter sizes.
-        if hasattr(self, '_splitter'):
-            cfg.splitter_sizes = list(self._splitter.sizes())
-        # Per-widget UI state.
-        cfg.last_instrument_key = self.instrument
-        if hasattr(self, '_nick_edit'):
-            cfg.last_nickname = self._nick_edit.text().strip()
-        cfg.last_display_mode = self.display
-        try:
-            cfg.last_a4_hz = int(self._engine.a4)
-        except Exception:
-            pass
-        cfg.last_lang = self.lang
-        sax_config.save_config(cfg)
+        self._session_state.save()
+        sax_config.save_config(self._cfg)
 
 
 def _today():
