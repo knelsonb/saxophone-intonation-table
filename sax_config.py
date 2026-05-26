@@ -16,6 +16,8 @@ All operations are best-effort: a corrupt or unwritable file is treated as
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -238,12 +240,33 @@ def load_config() -> AppConfig:
 
 
 def save_config(cfg: AppConfig) -> None:
+    """Persist the user config atomically.
+
+    v0.5.7.8: switched from open-write-in-place to tempfile + os.replace
+    so two app instances racing on shutdown can't leave a half-written
+    JSON file behind (mirrors the pattern in
+    sax_instruments._write_overrides_atomic). The temp file is created in
+    CONFIG_DIR so os.replace stays a same-volume rename on Windows."""
     try:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        with CONFIG_PATH.open("w", encoding="utf-8") as f:
+    except OSError:
+        return
+    tmp_path: Optional[str] = None
+    try:
+        fd, tmp_path = tempfile.mkstemp(
+            prefix=".config.", suffix=".tmp", dir=str(CONFIG_DIR))
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(asdict(cfg), f, indent=2)
+        os.replace(tmp_path, CONFIG_PATH)
+        tmp_path = None
     except OSError:
         pass
+    finally:
+        if tmp_path is not None:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
 
 # ---------------------------------------------------------------------------
