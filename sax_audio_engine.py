@@ -81,7 +81,12 @@ SAMPLERATE_CANDIDATES = (192000, 96000, 88200, 48000, 44100)
 SAMPLERATE_PREF_VALUES = ('auto', '44100', '48000', '88200', '96000',
                           '192000')
 MIN_FREQ = 27.0
-MAX_FREQ = 1400.0
+# v0.6: raised from 1400 Hz to 4200 Hz so high-register instruments in the
+# catalog (piccolo MIDI 93 = 2349 Hz, recorder MIDI 100 = 2637 Hz, piano
+# MIDI 108 = 4186 Hz) aren't silently rejected by the post-YIN gate. The
+# YIN search range expands correspondingly (tmin = sr / fmax shrinks),
+# which is benign for clean signals — see test_yin_baseline.py.
+MAX_FREQ = 4200.0
 YIN_THRESHOLD = 0.12
 A4_DEFAULT = 440.0
 
@@ -423,7 +428,10 @@ class AudioEngine:
         # the engine can drop MIDI values outside the supported range
         # without round-tripping to Qt.
         self._midi_min = 21
-        self._midi_max = 91
+        # v0.6: raised from 91 (G6) to 108 (C8) so piccolo / sopranino /
+        # recorder / piano / banjo upper registers aren't silently dropped.
+        # Must stay in lock-step with SAX_MIDI in sax_intonation_gui.
+        self._midi_max = 108
 
     # ---- internal state helpers -------------------------------------------
     def _reset_filter_state(self) -> None:

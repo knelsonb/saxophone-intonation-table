@@ -697,7 +697,10 @@ TRANSP     = {'eb': 3, 'bb': 2, 'c': 0}
 # Tenor (Bb):     klingt Ab2 (44) – Eb5 (75)   → gegriffen G3–D6  (55–74)
 # Alt (Eb):       klingt Db3 (49) – Ab5 (80)   → gegriffen Bb3–F6 (58–77)
 # Sopran (Bb):    klingt Ab3 (56) – Eb6 (87)   → gegriffen G4–D7  (67–86)
-SAX_MIDI   = range(21, 92)   # E0–G6: deckt alle Saxophon-Typen inkl. Bass ab
+SAX_MIDI   = range(21, 109)  # v0.6: widened from 21..91 to 21..108 to cover
+                             # the full catalog (piccolo, recorder, piano,
+                             # banjo upper registers).  Must mirror
+                             # AudioEngine._midi_max in sax_audio_engine.py.
 
 # Transposition map is now derived from sax_instruments.transp_map(), which
 # includes the original six saxophone/C-instrument keys plus everything else

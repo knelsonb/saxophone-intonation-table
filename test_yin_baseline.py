@@ -45,7 +45,7 @@ import pytest
 numpy = pytest.importorskip('numpy')
 import numpy as np  # noqa: E402 — only reached if importorskip passes
 
-from sax_audio_engine import yin_pitch  # noqa: E402
+from sax_audio_engine import yin_pitch, MAX_FREQ  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -226,20 +226,20 @@ def test_yin_pitch_values_are_numeric() -> None:
 
 
 def test_yin_pitch_silence_behaviour() -> None:
-    """Lock zero-signal behaviour: CMNDF is all-ones, argmin picks tmin=31,
-    parabolic step is a no-op (d=0), so freq = sr/tmin = 44100/31.
+    """Lock zero-signal behaviour: CMNDF is all-ones, argmin picks tmin,
+    parabolic step is a no-op (d=0), so freq = sr/tmin.
 
     yin_pitch has NO explicit all-zeros guard — it falls through to the
     argmin fallback with every CMNDF value equal to 1.0.  The returned
     aperiodicity is 1.0 (worst possible), which is what the engine's
     audio callback checks (``ap > params['yin_thr']``) to gate this frame
-    as unvoiced.  The freq value is meaningless but must be locked so
-    Phase 2 replicates the same code path.
+    as unvoiced.  The exact freq is sr/tmin where tmin tracks MAX_FREQ,
+    but the only invariant the engine actually cares about is ``ap=1.0``.
     """
     sig = np.zeros(4096, dtype=np.float64)
     freq, ap = yin_pitch(sig, 44100)
-    # sr/tmin: tmin = int(44100/MAX_FREQ) = int(44100/1400) = 31
-    assert freq == pytest.approx(44100 / 31, rel=1e-10)
+    tmin = max(1, int(44100 / MAX_FREQ))
+    assert freq == pytest.approx(44100 / tmin, rel=1e-10)
     assert ap == 1.0
 
 
