@@ -1,189 +1,258 @@
 """
-Deterministic test for the v0.5.7 FAILED -> NEW_DEVICE -> RECOVERY path.
+Deterministic tests for the v0.5.7 FAILED -> NEW_DEVICE -> RECOVERY path.
 
-Boots the engine with an empty device list, ticks refresh_devices(),
-then injects a new input device and ticks again. Asserts that the
-engine attempts to open the new device (and reaches RUNNING when the
-fake open succeeds).
+Each test function is independent in what it asserts, but they share a
+single fake-sounddevice installation and a single engine-module import
+that both happen at module load time.  This preserves the original
+requirement: the fake must be in sys.modules['sounddevice'] *before*
+sax_audio_engine is imported so that AUDIO_OK is True.
 
-Stand-alone — no pytest dependency. Exit code 0 on pass, non-zero on
-fail. Safe to add to CI later.
+Safe to run under pytest; no GUI or real audio hardware required.
 """
 from __future__ import annotations
 
+import importlib
+import re
 import sys
 import types
 
+# ---------------------------------------------------------------------------
+# Install the fake sounddevice BEFORE importing sax_audio_engine.
+# All test functions below share this single fake and its mutable state.
+# ---------------------------------------------------------------------------
 
-def _run() -> None:
-    # Fake sounddevice BEFORE importing the engine so AUDIO_OK is True.
-    fake_sd = types.ModuleType('sounddevice')
-    state = {
-        'devices': [],          # list of dicts mimicking sd.query_devices()
-        'hostapis': [{'name': 'Windows WASAPI'}],
-        'default_input_idx': None,
-        'opens': [],            # captured (index, samplerate) on InputStream
-        'fail_open': False,
-    }
+_fake_sd = types.ModuleType('sounddevice')
 
-    def query_devices(idx=None):
-        if idx is None:
-            return list(state['devices'])
-        return state['devices'][idx]
+# Mutable state shared by all tests; individual tests reset the fields they
+# care about at the start of each phase so they remain independent.
+_state: dict = {
+    'devices': [],          # list of dicts mimicking sd.query_devices()
+    'hostapis': [{'name': 'Windows WASAPI'}],
+    'default_input_idx': None,
+    'opens': [],            # captured (index, samplerate) on InputStream
+    'fail_open': False,
+}
 
-    def query_hostapis():
-        return list(state['hostapis'])
 
-    class _DefaultNs:
-        device = (None, None)
+def _query_devices(idx=None):
+    if idx is None:
+        return list(_state['devices'])
+    return _state['devices'][idx]
 
-    fake_sd.default = _DefaultNs()
 
-    def check_input_settings(device=None, channels=None,
-                             dtype=None, samplerate=None):
-        # Accept all rates so negotiation always returns something.
+def _query_hostapis():
+    return list(_state['hostapis'])
+
+
+class _DefaultNs:
+    device = (None, None)
+
+
+_fake_sd.default = _DefaultNs()
+
+
+def _check_input_settings(device=None, channels=None,
+                           dtype=None, samplerate=None):
+    # Accept all rates so negotiation always returns something.
+    return None
+
+
+class _FakeStream:
+    def __init__(self, samplerate, blocksize, channels, dtype,
+                 callback, device):
+        _state['opens'].append((device, int(samplerate)))
+        if _state['fail_open']:
+            raise RuntimeError('simulated open failure')
+        self._samplerate = samplerate
+
+    def start(self):
         return None
 
-    class FakeStream:
-        def __init__(self, samplerate, blocksize, channels, dtype,
-                     callback, device):
-            state['opens'].append((device, int(samplerate)))
-            if state['fail_open']:
-                raise RuntimeError('simulated open failure')
-            self._samplerate = samplerate
+    def stop(self):
+        return None
 
-        def start(self):
-            return None
+    def close(self):
+        return None
 
-        def stop(self):
-            return None
 
-        def close(self):
-            return None
+_fake_sd.query_devices = _query_devices
+_fake_sd.query_hostapis = _query_hostapis
+_fake_sd.check_input_settings = _check_input_settings
+_fake_sd.InputStream = _FakeStream
 
-    fake_sd.query_devices = query_devices
-    fake_sd.query_hostapis = query_hostapis
-    fake_sd.check_input_settings = check_input_settings
-    fake_sd.InputStream = FakeStream
+sys.modules['sounddevice'] = _fake_sd
 
-    sys.modules['sounddevice'] = fake_sd
+# Now import (or re-import) the engine with the fake in place.
+if 'sax_audio_engine' in sys.modules:
+    del sys.modules['sax_audio_engine']
+_engine_mod = importlib.import_module('sax_audio_engine')
 
-    # Import after the fake is in place.
-    import importlib
-    if 'sax_audio_engine' in sys.modules:
-        del sys.modules['sax_audio_engine']
-    engine_mod = importlib.import_module('sax_audio_engine')
-    assert engine_mod.AUDIO_OK, 'fake sounddevice failed to load'
+AudioEngine = _engine_mod.AudioEngine
+AudioEngineState = _engine_mod.AudioEngineState
+AudioEngineError = _engine_mod.AudioEngineError
+DeviceSelection = _engine_mod.DeviceSelection
 
-    AudioEngine = engine_mod.AudioEngine
-    AudioEngineState = engine_mod.AudioEngineState
-    AudioEngineError = engine_mod.AudioEngineError
-    DeviceSelection = engine_mod.DeviceSelection
+# ---------------------------------------------------------------------------
+# Helper: a fresh FIIO device descriptor used by several tests.
+# ---------------------------------------------------------------------------
+_FIIO_DEVICE = {
+    'name': 'FIIO DSP Audio',
+    'hostapi': 0,
+    'max_input_channels': 1,
+    'default_samplerate': 48000.0,
+}
 
-    # ---- Phase 1: no devices on boot --------------------------------
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+def test_engine_module_loaded_with_fake_sounddevice():
+    """The fake sounddevice must make AUDIO_OK True at import time."""
+    assert _engine_mod.AUDIO_OK, 'fake sounddevice failed to load'
+
+
+def test_no_devices_on_boot_reaches_failed():
+    """Phase 1 — empty device list: engine must start in FAILED/NO_DEVICE."""
+    _state['devices'] = []
+    _state['opens'] = []
+    _state['fail_open'] = False
+
     eng = AudioEngine()
     eng.set_preferred_hint(
         DeviceSelection(name='FIIO DSP Audio',
                         host_api='Windows WASAPI', samplerate=0))
     eng.start()
+
     assert eng.state == AudioEngineState.FAILED, \
         f'expected FAILED on empty boot, got {eng.state}'
     assert eng.last_error == AudioEngineError.NO_DEVICE, \
         f'expected NO_DEVICE, got {eng.last_error}'
-    assert state['opens'] == [], 'should not have attempted to open'
+    assert _state['opens'] == [], 'should not have attempted to open'
 
-    # ---- Phase 2: tick the poller, still nothing --------------------
+
+def test_refresh_devices_advances_timestamp_with_no_devices():
+    """Phase 2 — tick the poller while still empty: timestamp must advance."""
+    _state['devices'] = []
+    _state['opens'] = []
+    _state['fail_open'] = False
+
+    eng = AudioEngine()
+    eng.set_preferred_hint(
+        DeviceSelection(name='FIIO DSP Audio',
+                        host_api='Windows WASAPI', samplerate=0))
+    eng.start()
+
     devs = eng.refresh_devices()
+
     assert devs == [], 'still no devices'
     assert eng.state == AudioEngineState.FAILED, 'state must not change'
     assert eng.last_devices_refresh_at is not None, \
         'last_devices_refresh_at must advance on every tick'
 
-    # ---- Phase 3: hot-plug a matching device, tick again ------------
-    state['devices'] = [{
-        'name': 'FIIO DSP Audio',
-        'hostapi': 0,
-        'max_input_channels': 1,
-        'default_samplerate': 48000.0,
-    }]
+
+def test_hotplug_new_device_reaches_running():
+    """Phase 3 — plug in a matching device mid-run: engine must reach RUNNING."""
+    _state['devices'] = []
+    _state['opens'] = []
+    _state['fail_open'] = False
+
+    eng = AudioEngine()
+    eng.set_preferred_hint(
+        DeviceSelection(name='FIIO DSP Audio',
+                        host_api='Windows WASAPI', samplerate=0))
+    eng.start()
+
+    # Simulate hot-plug then poll.
+    _state['devices'] = [_FIIO_DEVICE]
     eng.refresh_devices()
-    # The engine should have attempted to open the new device and,
-    # because our FakeStream succeeds, reached RUNNING.
-    assert state['opens'], 'engine did NOT attempt to open hot-plugged device'
+
+    assert _state['opens'], 'engine did NOT attempt to open hot-plugged device'
     assert eng.state == AudioEngineState.RUNNING, (
         f'expected RUNNING after hot-plug, got {eng.state} '
         f'(err={eng.last_error}, msg={eng.last_error_message})')
     assert eng.active_device is not None
     assert eng.active_device.name == 'FIIO DSP Audio'
 
-    # ---- Phase 4: retry_open() forces re-enumeration ----------------
-    eng2 = AudioEngine()
-    state['opens'].clear()
-    state['devices'] = []
-    eng2.set_preferred_hint(
+
+def test_retry_open_reenumerates_and_reaches_running():
+    """Phase 4 — retry_open() must re-enumerate and resolve via the hint."""
+    _state['devices'] = []
+    _state['opens'] = []
+    _state['fail_open'] = False
+
+    eng = AudioEngine()
+    eng.set_preferred_hint(
         DeviceSelection(name='FIIO DSP Audio',
                         host_api='Windows WASAPI', samplerate=0))
-    eng2.start()
-    assert eng2.state == AudioEngineState.FAILED
+    eng.start()
+
+    assert eng.state == AudioEngineState.FAILED
+
     # Now plug in the device and call retry_open — must re-enumerate
     # (it can't trust the cached snapshot) and resolve via the hint.
-    state['devices'] = [{
-        'name': 'FIIO DSP Audio',
-        'hostapi': 0,
-        'max_input_channels': 1,
-        'default_samplerate': 48000.0,
-    }]
-    eng2.retry_open()
-    assert eng2.state == AudioEngineState.RUNNING, (
-        f'retry_open did not reach RUNNING, got {eng2.state} '
-        f'(err={eng2.last_error}, msg={eng2.last_error_message})')
+    _state['devices'] = [_FIIO_DEVICE]
+    eng.retry_open()
 
-    # ---- Phase 5: retry_open with absent pinned device -------------
-    eng3 = AudioEngine()
-    state['devices'] = [{
+    assert eng.state == AudioEngineState.RUNNING, (
+        f'retry_open did not reach RUNNING, got {eng.state} '
+        f'(err={eng.last_error}, msg={eng.last_error_message})')
+
+
+def test_retry_open_with_absent_pinned_device_stays_failed():
+    """Phase 5 — retry_open with absent pinned device must report NO_DEVICE."""
+    _state['fail_open'] = False
+    _state['opens'] = []
+    _state['devices'] = [{
         'name': 'Some Other Mic',
         'hostapi': 0,
         'max_input_channels': 1,
         'default_samplerate': 44100.0,
     }]
-    eng3.set_preferred_hint(
+
+    eng = AudioEngine()
+    eng.set_preferred_hint(
         DeviceSelection(name='FIIO DSP Audio',
                         host_api='Windows WASAPI', samplerate=0))
-    eng3.retry_open()
-    assert eng3.state == AudioEngineState.FAILED
-    assert eng3.last_error == AudioEngineError.NO_DEVICE
-    assert 'Pinned device not present' in eng3.last_error_message, (
-        f'expected pinned-device error message, got '
-        f'{eng3.last_error_message!r}')
+    eng.retry_open()
 
-    # ---- Phase 6: vendor regex covers the new brands ----------------
-    import re
-    vendor_re = re.compile(engine_mod.VENDOR_REGEX, re.IGNORECASE)
-    for name in ('Headset (FIIO DSP Audio)', 'Apogee Duet',
-                 'Universal Audio Apollo', 'Roland Quad-Capture',
-                 'Native Instruments Komplete Audio 6',
-                 'Tascam US-2x2', 'PreSonus AudioBox',
-                 'Zoom F8n', 'Antelope Discrete 4',
-                 'IK Multimedia AXE I/O'):
+    assert eng.state == AudioEngineState.FAILED
+    assert eng.last_error == AudioEngineError.NO_DEVICE
+    assert 'Pinned device not present' in eng.last_error_message, (
+        f'expected pinned-device error message, got '
+        f'{eng.last_error_message!r}')
+
+
+def test_vendor_regex_covers_expected_brands():
+    """Phase 6 — VENDOR_REGEX must match known pro-audio brands."""
+    vendor_re = re.compile(_engine_mod.VENDOR_REGEX, re.IGNORECASE)
+
+    should_match = (
+        'Headset (FIIO DSP Audio)',
+        'Apogee Duet',
+        'Universal Audio Apollo',
+        'Roland Quad-Capture',
+        'Native Instruments Komplete Audio 6',
+        'Tascam US-2x2',
+        'PreSonus AudioBox',
+        'Zoom F8n',
+        'Antelope Discrete 4',
+        'IK Multimedia AXE I/O',
+    )
+    for name in should_match:
         assert vendor_re.search(name), \
             f'vendor regex missed expected brand match: {name!r}'
-    # And does NOT match generic Windows kit.
-    for name in ('Microphone Array (Realtek)', 'NVIDIA HDMI Audio',
-                 'Stereo Mix (Realtek)'):
+
+
+def test_vendor_regex_does_not_match_generic_windows_audio():
+    """Phase 6b — VENDOR_REGEX must NOT match generic Windows system audio."""
+    vendor_re = re.compile(_engine_mod.VENDOR_REGEX, re.IGNORECASE)
+
+    should_not_match = (
+        'Microphone Array (Realtek)',
+        'NVIDIA HDMI Audio',
+        'Stereo Mix (Realtek)',
+    )
+    for name in should_not_match:
         assert not vendor_re.search(name), \
             f'vendor regex falsely matched: {name!r}'
-
-    print('test_hotplug_recovery: OK')
-
-
-if __name__ == '__main__':
-    try:
-        _run()
-    except AssertionError as e:
-        print(f'test_hotplug_recovery: FAIL — {e}')
-        sys.exit(1)
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        print(f'test_hotplug_recovery: ERROR — {e}')
-        sys.exit(2)
