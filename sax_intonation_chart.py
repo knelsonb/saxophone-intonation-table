@@ -69,16 +69,26 @@ def render_intonation_chart(
     footer: str,
     output_path: str,
     sample_rate: int = 44100,
+    instrument: str | None = None,
 ) -> None:
     """Render a bar chart and save to `output_path`.
 
     `notes` is a list of tuples, one per note in display order:
     * legacy 4-tuple: (label, mean_cents, std_cents, n)
     * v0.5.6 5-tuple: (label, mean_cents, std_cents, n, freq_hz)
+    * v0.6 7-tuple:   (label, mean_cents, std_cents, n, freq_hz,
+                       midi_fingered, in_range_bool)
 
     The 5-tuple feeds the frequency-adaptive cent precision used when
     drawing the numeric value above each bar. ``sample_rate`` is the
     engine's negotiated rate at chart time and gates that precision.
+
+    ``instrument`` (v0.6 Phase-4 Item 7) is the instrument-catalog key for
+    looking up the fingered range when the 7-tuple form isn't used. Any
+    note whose fingered MIDI lands outside ``fingered_range(instrument)``
+    is rendered in a desaturated grey with a small ⚠ marker so the user
+    can see at a glance which notes are out of the instrument's nominal
+    band (overtones, altissimo, accidentals).
 
     The image format is inferred from the file extension by QPixmap.save —
     .png works without any extra plugins on the standard PyQt6 install.
@@ -86,13 +96,19 @@ def render_intonation_chart(
     pix = QPixmap(_WIDTH, _HEIGHT)
     pix.fill(QColor(20, 20, 28))
 
+    # Resolve the fingered range once (chart loop doesn't need to re-import
+    # sax_instruments for every bar). If lookup fails or no instrument key
+    # was supplied, treat every note as in-range — chart still renders.
+    in_range_fn = _make_in_range_fn(instrument)
+
     p = QPainter(pix)
     try:
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         _draw_header(p, title, subtitle)
         _draw_axes(p)
         if notes:
-            _draw_bars(p, notes, sample_rate=sample_rate)
+            _draw_bars(p, notes, sample_rate=sample_rate,
+                       in_range_fn=in_range_fn)
         else:
             _draw_no_data(p)
         _draw_footer(p, footer)
@@ -106,6 +122,25 @@ def render_intonation_chart(
         raise RuntimeError(
             f"Failed to save chart image to {output_path!r}. The image "
             "format may not be supported by this PyQt6 install.")
+
+
+def _make_in_range_fn(instrument: str | None):
+    """Return a callable ``(midi_fingered) -> bool``. Looks up the
+    instrument's fingered range via ``sax_instruments.fingered_range`` so
+    out-of-range notes can be styled distinctly. Falls back to a
+    "everything is in range" function if the instrument is unknown or the
+    lookup raises — chart never crashes on a stale instrument key."""
+    if not instrument:
+        return lambda _midi: True
+    try:
+        from sax_instruments import fingered_range
+        lo, hi = fingered_range(instrument)
+    except Exception:
+        return lambda _midi: True
+    lo_i = int(lo)
+    hi_i = int(hi)
+    return lambda midi: (midi is not None
+                         and lo_i <= int(midi) <= hi_i)
 
 
 def _draw_header(p: QPainter, title: str, subtitle: str) -> None:
@@ -197,7 +232,10 @@ def _format_cents_label(value_cents: float, freq_hz: float,
 
 def _draw_bars(p: QPainter,
                notes: list[tuple],
-               sample_rate: int = 44100) -> None:
+               sample_rate: int = 44100,
+               in_range_fn=None) -> None:
+    if in_range_fn is None:
+        in_range_fn = lambda _midi: True
     area = _plot_area()
     n = len(notes)
     slot = area.width() / n
@@ -206,12 +244,23 @@ def _draw_bars(p: QPainter,
 
     p.setFont(_mono(9))
     for i, row in enumerate(notes):
-        # Accept legacy 4-tuple and v0.5.6 5-tuple with note freq.
-        if len(row) >= 5:
+        # Accept legacy 4-tuple and v0.5.6 5-tuple with note freq, plus
+        # v0.6 7-tuple with midi_fingered + explicit in_range flag.
+        midi_fingered = None
+        explicit_in_range = None
+        if len(row) >= 7:
+            (label, mean, std, count, freq,
+             midi_fingered, explicit_in_range) = (row[0], row[1], row[2],
+                                                   row[3], row[4], row[5], row[6])
+        elif len(row) >= 5:
             label, mean, std, count, freq = row[0], row[1], row[2], row[3], row[4]
         else:
             label, mean, std, count = row[0], row[1], row[2], row[3]
             freq = 0.0
+        if explicit_in_range is None:
+            note_in_range = in_range_fn(midi_fingered)
+        else:
+            note_in_range = bool(explicit_in_range)
         cx = area.left() + slot * (i + 0.5)
         # v0.5.7.9: skip bar/whisker geometry when mean is non-finite.
         # _cent_to_y(NaN) yields NaN; passing NaN to drawRoundedRect is
@@ -242,8 +291,14 @@ def _draw_bars(p: QPainter,
             continue
         top_y = _cent_to_y(mean, area)
         # Color by magnitude — same thresholds as the in-app tuner widget.
+        # v0.6 Phase-4 (Item 7): notes outside the instrument's fingered
+        # range render in a desaturated grey instead of the green-yellow-
+        # red gradient, so an altissimo overtone doesn't visually scream
+        # "out of tune" when it's really just out of range.
         m = abs(mean)
-        if m <= 5:
+        if not note_in_range:
+            col = QColor(140, 140, 150)
+        elif m <= 5:
             col = QColor(60, 220, 100)
         elif m <= 15:
             col = QColor(255, 200, 40)
@@ -257,6 +312,18 @@ def _draw_bars(p: QPainter,
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(col)
         p.drawRoundedRect(rect, 3, 3)
+
+        # Out-of-range marker: a small ⚠ glyph above the bar (or below if
+        # the bar tip is already high). Visually distinct from the cent
+        # label so it doesn't get mistaken for a value.
+        if not note_in_range:
+            warn_y = area.top() - 2 if mean >= 0 else area.bottom() - 10
+            p.setPen(QColor(220, 180, 80))
+            p.setFont(_sans(11, bold=True))
+            p.drawText(QRectF(cx - slot / 2, warn_y, slot, 14),
+                       Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
+                       '⚠')
+            p.setFont(_mono(9))
 
         # Clamp indicator if the value went past ±MAX_CENTS.
         if abs(mean) > _MAX_CENTS:

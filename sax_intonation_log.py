@@ -291,9 +291,15 @@ class MeasurementLog:
         "cents", "freq_hz", "maker", "model",
     )
 
-    def import_raw_csv(self, path: Path | str) -> tuple[int, int]:
+    def import_raw_csv(self, path: Path | str) -> tuple[int, int, int]:
         """Load a previously-exported `raw` CSV into the log as historical
-        runs. Returns (runs_added, measurements_added).
+        runs. Returns (runs_added, measurements_added, skipped).
+
+        ``skipped`` counts candidate data rows the importer rejected:
+        duplicate run_id (already in the log or already imported earlier in
+        the same file with a conflicting head row), malformed (wrong column
+        count or non-numeric numeric fields), or intra-run instrument / A4
+        conflicts. A header-only or empty file reports ``skipped == 0``.
 
         Only the `raw` slice mode round-trips — aggregated modes drop the
         timestamp and per-measurement frequency, so they can't be restored.
@@ -327,7 +333,7 @@ class MeasurementLog:
             try:
                 header = tuple(next(reader))
             except StopIteration:
-                return (0, 0)
+                return (0, 0, 0)
             if header == self.RAW_CSV_HEADER:
                 legacy = False
             elif header == self.RAW_CSV_HEADER_LEGACY:
@@ -343,6 +349,7 @@ class MeasurementLog:
             new_runs: dict[str, RunMeta] = {}
             new_measurements: list[Measurement] = []
             rows_seen = 0
+            skipped = 0
 
             for row in reader:
                 rows_seen += 1
@@ -353,6 +360,7 @@ class MeasurementLog:
                 expected_len = (len(self.RAW_CSV_HEADER_LEGACY) if legacy
                                 else len(self.RAW_CSV_HEADER))
                 if len(row) != expected_len:
+                    skipped += 1
                     continue
                 if legacy:
                     (timestamp, run_id, run_started_at, instrument, a4_hz_s,
@@ -364,6 +372,7 @@ class MeasurementLog:
                      a4_hz_s, midi_sounding_s, _sounding, midi_fingered_s,
                      _fingered, cents_s, freq_s, maker, model) = row
                 if not run_id or run_id in existing_runs:
+                    skipped += 1
                     continue
                 try:
                     a4_hz = float(a4_hz_s)
@@ -372,6 +381,7 @@ class MeasurementLog:
                     cents = float(cents_s)
                     freq_hz = float(freq_s)
                 except ValueError:
+                    skipped += 1
                     continue
 
                 if run_id not in new_runs:
@@ -392,6 +402,7 @@ class MeasurementLog:
                     head = new_runs[run_id]
                     if (instrument != head.instrument
                             or abs(a4_hz - head.a4_hz) > 0.01):
+                        skipped += 1
                         continue
                 new_measurements.append(Measurement(
                     run_id=run_id,
@@ -423,7 +434,7 @@ class MeasurementLog:
                         f.write(m.to_jsonl() + "\n")
             except OSError:
                 pass
-        return (len(new_runs), len(new_measurements))
+        return (len(new_runs), len(new_measurements), skipped)
 
     # -- export -----------------------------------------------------------
     SLICE_MODES = (
