@@ -297,7 +297,14 @@ class MeasurementLog:
         re-importing the same file.
         """
         path = Path(path)
-        with path.open("r", encoding="utf-8", newline="") as f:
+        # v0.5.7.7: utf-8-sig transparently strips a UTF-8 BOM if
+        # present and behaves identically to utf-8 otherwise. Excel
+        # adds a BOM on Save As CSV on Windows; without this, a
+        # round-trip through Excel turns "run_id" into "﻿run_id"
+        # and the header-match check raises. Symmetric: export still
+        # writes plain utf-8 (no BOM) -- be conservative in what we
+        # send, liberal in what we accept.
+        with path.open("r", encoding="utf-8-sig", newline="") as f:
             reader = csv.reader(f)
             try:
                 header = tuple(next(reader))

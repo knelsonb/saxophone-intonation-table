@@ -948,7 +948,16 @@ class AudioEngine:
         # BLOCK_SIZE = 8 × HOP_SIZE keeps the ~370 ms YIN window.
         block = hop * 8
 
-        result: dict = {'stream': None, 'err_kind': None, 'err_msg': ''}
+        # v0.5.7.7: 'cancelled' lets the main thread tell a slow worker
+        # to dispose the stream it eventually obtains. PortAudio offers
+        # no cancellation API for InputStream(), so we cannot interrupt
+        # the open itself; the best we can do is stop+close whatever
+        # stream the worker hands back after we already gave up. Without
+        # this, a worker that finishes after the join timeout leaves a
+        # fully-started stream owned by nothing -- it keeps the device
+        # busy until process exit, and subsequent opens fail.
+        result: dict = {'stream': None, 'err_kind': None, 'err_msg': '',
+                        'cancelled': False}
 
         cb = self._make_callback(samplerate)
 
@@ -976,15 +985,45 @@ class AudioEngine:
                 result['err_kind'] = self._classify_error(exc)
                 result['err_msg'] = f'{dev.name} [{dev.host_api}]: {exc}'
                 return
+            # Main thread may have timed out waiting for us. If so,
+            # dispose the stream rather than hand it off -- nobody is
+            # left to own it.
+            if result['cancelled']:
+                try:
+                    stream.stop()
+                except Exception:
+                    pass
+                try:
+                    stream.close()
+                except Exception:
+                    pass
+                return
             result['stream'] = stream
 
         t = threading.Thread(target=worker, daemon=True)
         t.start()
         t.join(timeout=HOST_API_OPEN_TIMEOUT_S)
         if t.is_alive():
-            # Driver hung. The thread leaks; nothing safe to do with
-            # PortAudio in this state besides walking past it. Set a
-            # synthetic failure and let the chain advance.
+            # Driver is slow (or hung). Tell the worker to dispose any
+            # stream it eventually produces. If the worker has already
+            # completed by the time we set this flag, the assignment is
+            # harmless -- result['stream'] is already populated and we
+            # fall through to the success path below.
+            result['cancelled'] = True
+            # Race: the worker may have finished and assigned
+            # result['stream'] in the window between our t.is_alive()
+            # check and setting cancelled. Dispose it here too.
+            handoff = result.get('stream')
+            if handoff is not None:
+                try:
+                    handoff.stop()
+                except Exception:
+                    pass
+                try:
+                    handoff.close()
+                except Exception:
+                    pass
+                result['stream'] = None
             return False, AudioEngineError.HOSTAPI_FAILURE, (
                 f'{dev.name} [{dev.host_api}]: open timed out '
                 f'after {HOST_API_OPEN_TIMEOUT_S:.1f}s')
