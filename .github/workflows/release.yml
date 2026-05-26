@@ -23,6 +23,9 @@ jobs:
           - os: windows-latest
             artifact_name: intonation-analyzer-windows-x86_64.exe
             binary_name: intonation-analyzer.exe
+          - os: macos-latest
+            artifact_name: intonation-analyzer-macos-arm64
+            binary_name: intonation-analyzer
 
     steps:
       - uses: actions/checkout@v4
