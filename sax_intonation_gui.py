@@ -51,7 +51,7 @@ from sax_instruments import (
 import sax_config
 
 APP_NAME = 'Intonation Analyzer'
-APP_VERSION = '0.5.7.3'
+APP_VERSION = '0.5.7.4'
 
 # v0.5.4: AudioEngine + pitch detection + filter presets live in their own
 # module so the engine has a state machine, host-API fallback chain, and
@@ -1748,24 +1748,17 @@ def _promote_vendor_prefix(name: str) -> str:
     m = re.search(VENDOR_REGEX, name, re.IGNORECASE)
     if m is None:
         return name
-    if m.start() == 0:
-        return name
     vendor = m.group(0).upper()
-    # Strip "(...vendor...)" runs from the body so we don't end up with
-    # "FIIO · Headset (FIIO DSP Audio)". Conservative: only nuke a
-    # parenthesised fragment that contains the matched vendor token.
-    # v0.5.7.2: previous version used r'\s*\([^)]*\)\s*' which ate the
-    # space adjacent to the removed paren, so
-    #   "Line In (FIIO) - ASUS Sound Card"
-    # collapsed to "Line In- ASUS Sound Card" (no space before the dash).
-    # Replace the matched paren with a single space, then collapse runs
-    # of whitespace and re-normalise the " - " separator.
+    # Step 1: drop any parenthesised fragment whose interior matches the
+    # vendor regex. Replace each such paren run with a single space (the
+    # v0.5.7.2 fix: previously we used r'\s*\([^)]*\)\s*' which ate the
+    # adjacent space and collapsed "Line In (FIIO) - ASUS" to
+    # "Line In- ASUS"). Non-vendor parens are preserved verbatim.
     paren_re = re.compile(r'\([^)]*\)')
     cleaned_parts: list[str] = []
     pos = 0
     for pm in paren_re.finditer(name):
-        chunk = name[pos:pm.start()]
-        cleaned_parts.append(chunk)
+        cleaned_parts.append(name[pos:pm.start()])
         inner = pm.group(0)
         if re.search(VENDOR_REGEX, inner, re.IGNORECASE) is None:
             cleaned_parts.append(inner)
@@ -1774,12 +1767,23 @@ def _promote_vendor_prefix(name: str) -> str:
         pos = pm.end()
     cleaned_parts.append(name[pos:])
     body = ''.join(cleaned_parts)
+    # Step 2 (v0.5.7.4): strip bare occurrences of the matched vendor
+    # token still left in the body. Without this, "FIIO Q3" produced
+    # "FIIO · FIIO Q3" because step 1 only touches paren-wrapped vendor
+    # text. We only strip the SAME vendor that was hoisted to the prefix
+    # — other vendor-list tokens in the body are part of the device
+    # name proper (e.g. "Universal Audio Apollo Twin X" should keep
+    # "Apollo" in the body even though Apollo is a known brand).
+    body = re.sub(
+        rf'\b{re.escape(m.group(0))}\b', ' ', body, flags=re.IGNORECASE
+    )
+    # Step 3: clean up whitespace and orphan separators left by removal.
+    body = re.sub(r'\s*\(\s*\)\s*', ' ', body)  # empty parens
     body = re.sub(r'\s+', ' ', body).strip(' -·:|')
-    body = re.sub(r'\s*-\s*', ' - ', body)
+    body = re.sub(r'\s*-\s*', ' - ', body).strip(' -')
     if not body:
-        # Input was effectively just "(VENDOR)" with nothing else of
-        # substance — return the vendor token bare rather than echoing
-        # the original parenthesised form back at the user.
+        # Input was effectively just the vendor token (possibly wrapped
+        # in parens) — return it bare rather than echoing back "VENDOR · ".
         return vendor
     return f'{vendor} · {body}'
 
