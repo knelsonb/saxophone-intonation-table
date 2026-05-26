@@ -745,27 +745,46 @@ def yin_pitch(sig, sr=SAMPLE_RATE, fmin=MIN_FREQ, fmax=MAX_FREQ,
 # Messdaten
 # =============================================================================
 class NoteStats:
-    def __init__(self):
-        self.vals: list[float] = []
-    def add(self, c): self.vals.append(c)
+    """Welford's online algorithm for mean and population variance.
+
+    Replaces the v0.5.7 list-based accumulator.  O(1) time and O(1) memory
+    per note regardless of how many cents readings accumulate.  Population
+    std (ddof=0) is preserved to match np.std default and the _agg_stats
+    contract locked by Phase-0 tests.
+
+    Thread-safety note: add() and the property readers are both called on
+    the Qt main thread (add via the engine.note_detected slot; readers via
+    the table-refresh timer), so no lock is needed here.  The v0.5.7.3
+    concurrent-clear NaN hazard is structurally gone: _mean and _m2 are
+    plain Python floats updated by individual assignments; under CPython's
+    GIL each assignment is atomic, and there is no window between a
+    truthiness check and a length read where a concurrent clear could
+    produce NaN from an empty sequence.
+    """
+
+    def __init__(self) -> None:
+        self._n:    int   = 0
+        self._mean: float = 0.0
+        self._m2:   float = 0.0
+
+    def add(self, c: float) -> None:
+        self._n += 1
+        delta        = c - self._mean
+        self._mean  += delta / self._n
+        delta2       = c - self._mean   # uses updated mean
+        self._m2    += delta * delta2
+
     @property
-    def mean(self):
-        # v0.5.7.3: snapshot vals before evaluating. A concurrent
-        # clear/reassign could shrink the list between the truthiness
-        # check and np.mean, returning NaN that then propagates into the
-        # matrix delegate's paint path (drawRoundedRect with NaN width
-        # is undefined Qt behaviour). The list is bounded (a few dozen
-        # entries per note in practice), so the copy is cheap.
-        vals = list(self.vals)
-        return float(np.mean(vals)) if vals else 0.0
+    def mean(self) -> float:
+        return self._mean if self._n > 0 else 0.0
+
     @property
-    def std(self):
-        # Same snapshot rationale as mean — np.std on a list that gets
-        # cleared mid-call returns NaN.
-        vals = list(self.vals)
-        return float(np.std(vals)) if len(vals) > 1 else 0.0
+    def std(self) -> float:
+        return math.sqrt(self._m2 / self._n) if self._n > 1 else 0.0
+
     @property
-    def n(self):    return len(self.vals)
+    def n(self) -> int:
+        return self._n
 
 
 # =============================================================================
