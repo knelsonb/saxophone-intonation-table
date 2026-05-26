@@ -54,6 +54,7 @@ from sax_session_state import SessionStateController
 from sax_export import ExportController
 from sax_table import TableController
 from sax_instrument_controller import InstrumentController
+from sax_device import DeviceController
 
 APP_NAME = 'Intonation Analyzer'
 APP_VERSION = '0.5.8'
@@ -2226,6 +2227,25 @@ class MainWindow(QMainWindow):
         self._seed_expected_notes()
         self._update_record_btn_style()
 
+        # Phase-5 extraction (fifth and final): audio-device picker open,
+        # retry, hot-plug poll, engine-state / devices-changed /
+        # interface-appeared Qt slot bodies, and the persist-active-device
+        # write-back live on DeviceController. The Qt signal-slot
+        # connect() lines above and the QTimer wiring below stay in
+        # MainWindow for grep-ability — only the slot bodies move.
+        # Instantiated here, AFTER _build_ui, because the two banner
+        # references it captures must already exist.
+        self._device_ctrl = DeviceController(
+            self,
+            engine=self._engine,
+            cfg=self._cfg,
+            t_func=self._t,
+            info_banner=getattr(self, '_info_banner', None),
+            audio_banner=getattr(self, '_audio_banner', None),
+            get_lang=lambda: self.lang,
+            on_active_device_changed=None,
+        )
+
         # Start the engine AFTER the UI exists so a startup PortAudio
         # failure paints a banner instead of crashing __init__. The
         # engine's start() never raises — it sets state and emits
@@ -3080,126 +3100,32 @@ class MainWindow(QMainWindow):
             samplerate=int(getattr(self._cfg, 'audio_device_samplerate', 0) or 0),
         )
 
+    # Phase-5 extraction: audio device handling lives on DeviceController.
+    # The methods below are one-line wrappers — Qt signal/slot connect()
+    # bindings (lines ~2156-2160) and the QTimer wiring (~2249) point at
+    # MainWindow methods, so we preserve them at MainWindow's surface
+    # so PyQt's runtime slot type-check sees the exact bound-method
+    # signature it saw before the extraction.
     def _persist_active_device(self) -> None:
-        """Write the engine's currently-active device back to config.
-        Index is deliberately NOT stored — only name + host API + rate,
-        per Gandalf's persistence design."""
-        dev = self._engine.get_active_device()
-        if dev is None:
-            return
-        self._cfg.audio_device_name = dev.name
-        self._cfg.audio_device_host_api = dev.host_api
-        self._cfg.audio_device_samplerate = int(self._engine.samplerate or 0)
-        sax_config.save_config(self._cfg)
-        # v0.5.7: keep the engine's hot-plug auto-recovery hint in sync
-        # with whatever's actually active. Otherwise the user picks a
-        # new device, unplugs it, plugs it back in, and the engine
-        # still resolves the stale launch-time hint.
-        self._engine.set_preferred_hint(DeviceSelection(
-            name=dev.name, host_api=dev.host_api,
-            samplerate=int(self._engine.samplerate or 0)))
+        self._device_ctrl.persist_active_device()
 
     def _open_audio_picker(self) -> None:
-        if not AUDIO_OK:
-            return
-        dlg = AudioPickerDialog(self, self._t, self._engine, self._cfg,
-                                self._engine.get_active_device())
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            chosen = dlg.chosen()
-            if chosen is not None:
-                pref = str(getattr(self._cfg, 'audio_samplerate_pref',
-                                    'auto') or 'auto')
-                self._engine.open_device(
-                    DeviceSelection(name=chosen.name,
-                                    host_api=chosen.host_api,
-                                    samplerate=0),
-                    samplerate_pref=pref)
+        self._device_ctrl.open_audio_picker()
 
     def _retry_audio(self) -> None:
-        if not AUDIO_OK:
-            return
-        # v0.5.7: force a fresh PortAudio enumeration before re-opening
-        # so a device plugged in after launch can be picked up. The old
-        # ``engine.retry()`` reused the stale snapshot and never saw
-        # the hot-plugged device.
-        self._engine.retry_open()
+        self._device_ctrl.retry_audio()
 
     def _poll_devices(self) -> None:
-        if not AUDIO_OK:
-            return
-        # refresh_devices() emits signals on diff — we just kick it.
-        try:
-            self._engine.refresh_devices()
-        except Exception:
-            pass
+        self._device_ctrl.poll_devices()
 
     def _on_engine_state(self, state, err, msg) -> None:
-        """React to engine state transitions: update chip, banner, and
-        diagnostics panel device label."""
-        dev = self._engine.get_active_device()
-        name = dev.name if dev else ''
-        host = dev.host_api if dev else ''
-        sr = int(getattr(self._engine, 'samplerate', 0) or 0)
-        if hasattr(self, '_audio_chip'):
-            self._audio_chip.update_from_state(state, name, host, sr)
-        if hasattr(self, '_audio_banner'):
-            if state == AudioEngineState.FAILED:
-                self._audio_banner.show_for(err, name, msg)
-            else:
-                self._audio_banner.hide()
-        if state == AudioEngineState.RUNNING:
-            self._persist_active_device()
-            if hasattr(self, '_tuner') and sr:
-                self._tuner.sample_rate = sr
-            # First-time-only notice if we wound up at a non-44.1k rate.
-            if (sr and sr != 44100
-                    and not bool(getattr(self._cfg,
-                                          'audio_sr_notice_shown', False))):
-                self._cfg.audio_sr_notice_shown = True
-                sax_config.save_config(self._cfg)
-                # Surface as a passive status-bar line, not a modal —
-                # Frodo-UX memo: never block the user with a dialog
-                # over sample-rate disclosure.
-                if hasattr(self, '_status_lbl'):
-                    self._status_lbl.setText(
-                        self._t('audio_sr_notice', sr=sr))
+        self._device_ctrl.on_engine_state(state, err, msg)
 
     def _on_devices_changed(self, _devices) -> None:
-        # Nothing to do at the MainWindow level — the picker reads
-        # devices lazily on each open, and the chip is driven by state
-        # changes, not the device list. Hook kept so unit tests / future
-        # toasts can subscribe without rewiring the engine.
-        pass
+        self._device_ctrl.on_devices_changed(_devices)
 
     def _on_interface_appeared(self, device: 'DeviceInfo') -> None:
-        """Hot-plug banner for vendor-class interfaces. Polite, non-modal,
-        Frodo-UX memo policy: only fires for matched vendor names so the
-        user isn't trained to dismiss it on every wake-from-sleep.
-
-        v0.6 Phase-4 (Item 1): the previous QMessageBox.exec() was modal
-        and froze pitch detection on the note Frodo was blowing while the
-        dialog was up. Now we surface an InfoBanner that he can leave on
-        screen — or click Switch / Dismiss without interrupting playback.
-        """
-        # v0.5.7.6: single-snapshot read. Reading active_device twice
-        # opens a TOCTOU window — between the not-None check and the
-        # .name access the audio worker can tear the stream down and
-        # null the device out, raising AttributeError on .name.
-        dev = self._engine.get_active_device()
-        if dev is not None and dev.name == device.name:
-            return
-        if not hasattr(self, '_info_banner'):
-            return
-
-        def _do_switch() -> None:
-            self._engine.open_device(DeviceSelection(
-                name=device.name, host_api=device.host_api, samplerate=0))
-
-        self._info_banner.show_message(
-            self._t('audio_banner_interface_appeared', name=device.name),
-            action_label=self._t('audio_toast_switch'),
-            action_callback=_do_switch,
-        )
+        self._device_ctrl.on_interface_appeared(device)
 
     def _on_diagnostics_toggled(self, checked: bool) -> None:
         """Show or hide the spectrogram + diagnostics panels and persist
