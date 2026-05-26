@@ -676,6 +676,13 @@ class AudioEngine:
         # uses it to prove the poller is still running even when the
         # device list happens not to have changed.
         self.last_devices_refresh_at = datetime.datetime.now()
+        # v0.5.7.8: snapshot active_device once under the lock so the
+        # disconnect-detection branch can't observe a different
+        # DeviceInfo between the check and the error-message format
+        # (a parallel open_stream could swap it out mid-method,
+        # producing "Device disconnected: X" when Y actually vanished).
+        with self._lock:
+            active = self.active_device
         key = self._snapshot_key(devices)
         if key == self._last_device_snapshot:
             return devices
@@ -690,14 +697,14 @@ class AudioEngine:
                 pass
         # Active device vanished?
         if (self.state == AudioEngineState.RUNNING
-                and self.active_device is not None
-                and not any(d.name == self.active_device.name
-                            and d.host_api == self.active_device.host_api
+                and active is not None
+                and not any(d.name == active.name
+                            and d.host_api == active.host_api
                             for d in devices)):
             self._teardown_stream()
             self._set_state(AudioEngineState.FAILED,
                             AudioEngineError.DEVICE_DISCONNECTED,
-                            f'Device disconnected: {self.active_device.name}')
+                            f'Device disconnected: {active.name}')
         # Vendor-class device appearing? Emit toast.
         if appeared and self.signals is not None:
             import re
