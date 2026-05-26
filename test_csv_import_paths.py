@@ -122,9 +122,9 @@ def test_legacy_header_three_rows(tmp_path):
     _write_csv(p, HEADER_LEGACY, rows)
 
     log = _fresh_log()
-    runs_added, meas_added = log.import_raw_csv(p)
+    runs_added, meas_added, skipped = log.import_raw_csv(p)
 
-    assert (runs_added, meas_added) == (1, 3)
+    assert (runs_added, meas_added, skipped) == (1, 3, 0)
 
     measurements = log.measurements()
     assert len(measurements) == 3
@@ -157,9 +157,9 @@ def test_legacy_header_nickname_is_empty_string(tmp_path):
     _write_csv(p, HEADER_LEGACY, [_legacy_row()])
 
     log = _fresh_log()
-    runs_added, meas_added = log.import_raw_csv(p)
+    runs_added, meas_added, skipped = log.import_raw_csv(p)
 
-    assert (runs_added, meas_added) == (1, 1)
+    assert (runs_added, meas_added, skipped) == (1, 1, 0)
     runs = log.runs()
     assert runs[0].label == ""
 
@@ -186,11 +186,12 @@ def test_intra_run_instrument_conflict_drops_conflicting_row(tmp_path):
     _write_csv(p, HEADER, rows)
 
     log = _fresh_log()
-    runs_added, meas_added = log.import_raw_csv(p)
+    runs_added, meas_added, skipped = log.import_raw_csv(p)
 
     # Policy: drop-row, not drop-run.
     assert runs_added == 1
     assert meas_added == 2
+    assert skipped == 1  # the conflicting eb_alto row counts as skipped
 
     measurements = log.measurements()
     assert len(measurements) == 2
@@ -222,10 +223,11 @@ def test_intra_run_a4_conflict_drops_conflicting_row(tmp_path):
     _write_csv(p, HEADER, rows)
 
     log = _fresh_log()
-    runs_added, meas_added = log.import_raw_csv(p)
+    runs_added, meas_added, skipped = log.import_raw_csv(p)
 
     assert runs_added == 1
     assert meas_added == 2
+    assert skipped == 1  # the conflicting a4_hz=441.0 row counts as skipped
 
     measurements = log.measurements()
     assert len(measurements) == 2
@@ -254,9 +256,9 @@ def test_intra_run_a4_within_tolerance_is_accepted(tmp_path):
     _write_csv(p, HEADER, rows)
 
     log = _fresh_log()
-    runs_added, meas_added = log.import_raw_csv(p)
+    runs_added, meas_added, skipped = log.import_raw_csv(p)
 
-    assert (runs_added, meas_added) == (1, 2)
+    assert (runs_added, meas_added, skipped) == (1, 2, 0)
 
 
 # ---------------------------------------------------------------------------
@@ -299,9 +301,9 @@ def test_duplicate_run_id_against_existing_log_is_skipped(tmp_path):
     p = tmp_path / "in.csv"
     _write_csv(p, HEADER, rows)
 
-    runs_added, meas_added = log.import_raw_csv(p)
+    runs_added, meas_added, skipped = log.import_raw_csv(p)
 
-    assert (runs_added, meas_added) == (0, 0)
+    assert (runs_added, meas_added, skipped) == (0, 0, 2)
 
     # Original measurement must still be the only one in the log.
     measurements = log.measurements()
@@ -325,12 +327,13 @@ def test_malformed_row_non_numeric_cents_is_skipped(tmp_path):
     _write_csv(p, HEADER, rows)
 
     log = _fresh_log()
-    runs_added, meas_added = log.import_raw_csv(p)
+    runs_added, meas_added, skipped = log.import_raw_csv(p)
 
     # The bad row is silently skipped; 2 of 3 measurements make it through.
     # The run is still created because two valid rows share run1.
     assert runs_added == 1
     assert meas_added == 2
+    assert skipped == 1  # the non-numeric cents row counts as skipped
 
     midi_values = {m.midi_sounding for m in log.measurements()}
     assert midi_values == {60, 64}
@@ -354,10 +357,11 @@ def test_malformed_row_missing_column_is_skipped(tmp_path):
         w.writerow(_current_row(midi_sounding="64"))
 
     log = _fresh_log()
-    runs_added, meas_added = log.import_raw_csv(p)
+    runs_added, meas_added, skipped = log.import_raw_csv(p)
 
     assert runs_added == 1
     assert meas_added == 2
+    assert skipped == 1  # truncated row counts as skipped
 
     midi_values = {m.midi_sounding for m in log.measurements()}
     assert midi_values == {60, 64}
@@ -376,7 +380,7 @@ def test_empty_csv_header_only(tmp_path):
     log = _fresh_log()
     result = log.import_raw_csv(p)
 
-    assert result == (0, 0)
+    assert result == (0, 0, 0)
     assert log.measurements() == []
     assert log.runs() == []
 
@@ -389,7 +393,7 @@ def test_empty_csv_legacy_header_only(tmp_path):
     log = _fresh_log()
     result = log.import_raw_csv(p)
 
-    assert result == (0, 0)
+    assert result == (0, 0, 0)
 
 
 # ---------------------------------------------------------------------------
@@ -404,7 +408,7 @@ def test_completely_empty_file(tmp_path):
     log = _fresh_log()
     result = log.import_raw_csv(p)
 
-    assert result == (0, 0)
+    assert result == (0, 0, 0)
 
 
 # ---------------------------------------------------------------------------
@@ -457,10 +461,11 @@ def test_two_runs_in_one_file(tmp_path):
     _write_csv(p, HEADER, rows)
 
     log = _fresh_log()
-    runs_added, meas_added = log.import_raw_csv(p)
+    runs_added, meas_added, skipped = log.import_raw_csv(p)
 
     assert runs_added == 2
     assert meas_added == 3
+    assert skipped == 0
 
     run_ids = {r.run_id for r in log.runs()}
     assert run_ids == {"run_a", "run_b"}
@@ -516,6 +521,7 @@ def test_row_count_at_cap_is_accepted(tmp_path, monkeypatch):
     _write_csv(p, HEADER, rows)
 
     log = _fresh_log()
-    runs_added, meas_added = log.import_raw_csv(p)
+    runs_added, meas_added, skipped = log.import_raw_csv(p)
     assert runs_added == 1
     assert meas_added == 5
+    assert skipped == 0

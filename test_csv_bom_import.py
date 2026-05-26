@@ -42,9 +42,10 @@ def test_import_raw_csv_accepts_utf8_bom() -> None:
         p.write_bytes(b"\xef\xbb\xbf" + payload.encode("utf-8"))
 
         log = MeasurementLog(path=None)
-        runs_added, meas_added = log.import_raw_csv(p)
+        runs_added, meas_added, skipped = log.import_raw_csv(p)
 
-    assert (runs_added, meas_added) == (1, 1), (runs_added, meas_added)
+    assert (runs_added, meas_added, skipped) == (1, 1, 0), (
+        runs_added, meas_added, skipped)
     print("test_csv_bom_import: OK")
 
 

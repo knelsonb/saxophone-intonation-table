@@ -142,7 +142,8 @@ STRINGS = {
         'welcome_info':     ('Beim Spielen werden Cent-Abweichungen erkannt und '
                               'pro Ton statistisch ausgewertet.\n\n'
                               'Möchtest du den Verlauf zwischen Sitzungen speichern, '
-                              'damit du später daraus CSVs und Diagramme erzeugen kannst?'),
+                              'damit du später daraus CSVs und Diagramme erzeugen kannst?\n\n'
+                              'Die Aufnahme läuft schon — spiel einen Ton und die Tabelle füllt sich.'),
         'welcome_persist':  'Messdatenverlauf dauerhaft speichern',
         'welcome_path':     'Die Datei landet unter:\n{path}',
         'welcome_continue': 'Loslegen',
@@ -175,9 +176,11 @@ STRINGS = {
         'btn_import':   '\u2b06  CSV importieren',
         # CSV-Import
         'csv_import_title':   'CSV importieren',
-        'csv_import_saved':   '{runs} L\u00e4ufe und {meas} Messungen importiert.',
+        'csv_import_saved':   '{runs} L\u00e4ufe und {meas} Messungen importiert. {skipped} Zeilen \u00fcbersprungen (Duplikate / Konflikte).',
         'csv_import_empty':   'Keine neuen Datens\u00e4tze importiert (vielleicht bereits geladen?).',
         'csv_import_badhdr':  'Diese CSV stammt nicht aus dem Rohdaten-Export.',
+        'csv_import_confirm_title': 'CSV-Import best\u00e4tigen',
+        'csv_import_confirm_body':  '\u00bb{filename}\u00ab in die aktuelle Sitzung importieren? L\u00e4ufe mit bereits bekannten IDs werden \u00fcbersprungen.',
         # Diagramm
         'chart_save_title':   'Diagramm speichern',
         'chart_filter':       'PNG-Bilder (*.png)',
@@ -333,14 +336,19 @@ STRINGS = {
         'audio_toast_interface':   'Neues Interface gefunden: {name}',
         'audio_toast_switch':      'Wechseln',
         'audio_toast_dismiss':     'Ignorieren',
+        'audio_banner_interface_appeared': 'Neues Interface erkannt: {name}. Wechseln?',
+        'wrong_instrument_banner_body':    'Die meisten deiner letzten 12 Töne liegen außerhalb des Tonumfangs von {instrument}. Ist das richtige Instrument ausgewählt?',
+        'autotune_nodata_progress':        'Aktuell haben {qualified} von 3 Tönen mindestens 5 Messungen ({touched} verschiedene Töne insgesamt). Weiter spielen!',
         'audio_sr_notice':         'Audio l\u00e4uft mit {sr} Hz \u2014 das Ger\u00e4t unterst\u00fctzt 44100 Hz nicht.',
         # v0.5.5 \u2014 per-instrument range editor
         'gear_tip':                'Erlaubte T\u00f6ne f\u00fcr dieses Instrument bearbeiten',
         'range_editor_title':      'Tonumfang bearbeiten \u2014 {name}',
-        'range_lo_label':          'Tiefster Griff-Ton (MIDI)',
-        'range_hi_label':          'H\u00f6chster Griff-Ton (MIDI)',
-        'range_lo_label_sounding': 'Tiefster Klingend-Ton (MIDI)',
-        'range_hi_label_sounding': 'H\u00f6chster Klingend-Ton (MIDI)',
+        'range_lo_label':          'Tiefster Griff-Ton',
+        'range_hi_label':          'H\u00f6chster Griff-Ton',
+        'range_lo_label_sounding': 'Tiefster Klingend-Ton',
+        'range_hi_label_sounding': 'H\u00f6chster Klingend-Ton',
+        'range_note_name_hint':    'Tonname (z.B. G3, F#5, Bb2)',
+        'range_note_name_invalid': 'Ung\u00fcltiger Tonname \u2014 bitte wie z.B. G3, F#5 oder Bb2 eingeben.',
         'range_mode_note_griff':   'Werte als Griff-Tonh\u00f6hen (im Speicher kanonisch).',
         'range_mode_note_sound':   'Werte als klingende Tonh\u00f6hen; gespeichert wird kanonisch in Griffnotation.',
         'range_preview_fmt':       'Bereich: {lo_name} \u2013 {hi_name} ({semis} Halbt\u00f6ne, {octs:.1f} Oktaven)',
@@ -413,7 +421,8 @@ STRINGS = {
                               'aggregated per note.\n\n'
                               'Would you like to save your measurement history '
                               'between sessions, so you can export CSVs and '
-                              'charts from past data?'),
+                              'charts from past data?\n\n'
+                              'Recording is already on — play a note and the table will fill in.'),
         'welcome_persist':  'Save measurement history to disk',
         'welcome_path':     'The file will live at:\n{path}',
         'welcome_continue': 'Get started',
@@ -442,9 +451,11 @@ STRINGS = {
         'btn_chart':    '\ud83d\uddbc  Chart (PNG)',
         'btn_import':   '\u2b06  Import CSV',
         'csv_import_title':   'Import CSV',
-        'csv_import_saved':   'Imported {runs} runs and {meas} measurements.',
+        'csv_import_saved':   'Imported {runs} runs and {meas} measurements. Skipped {skipped} rows (duplicates / conflicts).',
         'csv_import_empty':   'No new records imported (already loaded?).',
         'csv_import_badhdr':  'This CSV is not a raw-mode export.',
+        'csv_import_confirm_title': 'Confirm CSV import',
+        'csv_import_confirm_body':  'Import "{filename}" into your current session? Runs with matching IDs will be skipped.',
         'chart_save_title':   'Save chart',
         'chart_filter':       'PNG images (*.png)',
         'chart_saved':        'Chart saved:\n{path}',
@@ -589,14 +600,19 @@ STRINGS = {
         'audio_toast_interface':   'New interface detected: {name}',
         'audio_toast_switch':      'Switch',
         'audio_toast_dismiss':     'Dismiss',
+        'audio_banner_interface_appeared': 'New interface detected: {name}. Switch to it?',
+        'wrong_instrument_banner_body':    'Most of your last 12 notes are outside the {instrument} range. Is this the right instrument selected?',
+        'autotune_nodata_progress':        'Currently {qualified} of 3 notes have at least 5 measurements ({touched} different notes so far). Keep playing!',
         'audio_sr_notice':         'Running at {sr} Hz \u2014 this device does not support 44100 Hz.',
         # v0.5.5 \u2014 per-instrument range editor
         'gear_tip':                'Edit allowed notes for this instrument',
         'range_editor_title':      'Edit range \u2014 {name}',
-        'range_lo_label':          'Lowest fingered note (MIDI)',
-        'range_hi_label':          'Highest fingered note (MIDI)',
-        'range_lo_label_sounding': 'Lowest sounding note (MIDI)',
-        'range_hi_label_sounding': 'Highest sounding note (MIDI)',
+        'range_lo_label':          'Lowest fingered note',
+        'range_hi_label':          'Highest fingered note',
+        'range_lo_label_sounding': 'Lowest sounding note',
+        'range_hi_label_sounding': 'Highest sounding note',
+        'range_note_name_hint':    'Note name (e.g. G3, F#5, Bb2)',
+        'range_note_name_invalid': 'Invalid note name \u2014 try e.g. G3, F#5, or Bb2.',
         'range_mode_note_griff':   'Values are fingered pitches (canonical on disk).',
         'range_mode_note_sound':   'Values are sounding pitches; saved canonically as fingered.',
         'range_preview_fmt':       'Range: {lo_name} \u2013 {hi_name} ({semis} semitones, {octs:.1f} octaves)',
@@ -720,6 +736,50 @@ def freq_to_midi(f, a4=None):
 
 def midi_note_name(m):
     return f"{CHROMA[m % 12]}{m // 12 - 1}"
+
+
+# Reverse of midi_note_name: accept "G3", "F#5", "Bb2", "B♭2", "g3", etc.
+# Returns the integer MIDI number or None if the string can't be parsed.
+# Used by the range editor's note-name input field so Frodo doesn't have to
+# think in MIDI integers.
+_NOTE_PITCH_CLASSES = {
+    'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11,
+}
+
+
+def note_name_to_midi(text: str) -> int | None:
+    if text is None:
+        return None
+    s = str(text).strip()
+    if not s:
+        return None
+    # Normalise unicode accidentals to ASCII.
+    s = s.replace('♯', '#').replace('♭', 'b')
+    # Letter (case-insensitive).
+    letter = s[0].upper()
+    if letter not in _NOTE_PITCH_CLASSES:
+        return None
+    pc = _NOTE_PITCH_CLASSES[letter]
+    rest = s[1:]
+    # Optional accidental.
+    accidental = 0
+    if rest and rest[0] == '#':
+        accidental = 1
+        rest = rest[1:]
+    elif rest and rest[0] == 'b':
+        accidental = -1
+        rest = rest[1:]
+    # Octave digit(s) — allow negative octave like "C-1".
+    if not rest:
+        return None
+    try:
+        octave = int(rest)
+    except ValueError:
+        return None
+    midi = (octave + 1) * 12 + pc + accidental
+    if midi < 0 or midi > 127:
+        return None
+    return midi
 
 def cents_dev(f, a4=None):
     mf = freq_to_midi(f, a4)
@@ -1755,6 +1815,72 @@ class AudioRecoveryBanner(QWidget):
         self.show()
 
 
+class InfoBanner(QWidget):
+    """Non-modal info banner with one optional action + a Dismiss button.
+
+    Sister widget to ``AudioRecoveryBanner``; used for hot-plug
+    notifications and wrong-instrument hints — anything that previously
+    interrupted Frodo with a modal QMessageBox while he was playing.
+
+    Use ``show_message(text, action_label=None, action_callback=None)`` to
+    surface a banner; Dismiss always hides it. If no action label is
+    provided, only the Dismiss button is shown."""
+
+    def __init__(self, t_func):
+        super().__init__()
+        self._t = t_func
+        self._action_callback = None
+        self.setStyleSheet("""
+            QWidget{background:#1e2a3a;border:1px solid #444;border-left:4px solid #3498db;border-radius:5px;}
+            QLabel{color:#eee;font-size:12px;}
+            QPushButton{background:#34495e;color:#eee;border:none;border-radius:4px;
+                         padding:5px 12px;font-size:12px;}
+            QPushButton:hover{background:#3d566e;}
+        """)
+        from PyQt6.QtWidgets import QHBoxLayout
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(10, 6, 10, 6)
+        lay.setSpacing(8)
+        self._msg = QLabel('')
+        self._msg.setWordWrap(True)
+        lay.addWidget(self._msg, 1)
+        self._btn_action = QPushButton('')
+        self._btn_action.clicked.connect(self._on_action)
+        lay.addWidget(self._btn_action)
+        self._btn_dismiss = QPushButton(self._t('audio_toast_dismiss'))
+        self._btn_dismiss.clicked.connect(self.hide)
+        lay.addWidget(self._btn_dismiss)
+        self.hide()
+
+    def retranslate(self, t_func) -> None:
+        self._t = t_func
+        self._btn_dismiss.setText(self._t('audio_toast_dismiss'))
+
+    def _on_action(self) -> None:
+        cb = self._action_callback
+        self.hide()
+        if cb is not None:
+            try:
+                cb()
+            except Exception:
+                # The action handler is user code; never let an exception
+                # in the action propagate up to the Qt event loop and
+                # tear the window down on Frodo.
+                pass
+
+    def show_message(self, text: str, action_label: str | None = None,
+                     action_callback=None) -> None:
+        self._msg.setText(text)
+        if action_label and action_callback is not None:
+            self._action_callback = action_callback
+            self._btn_action.setText(action_label)
+            self._btn_action.show()
+        else:
+            self._action_callback = None
+            self._btn_action.hide()
+        self.show()
+
+
 def _promote_vendor_prefix(name: str) -> str:
     """If ``name`` contains a known vendor brand mid-string (typical of
     Windows naming like "Headset (FIIO DSP Audio)" or "Microphone
@@ -2282,18 +2408,49 @@ class RangeEditorDialog(QDialog):
         self._hi_spin.setValue(int(current_hi) + self._transp)
         spin_css = (
             'QSpinBox{background:#1e1e2e;color:#ddd;border:1px solid #444;'
-            'border-radius:5px;padding:3px 6px;font-size:13px;min-width:90px;}'
+            'border-radius:5px;padding:3px 6px;font-size:13px;min-width:70px;}'
         )
         self._lo_spin.setStyleSheet(spin_css)
         self._hi_spin.setStyleSheet(spin_css)
+        # v0.6 Phase-4 (Item 4): primary input is the note-name QLineEdit;
+        # the MIDI spinbox is kept visible for power users. Wire-up:
+        # the name edit drives the spin (parses on editingFinished), and
+        # the spin drives the edit (formats on valueChanged). Cycle guard
+        # via _suppress_sync so we don't bounce between the two.
+        self._suppress_sync = False
+        self._lo_name = QLineEdit()
+        self._hi_name = QLineEdit()
+        name_css_ok = (
+            'QLineEdit{background:#1e1e2e;color:#ddd;border:1px solid #444;'
+            'border-radius:5px;padding:3px 6px;font-size:13px;min-width:80px;}'
+        )
+        self._lo_name.setStyleSheet(name_css_ok)
+        self._hi_name.setStyleSheet(name_css_ok)
+        self._lo_name.setText(midi_note_name(int(current_lo) + self._transp))
+        self._hi_name.setText(midi_note_name(int(current_hi) + self._transp))
+        self._lo_name.setPlaceholderText(self._t('range_note_name_hint'))
+        self._hi_name.setPlaceholderText(self._t('range_note_name_hint'))
+        self._lo_name.setToolTip(self._t('range_note_name_hint'))
+        self._hi_name.setToolTip(self._t('range_note_name_hint'))
         if self._display == 'klingend':
             lo_label = self._t('range_lo_label_sounding')
             hi_label = self._t('range_hi_label_sounding')
         else:
             lo_label = self._t('range_lo_label')
             hi_label = self._t('range_hi_label')
-        form.addRow(lo_label, self._lo_spin)
-        form.addRow(hi_label, self._hi_spin)
+        # Each row hosts name-edit + spinbox so power users still see the
+        # MIDI integer. Name-edit is first because it's the primary input.
+        from PyQt6.QtWidgets import QWidget as _QW
+        def _make_row(name_edit, spin) -> _QW:
+            w = _QW()
+            h = QHBoxLayout(w)
+            h.setContentsMargins(0, 0, 0, 0)
+            h.setSpacing(6)
+            h.addWidget(name_edit, 1)
+            h.addWidget(spin, 0)
+            return w
+        form.addRow(lo_label, _make_row(self._lo_name, self._lo_spin))
+        form.addRow(hi_label, _make_row(self._hi_name, self._hi_spin))
         layout.addLayout(form)
 
         # Mode hint so the user knows what the spinboxes mean and that
@@ -2352,13 +2509,64 @@ class RangeEditorDialog(QDialog):
         layout.addLayout(btn_row)
 
         # Live preview wiring.
-        self._lo_spin.valueChanged.connect(self._update_preview)
-        self._hi_spin.valueChanged.connect(self._update_preview)
+        self._lo_spin.valueChanged.connect(self._on_spin_changed)
+        self._hi_spin.valueChanged.connect(self._on_spin_changed)
+        self._lo_name.editingFinished.connect(
+            lambda: self._on_name_edited(self._lo_name, self._lo_spin))
+        self._hi_name.editingFinished.connect(
+            lambda: self._on_name_edited(self._hi_name, self._hi_spin))
         self._update_preview()
 
         # Dark theme to match the rest of the app.
         self.setStyleSheet('QDialog{background:#12121a;color:#ddd;} '
                            'QLabel{color:#ccc;}')
+
+    def _on_spin_changed(self) -> None:
+        # Spin changed → sync the matching note-name edit, then refresh
+        # the preview. Guarded so we don't recurse when the name-edit
+        # slot is the one mutating the spin.
+        if not self._suppress_sync:
+            self._suppress_sync = True
+            try:
+                self._lo_name.setText(midi_note_name(self._lo_spin.value()))
+                self._hi_name.setText(midi_note_name(self._hi_spin.value()))
+                # Clear red border if the user previously typed a bad name.
+                ok_css = (
+                    'QLineEdit{background:#1e1e2e;color:#ddd;border:1px solid #444;'
+                    'border-radius:5px;padding:3px 6px;font-size:13px;min-width:80px;}'
+                )
+                self._lo_name.setStyleSheet(ok_css)
+                self._hi_name.setStyleSheet(ok_css)
+            finally:
+                self._suppress_sync = False
+        self._update_preview()
+
+    def _on_name_edited(self, edit, spin) -> None:
+        # Parse the user's text. On success, push the MIDI into the spin
+        # (and let _on_spin_changed reformat). On failure, paint the edit
+        # red and leave the spin alone — the brief is strict about not
+        # silently mutating the underlying number when parsing fails.
+        if self._suppress_sync:
+            return
+        text = edit.text()
+        midi = note_name_to_midi(text)
+        if midi is None:
+            bad_css = (
+                'QLineEdit{background:#3a1e1e;color:#fdd;border:1px solid #c0392b;'
+                'border-radius:5px;padding:3px 6px;font-size:13px;min-width:80px;}'
+            )
+            edit.setStyleSheet(bad_css)
+            self._error_lbl.setText(self._t('range_note_name_invalid'))
+            self._error_lbl.setVisible(True)
+            return
+        # Valid name → clear red border, push to spin (which re-formats
+        # the edit canonically via _on_spin_changed).
+        ok_css = (
+            'QLineEdit{background:#1e1e2e;color:#ddd;border:1px solid #444;'
+            'border-radius:5px;padding:3px 6px;font-size:13px;min-width:80px;}'
+        )
+        edit.setStyleSheet(ok_css)
+        spin.setValue(midi)
 
     def _update_preview(self) -> None:
         lo = self._lo_spin.value()
@@ -2367,11 +2575,11 @@ class RangeEditorDialog(QDialog):
         # Visual cue on the offending field.
         bad_css = (
             'QSpinBox{background:#3a1e1e;color:#fdd;border:1px solid #c0392b;'
-            'border-radius:5px;padding:3px 6px;font-size:13px;min-width:90px;}'
+            'border-radius:5px;padding:3px 6px;font-size:13px;min-width:70px;}'
         )
         ok_css = (
             'QSpinBox{background:#1e1e2e;color:#ddd;border:1px solid #444;'
-            'border-radius:5px;padding:3px 6px;font-size:13px;min-width:90px;}'
+            'border-radius:5px;padding:3px 6px;font-size:13px;min-width:70px;}'
         )
         self._lo_spin.setStyleSheet(bad_css if invalid else ok_css)
         self._hi_spin.setStyleSheet(bad_css if invalid else ok_css)
@@ -2442,6 +2650,17 @@ class MainWindow(QMainWindow):
         # _on_note increments). Diagnostics readout consumes this; the
         # table-level note count comes from `len(self.stats)`.
         self._notes_count: int = 0
+        # v0.6 Phase-4 (Item 3): wrong-instrument detector. Counts
+        # consecutive _on_note calls whose fingered MIDI lands outside the
+        # currently selected instrument's range. Reset when a note lands
+        # inside the range (false alarm) or when the user changes
+        # instrument/A4. ``_oor_banner_shown`` keeps the prompt from
+        # re-firing for the same instrument selection after the user has
+        # dismissed it once.
+        self._oor_count: int = 0
+        self._oor_banner_shown: bool = False
+        # Threshold: ~12 notes feels like one phrase of all-wrong notes.
+        self._oor_threshold: int = 12
 
         # Load user config + previously-registered custom instruments before
         # building the UI so the catalog reflects them at first paint.
@@ -2760,6 +2979,12 @@ class MainWindow(QMainWindow):
         self._audio_banner = AudioRecoveryBanner(
             self._t, self._retry_audio, self._open_audio_picker)
         ll3.addWidget(self._audio_banner)
+        # v0.6 Phase-4: non-modal info banner for hot-plug (Item 1) and
+        # wrong-instrument hint (Item 3). Hidden by default; the GUI calls
+        # show_message() to surface it with an optional Switch action and
+        # an always-present Dismiss button.
+        self._info_banner = InfoBanner(self._t)
+        ll3.addWidget(self._info_banner)
 
         self._tuner = TunerWidget()
         # Tuner gets a fixed-ish vertical slot now that it shares the
@@ -3048,6 +3273,8 @@ class MainWindow(QMainWindow):
             self._audio_chip.retranslate(self._t)
         if hasattr(self, '_audio_banner'):
             self._audio_banner.retranslate(self._t)
+        if hasattr(self, '_info_banner'):
+            self._info_banner.retranslate(self._t)
 
         self._refresh_table()
 
@@ -3055,6 +3282,31 @@ class MainWindow(QMainWindow):
     def _on_note(self, midi_kl: int, freq: float, cents: float):
         if not self._recording:
             return
+        # v0.6 Phase-4 (Item 3): wrong-instrument detector. Run BEFORE the
+        # OOR drop below so the counter still ticks when the user has
+        # "filter to range" enabled — otherwise we'd never count notes
+        # outside the range. Compute the fingered MIDI relative to the
+        # currently selected instrument and bump/reset the counter.
+        try:
+            _t_oor = TRANSP_MAP.get(self.instrument, 0)
+            _lo_f, _hi_f = sax_instruments.fingered_range(self.instrument)
+            _midi_fingered_oor = midi_kl - _t_oor
+            _in_range = (_lo_f <= _midi_fingered_oor <= _hi_f)
+        except Exception:
+            _in_range = True
+        if _in_range:
+            self._oor_count = 0
+        else:
+            self._oor_count += 1
+            if (not self._oor_banner_shown
+                    and self._oor_count >= self._oor_threshold
+                    and hasattr(self, '_info_banner')):
+                self._oor_banner_shown = True
+                instr_label = self._instr_label(self.instrument)
+                self._info_banner.show_message(
+                    self._t('wrong_instrument_banner_body',
+                            instrument=instr_label))
+
         # Drop out-of-range notes when the toggle is off — keeps the table
         # bounded to the instrument's nominal range.
         if not self._cfg.allow_out_of_range:
@@ -3475,6 +3727,13 @@ class MainWindow(QMainWindow):
             return
         self.instrument = key
         self._engine.instr_key = self.instrument
+        # v0.6 Phase-4 (Item 3): the wrong-instrument detector is anchored
+        # to the *selected* instrument. New selection ⇒ counter resets and
+        # the one-shot prompt becomes eligible to fire again.
+        self._oor_count = 0
+        self._oor_banner_shown = False
+        if hasattr(self, '_info_banner'):
+            self._info_banner.hide()
         # Seed the stats with empty slots for every expected fingered note so
         # the table immediately shows the player what the instrument's range
         # looks like. Real measurements fill in as the player plays;
@@ -3649,11 +3908,15 @@ class MainWindow(QMainWindow):
         pass
 
     def _on_interface_appeared(self, device: 'DeviceInfo') -> None:
-        """Hot-plug toast for vendor-class interfaces. Polite, non-modal,
+        """Hot-plug banner for vendor-class interfaces. Polite, non-modal,
         Frodo-UX memo policy: only fires for matched vendor names so the
-        user isn't trained to dismiss it on every wake-from-sleep."""
-        # Use a QMessageBox with a short title — close enough to a toast
-        # for v0.5.4. A custom non-blocking widget is v0.5.5 work.
+        user isn't trained to dismiss it on every wake-from-sleep.
+
+        v0.6 Phase-4 (Item 1): the previous QMessageBox.exec() was modal
+        and froze pitch detection on the note Frodo was blowing while the
+        dialog was up. Now we surface an InfoBanner that he can leave on
+        screen — or click Switch / Dismiss without interrupting playback.
+        """
         # v0.5.7.6: single-snapshot read. Reading active_device twice
         # opens a TOCTOU window — between the not-None check and the
         # .name access the audio worker can tear the stream down and
@@ -3661,18 +3924,18 @@ class MainWindow(QMainWindow):
         dev = self._engine.get_active_device()
         if dev is not None and dev.name == device.name:
             return
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Icon.Information)
-        box.setWindowTitle(self._t('audio_chip_label'))
-        box.setText(self._t('audio_toast_interface', name=device.name))
-        btn_switch = box.addButton(self._t('audio_toast_switch'),
-                                   QMessageBox.ButtonRole.AcceptRole)
-        box.addButton(self._t('audio_toast_dismiss'),
-                      QMessageBox.ButtonRole.RejectRole)
-        box.exec()
-        if box.clickedButton() is btn_switch:
+        if not hasattr(self, '_info_banner'):
+            return
+
+        def _do_switch() -> None:
             self._engine.open_device(DeviceSelection(
                 name=device.name, host_api=device.host_api, samplerate=0))
+
+        self._info_banner.show_message(
+            self._t('audio_banner_interface_appeared', name=device.name),
+            action_label=self._t('audio_toast_switch'),
+            action_callback=_do_switch,
+        )
 
     def _on_diagnostics_toggled(self, checked: bool) -> None:
         """Show or hide the spectrogram + diagnostics panels and persist
@@ -3949,6 +4212,10 @@ class MainWindow(QMainWindow):
         Re-derive the table by walking the log's measurements at the new
         A4 instead of throwing away everything the user just recorded."""
         new_a4 = float(self._a4_combo.itemData(idx))
+        # v0.6 Phase-4 (Item 3): A4 change recalibrates midi assignments,
+        # so the wrong-instrument counter resets too.
+        self._oor_count = 0
+        self._oor_banner_shown = False
         # Wave-1 bug #5: A4-change race. The audio callback can fire
         # _on_note between the moment we build `remapped` and the moment
         # we assign it to self.stats, dropping a measurement into the
@@ -4100,9 +4367,18 @@ class MainWindow(QMainWindow):
     def _on_autotune(self):
         with self._lock:
             items = [(st.mean, st.n) for st in self.stats.values() if st.n >= 5]
+            # v0.6 Phase-4 (Item 6): count progress so the blocker is
+            # actionable. ``qualified`` = notes meeting the ≥5 threshold;
+            # ``touched`` = distinct notes that have ANY samples. Both are
+            # shown to the user when there isn't enough data yet.
+            qualified = len(items)
+            touched = sum(1 for st in self.stats.values() if st.n > 0)
 
         if len(items) < 3:
-            QMessageBox.warning(self, self._t('autotune_title'), self._t('autotune_nodata'))
+            msg = (self._t('autotune_nodata') + '\n\n'
+                   + self._t('autotune_nodata_progress',
+                              qualified=qualified, touched=touched))
+            QMessageBox.warning(self, self._t('autotune_title'), msg)
             return
 
         means   = np.array([m for m, _ in items])
@@ -4608,8 +4884,21 @@ class MainWindow(QMainWindow):
             self._t('csv_filter'))
         if not path:
             return
+        # v0.6 Phase-4: confirm before merging into the current session.
+        # The user picked a file but might not realise the import merges
+        # into the live log; Frodo wants a "are you sure?" beat before
+        # potentially mixing somebody else's CSV with his own data.
+        from pathlib import Path as _Path
+        filename = _Path(path).name
+        confirm = QMessageBox.question(
+            self, self._t('csv_import_confirm_title'),
+            self._t('csv_import_confirm_body', filename=filename),
+            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Ok)
+        if confirm != QMessageBox.StandardButton.Ok:
+            return
         try:
-            runs, meas = self._log.import_raw_csv(path)
+            runs, meas, skipped = self._log.import_raw_csv(path)
         except ValueError:
             QMessageBox.warning(self, self._t('err_title'),
                                 self._t('csv_import_badhdr'))
@@ -4618,13 +4907,14 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, self._t('err_title'), str(e))
             return
 
-        if runs == 0 and meas == 0:
+        if runs == 0 and meas == 0 and skipped == 0:
             QMessageBox.information(self, self._t('csv_import_title'),
                                     self._t('csv_import_empty'))
             return
         QMessageBox.information(
             self, self._t('csv_import_title'),
-            self._t('csv_import_saved', runs=runs, meas=meas))
+            self._t('csv_import_saved',
+                    runs=runs, meas=meas, skipped=skipped))
 
     # ── Export Chart (PNG) ────────────────────────────────────────────────────
     def _export_chart(self):
@@ -4656,13 +4946,18 @@ class MainWindow(QMainWindow):
         disp_griff = (self.display == 'griff')
         sr_now = self._engine_sample_rate()
         a4 = self._engine.a4
+        # v0.6 Phase-4 (Item 7): pass fingered MIDI per note so the chart
+        # renderer can colour out-of-range bars distinctly.
+        lo_f, hi_f = sax_instruments.fingered_range(self.instrument)
         notes = []
         for midi_kl, st in items:
             midi_gr = midi_kl - transp
             display_name = (midi_note_name(midi_gr) if disp_griff
                             else midi_note_name(midi_kl))
             note_freq = a4 * (2.0 ** ((midi_kl - 69) / 12.0))
-            notes.append((display_name, st.mean, st.std, st.n, note_freq))
+            in_range = (lo_f <= midi_gr <= hi_f)
+            notes.append((display_name, st.mean, st.std, st.n, note_freq,
+                          midi_gr, in_range))
 
         instr_long = self._t(f'instr_long_{self.instrument}')
         dt = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
@@ -4686,6 +4981,7 @@ class MainWindow(QMainWindow):
                 footer=footer,
                 output_path=path,
                 sample_rate=sr_now,
+                instrument=self.instrument,
             )
             QMessageBox.information(self, self._t('export_title'),
                                     self._t('chart_saved', path=path))
