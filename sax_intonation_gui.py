@@ -51,7 +51,7 @@ from sax_instruments import (
 import sax_config
 
 APP_NAME = 'Intonation Analyzer'
-APP_VERSION = '0.5.7.4'
+APP_VERSION = '0.5.7.5'
 
 # v0.5.4: AudioEngine + pitch detection + filter presets live in their own
 # module so the engine has a state machine, host-API fallback chain, and
@@ -1775,7 +1775,7 @@ def _promote_vendor_prefix(name: str) -> str:
     # name proper (e.g. "Universal Audio Apollo Twin X" should keep
     # "Apollo" in the body even though Apollo is a known brand).
     body = re.sub(
-        rf'\b{re.escape(m.group(0))}\b', ' ', body, flags=re.IGNORECASE
+        rf'\b{re.escape(m.group(0))}\b', ' ', body, count=1, flags=re.IGNORECASE
     )
     # Step 3: clean up whitespace and orphan separators left by removal.
     body = re.sub(r'\s*\(\s*\)\s*', ' ', body)  # empty parens
