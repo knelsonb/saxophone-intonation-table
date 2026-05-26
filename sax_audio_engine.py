@@ -125,13 +125,20 @@ WIN_HOST_API_ORDER_WITH_KS = WIN_HOST_API_ORDER + ('Windows WDM-KS',)
 # rest of the common pro/prosumer interface vendors. The ``(?! call)``
 # lookahead avoids boosting the Windows "Zoom Video Communications"
 # device when that's been installed alongside the Zoom Corp recorder.
+# v0.6: wrapped in \b boundaries so short tokens (umc, fiio, uad, evo,
+# rme) no longer match inside unrelated words ("UMC202HD" was matching
+# the umc prefix; "Studio FIIOX" was matching fiio inside fiiox).  The
+# `ur\d` token became `ur\d+` so a string like "UR242" matches the full
+# digit run rather than just the first digit.
 VENDOR_REGEX = (
+    r'\b(?:'
     r'focusrite|scarlett|motu|apollo|universal audio|uad|behringer|umc|'
-    r'audient|evo|presonus|rme|babyface|steinberg|ur\d|tascam|'
+    r'audient|evo|presonus|rme|babyface|steinberg|ur\d+|tascam|'
     r'zoom(?! call)|'
     r'm-audio|m audio|'
-    r'fiio|apogee|roland|native instruments|\bni\b|\bssl\b|'
+    r'fiio|apogee|roland|native instruments|ni|ssl|'
     r'antelope|ik multimedia'
+    r')\b'
 )
 # Compiled form of VENDOR_REGEX — used by refresh_devices() and
 # _auto_recover_after_hotplug(). Keep VENDOR_REGEX (string) for any
@@ -1110,7 +1117,12 @@ class AudioEngine:
             return AudioEngineError.DEVICE_BUSY
         if any(s in text for s in (
                 'device not found', 'no device', 'invalid device',
-                'querying device -1', '-1')):
+                'querying device -1')):
+            return AudioEngineError.NO_DEVICE
+        # The bare '-1' code: match it as a standalone token only, so
+        # '-10', '-12', '-1000' don't get misrouted here (they belong in
+        # HOSTAPI_FAILURE below).
+        if re.search(r'(?:^|\D)-1(?!\d)', text):
             return AudioEngineError.NO_DEVICE
         return AudioEngineError.HOSTAPI_FAILURE
 

@@ -357,7 +357,7 @@ def _coerce_range_entry(v) -> tuple[int, int] | None:
     try:
         lo = int(v[0])
         hi = int(v[1])
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     if not (0 <= lo <= 127 and 0 <= hi <= 127 and lo <= hi):
         return None

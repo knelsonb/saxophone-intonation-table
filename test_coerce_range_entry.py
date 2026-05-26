@@ -169,17 +169,11 @@ def test_coerce_range_entry_float_truncation(lo_f, hi_f, expected_lo, expected_h
 # 4. Infinity inputs — DEFECT locked, not fixed.
 #
 # ``int(float('inf'))`` raises ``OverflowError``, which is NOT a subclass
-# of ``ValueError`` or ``TypeError``.  The ``except (TypeError, ValueError)``
-# block in ``_coerce_range_entry`` does not catch it, so these inputs
-# propagate an unhandled ``OverflowError`` instead of returning ``None``.
-#
-# This is a latent bug: a user-edited JSON entry such as
+# of ``ValueError`` or ``TypeError``.  Phase 1 added ``OverflowError`` to the
+# except clause; these inputs now return ``None`` instead of crashing
+# ``load_range_overrides``.  A user-edited JSON entry like
 #   "eb_alto": [48, 1e308]    (rounds to inf in IEEE-754)
-# would crash ``load_range_overrides`` instead of silently skipping the key.
-#
-# Tests below lock CURRENT behaviour (raises).  When the bug is fixed
-# (add OverflowError to the except clause), these tests must be updated to
-# expect ``None`` instead.
+# is now silently skipped.
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("value", [
@@ -189,13 +183,10 @@ def test_coerce_range_entry_float_truncation(lo_f, hi_f, expected_lo, expected_h
     pytest.param([float("-inf"), 79],        id="lo_neg_inf"),
     pytest.param([float("inf"), float("inf")], id="both_inf"),
 ])
-def test_coerce_range_entry_inf_raises_overflow(value):
-    """DEFECT: inf inputs raise OverflowError instead of returning None.
-
-    The except clause catches (TypeError, ValueError) but not OverflowError.
-    Lock current behaviour.  When fixed, change to assert result is None."""
-    with pytest.raises(OverflowError):
-        _coerce_range_entry(value)
+def test_coerce_range_entry_inf_returns_none(value):
+    """inf inputs are rejected with ``None`` rather than propagating
+    OverflowError."""
+    assert _coerce_range_entry(value) is None
 
 
 # ---------------------------------------------------------------------------

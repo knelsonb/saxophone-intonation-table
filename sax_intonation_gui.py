@@ -1768,11 +1768,15 @@ def _promote_vendor_prefix(name: str) -> str:
     if m is None:
         return name
     vendor = m.group(0).upper()
-    # Step 1: drop any parenthesised fragment whose interior matches the
-    # vendor regex. Replace each such paren run with a single space (the
-    # v0.5.7.2 fix: previously we used r'\s*\([^)]*\)\s*' which ate the
-    # adjacent space and collapsed "Line In (FIIO) - ASUS" to
-    # "Line In- ASUS"). Non-vendor parens are preserved verbatim.
+    # Step 1: for each parenthesised fragment that contains a vendor
+    # token, strip only the vendor occurrence from the paren interior and
+    # keep the rest.  Examples:
+    #   "Microphone (2- Scarlett Solo)" -> "Microphone (2- Solo)"
+    #   "Line In (FIIO) - ASUS"         -> "Line In  - ASUS"  (parens empty, dropped)
+    # Non-vendor parens are preserved verbatim.  v0.6 change: previously
+    # the WHOLE paren was dropped when it contained a vendor, losing
+    # meaningful non-vendor content like "(2- Solo)".  Empty parens
+    # produced by full-vendor stripping collapse to a single space.
     paren_re = re.compile(r'\([^)]*\)')
     cleaned_parts: list[str] = []
     pos = 0
@@ -1782,7 +1786,18 @@ def _promote_vendor_prefix(name: str) -> str:
         if re.search(VENDOR_REGEX, inner, re.IGNORECASE) is None:
             cleaned_parts.append(inner)
         else:
-            cleaned_parts.append(' ')
+            stripped = re.sub(VENDOR_REGEX, '', inner,
+                              count=1, flags=re.IGNORECASE)
+            # Tidy paren whitespace produced by the strip.
+            stripped = re.sub(r'\(\s+', '(', stripped)
+            stripped = re.sub(r'\s+\)', ')', stripped)
+            stripped = re.sub(r'\s+', ' ', stripped)
+            # If only the vendor was inside, collapse the now-empty
+            # parens to a single space (Step 3 collapses runs of space).
+            if stripped in ('()', '( )'):
+                cleaned_parts.append(' ')
+            else:
+                cleaned_parts.append(stripped)
         pos = pm.end()
     cleaned_parts.append(name[pos:])
     body = ''.join(cleaned_parts)
@@ -1797,9 +1812,11 @@ def _promote_vendor_prefix(name: str) -> str:
         rf'\b{re.escape(m.group(0))}\b', ' ', body, count=1, flags=re.IGNORECASE
     )
     # Step 3: clean up whitespace and orphan separators left by removal.
+    # v0.6 dropped a `re.sub(r'\s*-\s*', ' - ', body)` step that used to
+    # normalise dash spacing; with the new paren-content-preservation
+    # logic, dashes inside parens (e.g. "(2- Solo)") must stay intact.
     body = re.sub(r'\s*\(\s*\)\s*', ' ', body)  # empty parens
     body = re.sub(r'\s+', ' ', body).strip(' -·:|')
-    body = re.sub(r'\s*-\s*', ' - ', body).strip(' -')
     if not body:
         # Input was effectively just the vendor token (possibly wrapped
         # in parens) — return it bare rather than echoing back "VENDOR · ".

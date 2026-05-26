@@ -39,29 +39,25 @@ from sax_intonation_gui import _promote_vendor_prefix  # noqa: E402
 # ---------------------------------------------------------------------------
 CASES = [
     # ------------------------------------------------------------------
-    # 1. Vendor wrapped in parentheses — hoisted, parens stripped.
-    #    This is the primary use-case that motivated the function.
+    # 1. Vendor wrapped in parentheses — hoisted; non-vendor paren content
+    #    is preserved (v0.6 paren-content-preservation change).
     # ------------------------------------------------------------------
     pytest.param(
         'vendor_in_parens',
         'Headset (FIIO DSP Audio)',
-        'FIIO · Headset',
+        'FIIO · Headset (DSP Audio)',
     ),
 
     # ------------------------------------------------------------------
     # 2. Windows numeric-prefix in parens: "(2- Scarlett Solo)".
-    #    v0.5.7.4 introduced Step 2 (bare-vendor stripping from the body).
-    #    The entire paren block is dropped when it contains a vendor token,
-    #    so "Solo" and "2-" are lost along with "Scarlett".
-    #
-    # NOTE: Phase-1 fix needed — ideally the non-vendor parts of the paren
-    # body ("2- Solo") would be re-attached: "SCARLETT · Microphone (2- Solo)".
-    # Current behaviour locks at "SCARLETT · Microphone".
+    #    v0.6: paren-content preservation keeps "2- Solo" intact after
+    #    the Scarlett token is stripped, instead of dropping the whole
+    #    paren block as the v0.5.7.4 code did.
     # ------------------------------------------------------------------
     pytest.param(
         'vendor_in_parens_with_numeric_prefix',
         'Microphone (2- Scarlett Solo)',
-        'SCARLETT · Microphone',
+        'SCARLETT · Microphone (2- Solo)',
     ),
 
     # ------------------------------------------------------------------
@@ -105,12 +101,13 @@ CASES = [
 
     # ------------------------------------------------------------------
     # 7. Mixed-case vendor in parens — regex is IGNORECASE; vendor is
-    #    always uppercased in the output.
+    #    always uppercased in the output.  v0.6: "(fiio dsp)" -> "(dsp)"
+    #    instead of being dropped, since "dsp" is non-vendor content.
     # ------------------------------------------------------------------
     pytest.param(
         'mixed_case_vendor_in_parens',
         'headset (fiio dsp)',
-        'FIIO · headset',
+        'FIIO · headset (dsp)',
     ),
 
     # ------------------------------------------------------------------
@@ -147,18 +144,14 @@ CASES = [
 
     # ------------------------------------------------------------------
     # 11. Vendor as a substring of a non-vendor word — "FIIOX" is not a
-    #     vendor token, but VENDOR_REGEX has no word boundary around "fiio",
-    #     so it matches "FIIO" inside "FIIOX".  Step 2 uses \b, so the bare
-    #     "FIIO" inside "FIIOX" is NOT stripped from the body (word boundary
-    #     prevents it).  Result: "FIIO · Studio FIIOX".
-    #
-    # NOTE: Phase-1 fix needed — VENDOR_REGEX should use \b word boundaries
-    #     around each vendor token so "FIIOX" is not treated as a FIIO device.
+    #     vendor token.  v0.6: VENDOR_REGEX now wraps the alternation in
+    #     \b boundaries, so "FIIO" no longer matches inside "FIIOX" and
+    #     the function returns the name unchanged.
     # ------------------------------------------------------------------
     pytest.param(
         'vendor_as_substring_of_longer_word',
         'Studio FIIOX',
-        'FIIO · Studio FIIOX',
+        'Studio FIIOX',
     ),
 
     # ------------------------------------------------------------------
@@ -205,21 +198,16 @@ CASES = [
     ),
 
     # ------------------------------------------------------------------
-    # 15. "UMC202HD (Behringer)" — compound word-boundary bug:
-    #     VENDOR_REGEX has no word boundary around "umc", so it matches
-    #     the prefix of "UMC202HD".  "UMC" is hoisted as vendor, and
-    #     because \b in Step 2 does NOT fire (UMC202HD has no boundary
-    #     after the C), "UMC202HD" survives in the body, producing the
-    #     redundant "UMC · UMC202HD".
-    #
-    # NOTE: Phase-1 fix needed — adding \b around vendor tokens in
-    #     VENDOR_REGEX would let "behringer" win here, giving
-    #     "BEHRINGER · UMC202HD".  Lock current behaviour.
+    # 15. "UMC202HD (Behringer)" — v0.6: \b around "umc" means it no
+    #     longer matches inside "UMC202HD" (no boundary after the C).
+    #     "Behringer" inside the parens now wins, the paren-content
+    #     preservation rule drops the now-empty parens, and the result
+    #     is "BEHRINGER · UMC202HD".
     # ------------------------------------------------------------------
     pytest.param(
-        'umc_prefix_grabbed_over_behringer',
+        'umc_no_longer_matches_inside_umc202hd',
         'UMC202HD (Behringer)',
-        'UMC · UMC202HD',
+        'BEHRINGER · UMC202HD',
     ),
 ]
 
