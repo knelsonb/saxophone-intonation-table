@@ -8,6 +8,7 @@ which results in a fully-imported sounddevice that crashes the moment an
 input stream is started. ``collect_dynamic_libs`` + ``collect_data_files``
 explicitly grab everything sounddevice ships."""
 
+import sys
 from pathlib import Path
 from PyInstaller.utils.hooks import (
     collect_dynamic_libs, collect_data_files, collect_submodules,
@@ -15,6 +16,18 @@ from PyInstaller.utils.hooks import (
 
 block_cipher = None
 HERE = Path(SPECPATH).resolve()
+
+# Icon selection: Windows wants .ico, macOS auto-converts a PNG to .icns at
+# build time (PyInstaller handles it via Pillow), Linux ignores the icon
+# parameter entirely (Linux apps surface their icon through the .desktop
+# file, not the ELF). Passing the wrong format here is silent on macOS/Linux
+# in old PyInstaller versions but produces a bundle with no icon.
+if sys.platform.startswith('win'):
+    ICON_PATH = str(HERE / 'assets' / 'icon.ico')
+elif sys.platform == 'darwin':
+    ICON_PATH = str(HERE / 'assets' / 'icon.png')
+else:
+    ICON_PATH = None
 
 sd_binaries = collect_dynamic_libs('sounddevice')
 sd_datas = collect_data_files('sounddevice', include_py_files=False)
@@ -62,5 +75,5 @@ exe = EXE(
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,
-    icon=str(HERE / 'assets' / 'icon.ico'),
+    icon=ICON_PATH,
 )

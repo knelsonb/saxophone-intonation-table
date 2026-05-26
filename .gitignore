@@ -1,8 +1,29 @@
+# Python
 __pycache__/
 *.pyc
-%USERPROFILE%/
+*.pyo
+*.egg-info/
+.pytest_cache/
+
+# Virtualenvs
+.venv/
+venv/
+env/
+
+# Build / distribution
 build/
 dist/
 *.spec.bak
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Generator scratch
 tools/musescore/_notes.txt
 tools/musescore/_generated_ranges.py
