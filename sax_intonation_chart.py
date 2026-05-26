@@ -213,6 +213,33 @@ def _draw_bars(p: QPainter,
             label, mean, std, count = row[0], row[1], row[2], row[3]
             freq = 0.0
         cx = area.left() + slot * (i + 0.5)
+        # v0.5.7.9: skip bar/whisker geometry when mean is non-finite.
+        # _cent_to_y(NaN) yields NaN; passing NaN to drawRoundedRect is
+        # undefined Qt behavior. Still render the note label so the gap
+        # is explicable, plus a "(no data)" subtitle under it.
+        if not math.isfinite(mean):
+            p.setPen(QColor(210, 210, 220))
+            if bar_w < 22:
+                p.save()
+                p.translate(cx, area.bottom() + 8)
+                p.rotate(-45)
+                p.drawText(QRectF(-60, -6, 60, 14),
+                           Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                           label)
+                p.restore()
+            else:
+                p.drawText(QRectF(cx - slot / 2, area.bottom() + 6,
+                                  slot, 16),
+                           Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
+                           label)
+            p.setPen(QColor(140, 140, 160))
+            p.setFont(_mono(8))
+            p.drawText(QRectF(cx - slot / 2, area.bottom() + 26,
+                              slot, 14),
+                       Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
+                       "(no data)")
+            p.setFont(_mono(9))
+            continue
         top_y = _cent_to_y(mean, area)
         # Color by magnitude — same thresholds as the in-app tuner widget.
         m = abs(mean)

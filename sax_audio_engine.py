@@ -1094,10 +1094,16 @@ class AudioEngine:
         def cb(indata, frames, ti, st):
             try:
                 if st is not None:
+                    # v0.5.7.9: lock the counter increments. += is GIL-atomic
+                    # against torn values but can still drop increments under
+                    # contention with get_diagnostics() reads. Lock is held
+                    # for microseconds — no audio glitch risk.
                     if getattr(st, 'input_overflow', False):
-                        engine._overflow_count += 1
+                        with engine._lock:
+                            engine._overflow_count += 1
                     if getattr(st, 'input_underflow', False):
-                        engine._underflow_count += 1
+                        with engine._lock:
+                            engine._underflow_count += 1
                 mono = indata[:, 0]
                 # Update the ring buffer + read filter snapshot under
                 # the lock. YIN runs outside the lock.
@@ -1117,6 +1123,13 @@ class AudioEngine:
                 params = FILTER_PRESETS.get(mode, FILTER_PRESETS['normal'])
 
                 rms = math.sqrt(float(np.mean(buf ** 2)))
+                # CPython GIL note: last_rms_db / last_ap / last_freq are
+                # written unlocked deliberately. Simple float assignments are
+                # atomic under the GIL, so get_diagnostics() reads either the
+                # old or new value — never a torn intermediate. Taking the
+                # lock here would cost a frame-rate acquire just to write
+                # three floats; the diagnostic readout tolerates one-frame
+                # staleness.
                 engine.last_rms_db = 20.0 * math.log10(max(rms, 1e-9))
 
                 if rms < params['rms_floor']:
