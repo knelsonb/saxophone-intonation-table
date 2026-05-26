@@ -272,6 +272,12 @@ class MeasurementLog:
             return list(self._measurements)
 
     # -- import -----------------------------------------------------------
+    # Caps to prevent a malicious or accidental gigabyte CSV from blowing
+    # out memory before the row loop notices.  50 MB / 500 k rows is well
+    # above any plausible legitimate practice-session export.
+    MAX_IMPORT_BYTES = 50 * 1024 * 1024
+    MAX_IMPORT_ROWS = 500_000
+
     RAW_CSV_HEADER = (
         "timestamp", "run_id", "run_started_at", "instrument", "nickname",
         "a4_hz", "midi_sounding", "sounding_note", "midi_fingered",
@@ -297,6 +303,18 @@ class MeasurementLog:
         re-importing the same file.
         """
         path = Path(path)
+        # v0.6: refuse outsized files before we open them — protects the
+        # user from a gigabyte CSV self-DoS.  stat() failure (e.g. file
+        # doesn't exist) is silently let through; the open() below will
+        # raise the same FileNotFoundError it always has.
+        try:
+            size = path.stat().st_size
+        except OSError:
+            size = 0
+        if size > self.MAX_IMPORT_BYTES:
+            raise ValueError(
+                f"CSV too large ({size:,} bytes); import limit is "
+                f"{self.MAX_IMPORT_BYTES:,} bytes.")
         # v0.5.7.7: utf-8-sig transparently strips a UTF-8 BOM if
         # present and behaves identically to utf-8 otherwise. Excel
         # adds a BOM on Save As CSV on Windows; without this, a
@@ -324,8 +342,14 @@ class MeasurementLog:
 
             new_runs: dict[str, RunMeta] = {}
             new_measurements: list[Measurement] = []
+            rows_seen = 0
 
             for row in reader:
+                rows_seen += 1
+                if rows_seen > self.MAX_IMPORT_ROWS:
+                    raise ValueError(
+                        f"CSV exceeds {self.MAX_IMPORT_ROWS:,} rows; "
+                        "import refused.")
                 expected_len = (len(self.RAW_CSV_HEADER_LEGACY) if legacy
                                 else len(self.RAW_CSV_HEADER))
                 if len(row) != expected_len:
