@@ -53,6 +53,7 @@ from sax_i18n import STRINGS
 from sax_session_state import SessionStateController
 from sax_export import ExportController
 from sax_table import TableController
+from sax_instrument_controller import InstrumentController
 
 APP_NAME = 'Intonation Analyzer'
 APP_VERSION = '0.5.8'
@@ -2211,6 +2212,16 @@ class MainWindow(QMainWindow):
             get_display_mode=lambda: self.display,
             get_a4=lambda: float(self._a4_combo.currentText()),
         )
+        # Phase-5 extraction: family/instrument selection, nickname editing,
+        # per-instrument range editor, custom-instrument registration, and
+        # the autotune-from-history flow live on InstrumentController.
+        # The controller itself is instantiated INSIDE _build_ui (after
+        # every widget it references exists) — see the end of _build_ui
+        # for the construction site. MainWindow keeps thin slot-shape
+        # wrappers so Qt signal/slot wiring is unchanged; the on_*
+        # callbacks let MainWindow do its own post-change refresh
+        # (OOR counter reset, seed expected notes, refresh table)
+        # without the controller reaching into table or stats territory.
         self._restore_session_state()
         self._seed_expected_notes()
         self._update_record_btn_style()
@@ -2355,9 +2366,10 @@ class MainWindow(QMainWindow):
         # same handlers + persistence — the only thing that changed
         # is the parent layout.
 
-        # Select the saxophone family + the default instrument (Bb tenor since v0.5.7.1).
-        self._select_family_for_instrument(self.instrument)
-        self._populate_instrument_combo(select_key=self.instrument)
+        # Select the saxophone family + the default instrument (Bb tenor
+        # since v0.5.7.1). DEFERRED to the end of _build_ui so the
+        # InstrumentController exists by the time _on_instr_changed fires
+        # — see the construction site near the bottom of this method.
 
         # Anzeige
         self._grp_disp = QGroupBox(self._t('grp_display'))
@@ -2656,6 +2668,34 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle(self._t('window_title'))
 
+        # Phase-5 extraction: InstrumentController owns family/instr/nickname
+        # work, the range editor, custom-instrument registration, and
+        # autotune. Instantiated here at the END of _build_ui because every
+        # widget it captures (family_combo, instr_combo, nick_edit,
+        # a4_combo) now exists. The wrappers on MainWindow (defined
+        # further down) delegate to this controller; they MUST NOT be
+        # invoked before this point.
+        self._instr_ctrl = InstrumentController(
+            self,
+            cfg=self._cfg, engine=self._engine, log=self._log, t_func=self._t,
+            family_combo=self._family_combo,
+            instr_combo=self._instr_combo,
+            nick_edit=self._nick_edit,
+            a4_combo=self._a4_combo,
+            get_stats=lambda: self.stats,
+            get_display_mode=lambda: self.display,
+            get_lang=lambda: self.lang,
+            set_instrument=lambda key: setattr(self, 'instrument', key),
+            set_a4=self._instr_set_a4,
+            on_instrument_changed=self._on_instrument_changed_external,
+            on_range_changed=self._on_range_changed_external,
+            on_a4_changed=self._on_a4_changed_external,
+        )
+        # Now safe to populate the family + sub-instrument combos via the
+        # controller (their _on_* wrappers delegate here).
+        self._select_family_for_instrument(self.instrument)
+        self._populate_instrument_combo(select_key=self.instrument)
+
     def _table_headers(self):
         return [self._t('col_fingered'), self._t('col_sounding'),
                 self._t('col_mean'), self._t('col_std'),
@@ -2925,54 +2965,34 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self._refresh_table)
 
     # ── Instrument / Anzeige / A4 ─────────────────────────────────────────────
+    # Phase-5 extraction: the family/instr/nickname slots, range editor,
+    # custom-instrument registration, and autotune flow now live on
+    # InstrumentController. The MainWindow methods below remain as thin
+    # delegating wrappers so the Qt signal/slot wiring in _build_ui is
+    # untouched. on_*_external below are the post-change refresh hooks
+    # the controller calls back so MainWindow updates OOR counter,
+    # info banner, expected-note seed, and table.
+
     def _on_family_changed(self, _idx):
-        """Family combo changed → repopulate the sub-instrument combo with
-        the new family's entries and select the first one."""
-        self._populate_instrument_combo(select_key=None)
+        self._instr_ctrl.on_family_changed(_idx)
 
     def _populate_instrument_combo(self, select_key: str | None) -> None:
-        family_key = self._family_combo.currentData()
-        if family_key is None:
-            return
-        self._instr_combo.blockSignals(True)
-        self._instr_combo.clear()
-        target_idx = 0
-        for i, (key, name_de, name_en) in enumerate(instruments_in(family_key)):
-            label = name_de if self.lang == 'de' else name_en
-            self._instr_combo.addItem(label, key)
-            if key == select_key:
-                target_idx = i
-        if self._instr_combo.count():
-            self._instr_combo.setCurrentIndex(target_idx)
-        self._instr_combo.blockSignals(False)
-        if self._instr_combo.count():
-            self._on_instr_changed(self._instr_combo.currentIndex())
+        self._instr_ctrl.populate_instrument_combo(select_key)
 
     def _select_family_for_instrument(self, instrument_key: str) -> None:
-        """Move the family combo to the family that contains the given key,
-        without triggering a sub-instrument repopulate."""
-        family_key = instrument_family_of(instrument_key)
-        if family_key is None:
-            return
-        for i in range(self._family_combo.count()):
-            if self._family_combo.itemData(i) == family_key:
-                self._family_combo.blockSignals(True)
-                self._family_combo.setCurrentIndex(i)
-                self._family_combo.blockSignals(False)
-                return
+        self._instr_ctrl.select_family_for_instrument(instrument_key)
 
     def _on_instr_changed(self, idx):
-        key = self._instr_combo.itemData(idx)
-        if key is None:
-            return
-        # Family-combo scrubs re-populate the sub-instrument combo, which
-        # auto-fires this handler even when the resolved key matches the
-        # already-active instrument. Bail out so we don't spawn a fresh run
-        # for every flicker through the family list.
-        if key == self.instrument:
-            return
-        self.instrument = key
-        self._engine.instr_key = self.instrument
+        self._instr_ctrl.on_instr_changed(idx)
+
+    def _open_range_editor(self) -> None:
+        self._instr_ctrl.open_range_editor()
+
+    def _on_instrument_changed_external(self) -> None:
+        """Called by InstrumentController after it has changed the active
+        instrument key (combo select). Owns the side effects that don't
+        belong inside the controller: wrong-instrument detector reset,
+        info-banner hide, expected-note seed, table refresh."""
         # v0.6 Phase-4 (Item 3): the wrong-instrument detector is anchored
         # to the *selected* instrument. New selection ⇒ counter resets and
         # the one-shot prompt becomes eligible to fire again.
@@ -2986,36 +3006,34 @@ class MainWindow(QMainWindow):
         # out-of-range notes (overtones, accidentals) appear automatically
         # via the existing _on_note path.
         self._seed_expected_notes()
-        # Instrument switch ⇒ new run, so per-run aggregates stay coherent.
-        # Empty predecessor runs are coalesced inside `start_run`.
-        if AUDIO_OK and self._recording:
-            self._log.start_run(instrument=self.instrument,
-                                a4_hz=self._engine.a4,
-                                label=self._nick_edit.text().strip())
         self._refresh_table()
 
-    def _open_range_editor(self) -> None:
-        """Open the per-instrument range editor for the active instrument.
-        Accepts → persist via sax_instruments override DB → refresh table
-        so the new bounds take effect immediately."""
-        key = self.instrument
-        cur_lo, cur_hi = sax_instruments.fingered_range(key)
-        baked_lo, baked_hi = sax_instruments.baked_fingered_range(key)
-        has_baked = sax_instruments.has_baked_range(key)
-        name = instrument_display_name(key, self.lang)
-        # v0.5.7.1: pass display mode + instrument transposition so the
-        # dialog can render values in whichever notation the user is
-        # already reading on the matrix. File format stays fingered.
-        transp = TRANSP_MAP.get(key, 0)
-        dlg = RangeEditorDialog(
-            self, self._t, key, name,
-            cur_lo, cur_hi, baked_lo, baked_hi, has_baked,
-            display=self.display, transp=transp)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            # Re-seed expected notes with the new bounds so the table
-            # immediately reflects what changed.
-            self._seed_expected_notes()
-            self._refresh_table()
+    def _on_range_changed_external(self) -> None:
+        """Called by InstrumentController after the per-instrument range
+        editor accepts new bounds. The instrument *key* hasn't changed,
+        so we do NOT reset the wrong-instrument detector — just re-seed
+        expected notes against the new bounds and repaint."""
+        self._seed_expected_notes()
+        self._refresh_table()
+
+    def _on_a4_changed_external(self) -> None:
+        """Called by InstrumentController after the autotune flow has
+        applied a new A4. The autotune body already cleared self.stats
+        under the lock; here we just refresh the table so the new
+        baseline paints."""
+        self._refresh_table()
+
+    def _instr_set_a4(self, hz: float) -> None:
+        """Setter callback used by InstrumentController's autotune flow.
+        Mirrors the v0.5.x in-line sequence: block the combo's signal so
+        _on_a4_changed does NOT fire (the autotune flow does its own
+        stats reset + refresh via on_a4_changed), set the index, set the
+        engine A4."""
+        hz_int = int(hz)
+        self._a4_combo.blockSignals(True)
+        self._a4_combo.setCurrentIndex(hz_int - 430)
+        self._a4_combo.blockSignals(False)
+        self._engine.a4 = float(hz_int)
 
     def _seed_expected_notes(self) -> None:
         """Populate self.stats with empty NoteStats for the current
@@ -3222,54 +3240,11 @@ class MainWindow(QMainWindow):
         self._refresh_table()
 
     def _on_nickname_changed(self) -> None:
-        """User finished editing the nickname. Stamp the new label onto the
-        current run so the next CSV export and table summary pick it up."""
-        nickname = self._nick_edit.text().strip()
-        if AUDIO_OK and self._recording:
-            self._log.set_current_run_metadata(label=nickname)
+        self._instr_ctrl.on_nickname_changed()
 
     def _on_add_custom(self) -> None:
-        """Prompt the user for a custom instrument and register it."""
-        result = self._ask_custom_instrument()
-        if result is None:
-            return
-        name, transp = result
-        # Build a stable key: 'custom_' + slugified name. If the slug collides
-        # with an existing custom (different display name but same slug, e.g.
-        # 'Mezzo' vs 'mezzo'), append a numeric suffix instead of silently
-        # overwriting the older entry — old CSV exports may still reference
-        # the original transposition for that key.
-        base = 'custom_' + ''.join(
-            c.lower() if c.isalnum() else '_' for c in name).strip('_')[:32]
-        if not base or base == 'custom_':
-            return
-        existing_keys = set(build_transp_map().keys())
-        key = base
-        suffix = 2
-        while key in existing_keys:
-            # If the user re-typed the EXACT same display name, treat it as
-            # an intentional re-add (let register_custom replace the row).
-            existing = [c for c in sax_config.load_customs() if c.key == key]
-            if existing and existing[0].name_en == name:
-                break
-            key = f"{base}_{suffix}"
-            suffix += 1
-        register_custom(key, transp, name, name)
-        _rebuild_transp_map()
-        # Persist for next session.
-        customs = sax_config.load_customs()
-        customs = [c for c in customs if c.key != key]
-        customs.append(sax_config.CustomInstrument(
-            key=key, transp=transp, name_de=name, name_en=name))
-        sax_config.save_customs(customs)
-        # Refresh combos and select the new instrument.
-        self._family_combo.blockSignals(True)
-        self._family_combo.clear()
-        for fk, de, en in instrument_families():
-            self._family_combo.addItem(de if self.lang == 'de' else en, fk)
-        self._family_combo.blockSignals(False)
-        self._select_family_for_instrument(key)
-        self._populate_instrument_combo(select_key=key)
+        self._instr_ctrl.on_add_custom()
+
 
     def _add_dialog_lang_toggle(self, dlg, layout, on_change=None):
         """Drop a tiny DE | EN toggle at the top of any modal dialog so the
@@ -3388,64 +3363,9 @@ class MainWindow(QMainWindow):
                                         label=self._nick_edit.text().strip())
         sax_config.save_config(self._cfg)
 
-    def _ask_custom_instrument(self) -> tuple[str, int] | None:
-        dlg = QDialog(self)
-        dlg.setProperty('_lang_title_key', 'custom_dlg_title')
-        dlg.setWindowTitle(self._t('custom_dlg_title'))
-        dlg.setMinimumWidth(380)
-        dlg.setStyleSheet("""
-            QDialog { background: #1a1a2e; color: #ddd; }
-            QLabel  { color: #bbb; font-size: 13px; }
-            QLineEdit, QSpinBox {
-                background: #252540; border: 1px solid #444; border-radius: 5px;
-                color: #eee; padding: 6px 10px; font-size: 13px;
-            }
-            QLineEdit:focus, QSpinBox:focus { border: 1px solid #6699cc; }
-            QDialogButtonBox QPushButton {
-                background: #2c5282; color: white; border: none;
-                border-radius: 5px; padding: 6px 18px; font-size: 13px;
-            }
-        """)
-        layout = QVBoxLayout(dlg)
-        layout.setSpacing(10)
-        layout.setContentsMargins(20, 14, 20, 16)
-        info = QLabel(self._t('custom_dlg_info'))
-        info.setStyleSheet('color: #888; font-size: 12px;')
-        info.setWordWrap(True)
-        form = QFormLayout()
-        form.setSpacing(8)
-        edit_name = QLineEdit()
-        edit_name.setPlaceholderText('e.g. Eb Mezzo-Soprano')
-        name_lbl = QLabel(self._t('custom_lbl_name'))
-        form.addRow(name_lbl, edit_name)
-        spin_transp = QSpinBox()
-        spin_transp.setRange(-36, 36)
-        spin_transp.setValue(0)
-        transp_lbl = QLabel(self._t('custom_lbl_transp'))
-        form.addRow(transp_lbl, spin_transp)
-        btns = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok
-            | QDialogButtonBox.StandardButton.Cancel)
-        btns.accepted.connect(dlg.accept)
-        btns.rejected.connect(dlg.reject)
-
-        def relabel():
-            info.setText(self._t('custom_dlg_info'))
-            name_lbl.setText(self._t('custom_lbl_name'))
-            transp_lbl.setText(self._t('custom_lbl_transp'))
-
-        self._add_dialog_lang_toggle(dlg, layout, on_change=relabel)
-        layout.addWidget(info)
-        layout.addLayout(form)
-        layout.addWidget(btns)
-        if dlg.exec() != QDialog.DialogCode.Accepted:
-            return None
-        name = edit_name.text().strip()
-        if not name:
-            QMessageBox.warning(self, self._t('err_title'),
-                                self._t('custom_err_name'))
-            return None
-        return (name, int(spin_transp.value()))
+    # _ask_custom_instrument moved to InstrumentController in Phase 5.
+    # It was only invoked by _on_add_custom (also extracted), so no
+    # MainWindow wrapper is retained — the controller calls itself.
 
     def _on_disp_changed(self, idx):
         self.display = ['griff', 'klingend'][idx]
@@ -3611,55 +3531,7 @@ class MainWindow(QMainWindow):
 
     # ── Kammerton ermitteln ───────────────────────────────────────────────────
     def _on_autotune(self):
-        with self._lock:
-            items = [(st.mean, st.n) for st in self.stats.values() if st.n >= 5]
-            # v0.6 Phase-4 (Item 6): count progress so the blocker is
-            # actionable. ``qualified`` = notes meeting the ≥5 threshold;
-            # ``touched`` = distinct notes that have ANY samples. Both are
-            # shown to the user when there isn't enough data yet.
-            qualified = len(items)
-            touched = sum(1 for st in self.stats.values() if st.n > 0)
-
-        if len(items) < 3:
-            msg = (self._t('autotune_nodata') + '\n\n'
-                   + self._t('autotune_nodata_progress',
-                              qualified=qualified, touched=touched))
-            QMessageBox.warning(self, self._t('autotune_title'), msg)
-            return
-
-        means   = np.array([m for m, _ in items])
-        weights = np.array([math.sqrt(n) for _, n in items])
-        order   = np.argsort(means)
-        cumw    = np.cumsum(weights[order])
-        offset_ct     = float(means[order][np.searchsorted(cumw, cumw[-1] / 2.0)])
-        mean_weighted = float(np.sum(means * weights) / np.sum(weights))
-
-        a4_current    = self._engine.a4
-        a4_optimal    = a4_current * (2.0 ** (offset_ct / 1200.0))
-        a4_rounded    = round(a4_optimal)
-        a4_clamped    = max(430, min(450, a4_rounded))
-
-        sign  = '+' if offset_ct    >= 0 else ''
-        sign2 = '+' if mean_weighted >= 0 else ''
-        msg   = self._t('autotune_result',
-                         notes=len(items), sign=sign, offset=offset_ct,
-                         sign2=sign2, mean=mean_weighted,
-                         current=a4_current, optimal=a4_optimal, rounded=a4_rounded)
-        if a4_clamped != a4_rounded:
-            msg += self._t('autotune_clamp', rounded=a4_rounded, clamped=a4_clamped)
-        msg += self._t('autotune_confirm', clamped=a4_clamped)
-
-        if QMessageBox.question(
-            self, self._t('autotune_title'), msg,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        ) == QMessageBox.StandardButton.Yes:
-            self._a4_combo.blockSignals(True)
-            self._a4_combo.setCurrentIndex(a4_clamped - 430)
-            self._a4_combo.blockSignals(False)
-            self._engine.a4 = float(a4_clamped)
-            with self._lock:
-                self.stats.clear()
-            self._refresh_table()
+        self._instr_ctrl.on_autotune()
 
     # ── Instrument-Modell-Dialog ──────────────────────────────────────────────
     # The maker/model prompt was extracted to ExportController in Phase 5;
