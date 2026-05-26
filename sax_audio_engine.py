@@ -84,16 +84,27 @@ MAX_FREQ = 1400.0
 YIN_THRESHOLD = 0.12
 A4_DEFAULT = 440.0
 
-# Filter-mode presets. Each callback fires every HOP_MS (~46 ms).
+# Filter-mode presets. Each callback fires every HOP_MS (~46 ms at 44.1k,
+# proportionally faster at higher sample rates), so `confirm` and
+# `edge_hops` are quantized to that grid.
+#
+# Calibrated for three working-musician use cases:
+#   fast    — live play / scale drills / immediate per-note feedback
+#   normal  — practice & tuning long tones (the default)
+#   slow    — instrument setup, repair, cataloging intonation maps
+#
+# Lock latency  ~ confirm * HOP_MS + edge_hops * HOP_MS
+# Smoothing     ~ window * HOP_MS over the same-MIDI window
+#
 #   window     — recent valid detections kept for confirmation/median
 #   confirm    — required matching-MIDI detections in the window
 #   yin_thr    — YIN aperiodicity ceiling (lower = stricter)
 #   rms_floor  — RMS gate below which the frame is silence
 #   edge_hops  — attack/release transient guard (in hops)
 FILTER_PRESETS = {
-    'fast':   dict(window=2, confirm=2, yin_thr=0.16, rms_floor=8e-5,  edge_hops=1),
-    'normal': dict(window=4, confirm=3, yin_thr=0.11, rms_floor=1.5e-4, edge_hops=1),
-    'slow':   dict(window=7, confirm=5, yin_thr=0.08, rms_floor=3e-4,  edge_hops=2),
+    'fast':   dict(window=3,  confirm=2, yin_thr=0.15, rms_floor=8e-5,  edge_hops=1),
+    'normal': dict(window=5,  confirm=3, yin_thr=0.10, rms_floor=1.5e-4, edge_hops=2),
+    'slow':   dict(window=10, confirm=6, yin_thr=0.07, rms_floor=3e-4,  edge_hops=4),
 }
 FILTER_MODE_DEFAULT = 'normal'
 

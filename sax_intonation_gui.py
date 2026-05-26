@@ -51,7 +51,7 @@ from sax_instruments import (
 import sax_config
 
 APP_NAME = 'Intonation Analyzer'
-APP_VERSION = '0.5.7.9'
+APP_VERSION = '0.5.8'
 
 # v0.5.4: AudioEngine + pitch detection + filter presets live in their own
 # module so the engine has a state machine, host-API fallback chain, and
@@ -102,10 +102,10 @@ STRINGS = {
         'allow_oor_tip':    'Aktiviert: Töne au\u00dferhalb des Instrumentenumfangs werden ignoriert.\nDeaktiviert (Standard): Jeder gespielte Ton wird aufgezeichnet; der Umfang dient nur als Anzeigehilfe.',
         'nickname_tip':     'Spitzname (z.B. "Tenor #1")',
         'grp_filter':       'Reaktion',
-        'filter_fast':      'Schnell',
-        'filter_normal':    'Normal',
-        'filter_slow':      'Langsam',
-        'filter_tip':       'Tonhöhen-Filter.\nSchnell: minimale Glättung, reaktionsfreudige Anzeige.\nNormal (Standard): ausgewogen.\nLangsam: starke Glättung, ideal für lange Töne und Stimmanalyse.',
+        'filter_fast':      'Schnell (Live-Spiel)',
+        'filter_normal':    'Normal (Üben)',
+        'filter_slow':      'Langsam (Einrichtung/Reparatur)',
+        'filter_tip':       'Tonhöhen-Glättung.\nSchnell: ~140 ms Reaktion, minimale Glättung — Rückmeldung beim Tonleiterspiel.\nNormal (Standard): ~230 ms Reaktion, Anstoßgeräusch unterdrückt — lange Töne stimmen.\nLangsam: ~460 ms Reaktion, tiefe Mittelung — Stimmung für Instrumenten-Einrichtung und Reparatur.\nAlle Modi schneiden Anblas-Chiff und Auslass-Pitch-Drift weg; Langsam schneidet am meisten.',
         'min_n_label':      'Mindest-Messungen pro Ton:',
         'min_n_tip':        'Töne mit weniger als dieser Anzahl Messungen werden ausgeblendet.\nVerhindert, dass kurze Versehen die Tabelle füllen.',
         # Diagnose-Panel (Spektrogramm + Live-Werte)
@@ -372,10 +372,10 @@ STRINGS = {
         'allow_oor_tip':    'Off (default): every played note is recorded; the instrument range is shown only as a display guide.\nOn: notes outside the instrument range are ignored.',
         'nickname_tip':     'Nickname (e.g. "Tenor #1")',
         'grp_filter':       'Response',
-        'filter_fast':      'Fast',
-        'filter_normal':    'Normal',
-        'filter_slow':      'Slow',
-        'filter_tip':       'Pitch-detection smoothing.\nFast: minimal smoothing, snappy tuner.\nNormal (default): balanced.\nSlow: heavy smoothing, ideal for long tones and tuning analysis.\nAll modes truncate attack and release transients.',
+        'filter_fast':      'Fast (live play)',
+        'filter_normal':    'Normal (practice)',
+        'filter_slow':      'Slow (setup/repair)',
+        'filter_tip':       'Pitch-detection response.\nFast: ~140 ms lock, minimal smoothing — feedback while playing scales.\nNormal (default): ~230 ms lock, attack transient suppressed — tuning long tones.\nSlow: ~460 ms lock, deep averaging — measuring true sustained pitch for instrument setup and repair.\nAll modes truncate attack chiff and release pitch-drop; Slow truncates the most.',
         'min_n_label':      'Min measurements per note:',
         'min_n_tip':        'Notes with fewer than this many measurements are hidden.\nKeeps brief slips out of the analysis.',
         # Diagnostics panel (spectrogram + live values)
