@@ -207,14 +207,13 @@ def test_no_device(msg, expected):
 
 
 # ---------------------------------------------------------------------------
-# Latent '-1' substring hazard — lock in current behaviour
+# '-1' substring boundary — Phase 1 tightened the match.
 #
-# The bare '-1' check in branch 3 matches ANY string whose text contains the
-# two-character sequence '-' '1', including error codes like -10, -12, -100,
-# -1000.  This is broader than intended but is the current documented
-# contract; tests here ensure the behaviour is not silently changed.
-# A Phase-1 follow-up should tighten the pattern (e.g. r'\b-1\b' or an
-# exact equality check).
+# The old branch used a plain substring 'in' check for '-1', which over-
+# matched on '-10', '-12', '-100', '-1000' and routed them to NO_DEVICE.
+# The new regex `(?:^|\D)-1(?!\d)` matches '-1' only when it stands alone
+# (not followed by another digit), so larger negative codes correctly fall
+# through to HOSTAPI_FAILURE.
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("msg", [
@@ -226,14 +225,20 @@ def test_no_device(msg, expected):
     "error code -12",
 ], ids=["neg_10", "neg_12", "neg_100", "neg_1000",
         "neg_10_in_phrase", "neg_12_in_phrase"])
-def test_no_device_false_positive_via_minus_one_substring(msg):
-    """Strings containing '-1' as a substring (e.g. '-10', '-12') currently
-    route to NO_DEVICE because the branch uses a plain 'in' check for '-1'.
+def test_minus_one_no_longer_overmatches(msg):
+    """Larger negative codes containing '-1' as a prefix no longer route
+    to NO_DEVICE; they fall through to the HOSTAPI_FAILURE fallback."""
+    assert _classify(FakeErr(msg)) == AudioEngineError.HOSTAPI_FAILURE
 
-    This test locks in the current behaviour.  If you are reading this
-    because a test broke: the fix is to tighten the pattern in
-    _classify_error, not to update this test silently.
-    """
+
+@pytest.mark.parametrize("msg", [
+    "-1",
+    "error -1",
+    "open failed: -1",
+], ids=["bare", "in_phrase_leading", "in_phrase_trailing"])
+def test_bare_minus_one_still_routes_to_no_device(msg):
+    """The standalone '-1' code (not followed by another digit) is the
+    legitimate PortAudio 'no device' signal — must still route here."""
     assert _classify(FakeErr(msg)) == AudioEngineError.NO_DEVICE
 
 
