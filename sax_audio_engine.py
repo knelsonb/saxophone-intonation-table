@@ -452,6 +452,19 @@ class AudioEngine:
                 host_api=self.active_device.host_api if self.active_device else '',
             )
 
+    def get_active_device(self) -> Optional[DeviceInfo]:
+        """Thread-safe snapshot of the currently-active device.
+
+        v0.5.7.1: the GUI used to read ``engine.active_device`` directly
+        from the Qt thread while the audio worker rewrote it on a
+        successful open. Bare attribute reads are atomic in CPython, but
+        the cached DeviceInfo's fields are not — and downstream callers
+        (samplerate-changed handler) immediately re-derive
+        ``DeviceSelection`` from it. Take the lock for the read and
+        return whatever was last installed."""
+        with self._lock:
+            return self.active_device
+
     def set_samplerate_pref(self, pref: str) -> None:
         """Update the in-memory rate preference. Does NOT reopen the stream;
         the caller (GUI) decides whether to call ``open_device`` after.
@@ -577,45 +590,58 @@ class AudioEngine:
             return
         if self._transitioning:
             return
-        # Force re-enumeration; do NOT trust the cached snapshot.
-        devices = query_input_devices()
-        self.last_devices_refresh_at = datetime.datetime.now()
-        self._last_device_snapshot = self._snapshot_key(devices)
-        if self.signals is not None:
-            try:
-                self.signals.devices_changed.emit(devices)
-            except Exception:
-                pass
-        if not devices:
-            self._set_state(AudioEngineState.FAILED,
-                            AudioEngineError.NO_DEVICE,
-                            'No audio input devices detected')
-            return
-        # Pick a selection candidate. Always re-resolve by (name,
-        # host_api) — never reuse a stored PortAudio index.
-        sel: Optional[DeviceSelection] = None
-        hint = self._preferred_hint
-        if hint and hint.name:
-            for d in devices:
-                if (d.name == hint.name
-                        and (not hint.host_api
-                             or d.host_api == hint.host_api)):
-                    sel = DeviceSelection(
-                        name=d.name, host_api=d.host_api, samplerate=0)
-                    break
-            if sel is None:
-                # Hint device isn't in the fresh list — surface that
-                # instead of silently falling back to a default.
-                self._set_state(
-                    AudioEngineState.FAILED,
-                    AudioEngineError.NO_DEVICE,
-                    f'Pinned device not present: {hint.name}')
+        # v0.5.7.1: take the _transitioning flag for the entire resolve
+        # phase so a concurrent hot-plug auto-recovery (which runs from
+        # the refresh_devices() poller thread) can't race us into
+        # double-open territory. open_device() and start() set their
+        # own _transitioning inside the same flag, so we release the
+        # guard BEFORE delegating to either — otherwise the inner call
+        # would early-return as a no-op and silently skip the reopen.
+        self._transitioning = True
+        try:
+            # Force re-enumeration; do NOT trust the cached snapshot.
+            devices = query_input_devices()
+            self.last_devices_refresh_at = datetime.datetime.now()
+            self._last_device_snapshot = self._snapshot_key(devices)
+            if self.signals is not None:
+                try:
+                    self.signals.devices_changed.emit(devices)
+                except Exception:
+                    pass
+            if not devices:
+                self._set_state(AudioEngineState.FAILED,
+                                AudioEngineError.NO_DEVICE,
+                                'No audio input devices detected')
                 return
-        elif self.active_device is not None:
-            sel = DeviceSelection(
-                name=self.active_device.name,
-                host_api=self.active_device.host_api,
-                samplerate=0)
+            # Pick a selection candidate. Always re-resolve by (name,
+            # host_api) — never reuse a stored PortAudio index.
+            sel: Optional[DeviceSelection] = None
+            hint = self._preferred_hint
+            if hint and hint.name:
+                for d in devices:
+                    if (d.name == hint.name
+                            and (not hint.host_api
+                                 or d.host_api == hint.host_api)):
+                        sel = DeviceSelection(
+                            name=d.name, host_api=d.host_api, samplerate=0)
+                        break
+                if sel is None:
+                    # Hint device isn't in the fresh list — surface that
+                    # instead of silently falling back to a default.
+                    self._set_state(
+                        AudioEngineState.FAILED,
+                        AudioEngineError.NO_DEVICE,
+                        f'Pinned device not present: {hint.name}')
+                    return
+            elif self.active_device is not None:
+                sel = DeviceSelection(
+                    name=self.active_device.name,
+                    host_api=self.active_device.host_api,
+                    samplerate=0)
+        finally:
+            # Drop the guard before delegating; open_device() / start()
+            # re-acquire it for their own work.
+            self._transitioning = False
         # Reopen with the fresh resolution. open_device handles teardown
         # and state transitions internally.
         self.open_device(sel) if sel else self.start(
@@ -967,6 +993,12 @@ class AudioEngine:
                    str(result['err_msg'])
 
         # Success — install the new stream and reset diagnostics.
+        # v0.5.7.1: active_device must be assigned under the same lock
+        # as everything else readers grab from the engine snapshot.
+        # get_diagnostics() reads it inside the lock; the GUI's
+        # _on_sr_changed() reads via get_active_device() (also locked);
+        # refresh_devices() reads it while comparing against the fresh
+        # device list. A bare write here let those readers tear.
         with self._lock:
             self._stream = result['stream']
             self.samplerate = int(samplerate)
@@ -976,7 +1008,7 @@ class AudioEngine:
             self._overflow_count = 0
             self._underflow_count = 0
             self._reset_filter_state()
-        self.active_device = dev
+            self.active_device = dev
         self._set_state(AudioEngineState.RUNNING)
         return True, AudioEngineError.NONE, ''
 
