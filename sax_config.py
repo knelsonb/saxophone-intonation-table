@@ -94,7 +94,7 @@ class AppConfig:
     splitter_sizes: list[int] = field(default_factory=list)
     # The instrument the user last had selected, restored on the next
     # launch so they don't redo the picker every time.
-    last_instrument_key: str = "eb_alto"
+    last_instrument_key: str = "bb_tenor"
     # The nickname text the user last typed. Persisted so the same horn
     # keeps its tag across sessions.
     last_nickname: str = ""
@@ -228,7 +228,7 @@ def load_config() -> AppConfig:
         window_state=_as_str(data.get("window_state"), ""),
         splitter_sizes=_as_int_list(data.get("splitter_sizes")),
         last_instrument_key=_as_str(
-            data.get("last_instrument_key"), "eb_alto"),
+            data.get("last_instrument_key"), "bb_tenor"),
         last_nickname=_as_str(data.get("last_nickname"), ""),
         last_display_mode=_as_str(
             data.get("last_display_mode"), "griff"),

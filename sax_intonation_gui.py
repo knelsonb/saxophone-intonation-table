@@ -51,7 +51,7 @@ from sax_instruments import (
 import sax_config
 
 APP_NAME = 'Intonation Analyzer'
-APP_VERSION = '0.5.7'
+APP_VERSION = '0.5.7.1'
 
 # v0.5.4: AudioEngine + pitch detection + filter presets live in their own
 # module so the engine has a state machine, host-API fallback chain, and
@@ -339,6 +339,10 @@ STRINGS = {
         'range_editor_title':      'Tonumfang bearbeiten \u2014 {name}',
         'range_lo_label':          'Tiefster Griff-Ton (MIDI)',
         'range_hi_label':          'H\u00f6chster Griff-Ton (MIDI)',
+        'range_lo_label_sounding': 'Tiefster Klingend-Ton (MIDI)',
+        'range_hi_label_sounding': 'H\u00f6chster Klingend-Ton (MIDI)',
+        'range_mode_note_griff':   'Werte als Griff-Tonh\u00f6hen (im Speicher kanonisch).',
+        'range_mode_note_sound':   'Werte als klingende Tonh\u00f6hen; gespeichert wird kanonisch in Griffnotation.',
         'range_preview_fmt':       'Bereich: {lo_name} \u2013 {hi_name} ({semis} Halbt\u00f6ne, {octs:.1f} Oktaven)',
         'range_invalid':           'Ung\u00fcltig: tief darf nicht \u00fcber hoch liegen, beide m\u00fcssen zwischen 0 und 127 sein.',
         'range_save':              'Speichern',
@@ -591,6 +595,10 @@ STRINGS = {
         'range_editor_title':      'Edit range \u2014 {name}',
         'range_lo_label':          'Lowest fingered note (MIDI)',
         'range_hi_label':          'Highest fingered note (MIDI)',
+        'range_lo_label_sounding': 'Lowest sounding note (MIDI)',
+        'range_hi_label_sounding': 'Highest sounding note (MIDI)',
+        'range_mode_note_griff':   'Values are fingered pitches (canonical on disk).',
+        'range_mode_note_sound':   'Values are sounding pitches; saved canonically as fingered.',
         'range_preview_fmt':       'Range: {lo_name} \u2013 {hi_name} ({semis} semitones, {octs:.1f} octaves)',
         'range_invalid':           'Invalid: low must not exceed high, and both must be 0\u2013127.',
         'range_save':              'Save',
@@ -1757,6 +1765,11 @@ class AudioPickerDialog(QDialog):
         self.setWindowTitle(self._t('audio_picker_title'))
         self.setModal(True)
         self.setMinimumWidth(560)
+        # v0.5.7.1: dialog used to open at Qt's minimum-content height,
+        # which fit ~3 rows and forced the user to scroll past the most
+        # interesting devices (vendor interfaces below the system mics).
+        # Open at a size where the full typical list fits unscrolled.
+        self.setMinimumSize(480, 480)
         self.setStyleSheet("""
             QDialog{background:#1e1e2e;color:#eee;}
             QLabel{color:#eee;font-size:12px;}
@@ -1771,6 +1784,9 @@ class AudioPickerDialog(QDialog):
         """)
         self._build()
         self._refill()
+        # v0.5.7.1: explicit default size so the picker opens at a
+        # comfortable height for the typical Windows device count.
+        self.resize(560, 600)
 
     def _build(self) -> None:
         from PyQt6.QtWidgets import QListWidget, QListWidgetItem
@@ -1800,7 +1816,14 @@ class AudioPickerDialog(QDialog):
         self._sr_combo.currentIndexChanged.connect(self._on_sr_changed)
         self._sr_combo.setStyleSheet(
             'QComboBox{background:#1e1e2e;color:#ddd;border:1px solid #444;'
-            'border-radius:4px;padding:3px 8px;font-size:12px;}')
+            'border-radius:4px;padding:3px 8px;font-size:12px;}'
+            'QComboBox::drop-down{border:none;width:18px;background:#1e1e2e;}'
+            'QComboBox QAbstractItemView{background:#1e1e2e;color:#ddd;'
+            'border:1px solid #444;outline:0;'
+            'selection-background-color:#34495e;selection-color:#fff;}'
+            'QComboBox QAbstractItemView::item{background:#1e1e2e;color:#ddd;'
+            'padding:4px 8px;border:none;}'
+            'QComboBox QAbstractItemView::item:selected{background:#34495e;color:#fff;}')
         sr_row.addWidget(self._sr_combo, 1)
         root.addLayout(sr_row)
 
@@ -1858,7 +1881,10 @@ class AudioPickerDialog(QDialog):
         sax_config.save_config(self._cfg)
         self._sr_error_lbl.setVisible(False)
         # If we have an active device, try to re-open it with the new pref.
-        dev = self._engine.active_device
+        # v0.5.7.1: go through the thread-safe getter — the engine's
+        # active_device is written under the lock on every successful
+        # open, and the worker thread could be mid-swap right now.
+        dev = self._engine.get_active_device()
         if dev is None:
             return
         sel = DeviceSelection(name=dev.name, host_api=dev.host_api,
@@ -2019,12 +2045,22 @@ class RangeEditorDialog(QDialog):
 
     def __init__(self, parent, t, instrument_key: str,
                  display_name: str, current_lo: int, current_hi: int,
-                 baked_lo: int, baked_hi: int, has_baked: bool):
+                 baked_lo: int, baked_hi: int, has_baked: bool,
+                 display: str = 'griff', transp: int = 0):
+        """``current_lo`` / ``current_hi`` / ``baked_lo`` / ``baked_hi``
+        are ALWAYS fingered MIDI (canonical disk format). The dialog
+        renders them as sounding MIDI when ``display == 'klingend'`` by
+        adding ``transp`` semitones, and reverses the offset on save —
+        the JSON on disk never changes format regardless of which user
+        opens the editor.
+        """
         super().__init__(parent)
         self._t = t
         self._key = instrument_key
-        self._baked = (baked_lo, baked_hi)
+        self._baked = (baked_lo, baked_hi)  # canonical fingered MIDI
         self._has_baked = has_baked
+        self._display = 'klingend' if display == 'klingend' else 'griff'
+        self._transp = int(transp) if self._display == 'klingend' else 0
         self.setWindowTitle(self._t('range_editor_title', name=display_name))
         self.setModal(True)
         self.setMinimumWidth(380)
@@ -2035,19 +2071,37 @@ class RangeEditorDialog(QDialog):
         form.setSpacing(8)
         self._lo_spin = QSpinBox()
         self._lo_spin.setRange(0, 127)
-        self._lo_spin.setValue(int(current_lo))
+        self._lo_spin.setValue(int(current_lo) + self._transp)
         self._hi_spin = QSpinBox()
         self._hi_spin.setRange(0, 127)
-        self._hi_spin.setValue(int(current_hi))
+        self._hi_spin.setValue(int(current_hi) + self._transp)
         spin_css = (
             'QSpinBox{background:#1e1e2e;color:#ddd;border:1px solid #444;'
             'border-radius:5px;padding:3px 6px;font-size:13px;min-width:90px;}'
         )
         self._lo_spin.setStyleSheet(spin_css)
         self._hi_spin.setStyleSheet(spin_css)
-        form.addRow(self._t('range_lo_label'), self._lo_spin)
-        form.addRow(self._t('range_hi_label'), self._hi_spin)
+        if self._display == 'klingend':
+            lo_label = self._t('range_lo_label_sounding')
+            hi_label = self._t('range_hi_label_sounding')
+        else:
+            lo_label = self._t('range_lo_label')
+            hi_label = self._t('range_hi_label')
+        form.addRow(lo_label, self._lo_spin)
+        form.addRow(hi_label, self._hi_spin)
         layout.addLayout(form)
+
+        # Mode hint so the user knows what the spinboxes mean and that
+        # the file format is stable across users with different display
+        # preferences.
+        mode_note_key = ('range_mode_note_sound'
+                        if self._display == 'klingend'
+                        else 'range_mode_note_griff')
+        self._mode_lbl = QLabel(self._t(mode_note_key))
+        self._mode_lbl.setStyleSheet('color:#888;font-size:11px;'
+                                     'font-style:italic;')
+        self._mode_lbl.setWordWrap(True)
+        layout.addWidget(self._mode_lbl)
 
         self._preview_lbl = QLabel('')
         self._preview_lbl.setStyleSheet('color:#bbb;font-size:12px;')
@@ -2065,8 +2119,12 @@ class RangeEditorDialog(QDialog):
         if has_baked:
             restore_label = self._t('range_restore_default')
         else:
+            # Show baked numbers in the current display mode so they
+            # match what the spinboxes display.
+            disp_lo = baked_lo + self._transp
+            disp_hi = baked_hi + self._transp
             restore_label = self._t('range_restore_fallback',
-                                    lo=baked_lo, hi=baked_hi)
+                                    lo=disp_lo, hi=disp_hi)
         self._btn_restore = QPushButton(restore_label)
         self._btn_restore.clicked.connect(self._on_restore)
         self._btn_cancel = QPushButton(self._t('range_cancel'))
@@ -2128,15 +2186,21 @@ class RangeEditorDialog(QDialog):
             semis=semis, octs=octs))
 
     def _on_restore(self) -> None:
+        # Baked is canonical fingered; render in current display mode.
         lo, hi = self._baked
-        self._lo_spin.setValue(lo)
-        self._hi_spin.setValue(hi)
+        self._lo_spin.setValue(lo + self._transp)
+        self._hi_spin.setValue(hi + self._transp)
 
     def _on_save(self) -> None:
-        lo = self._lo_spin.value()
-        hi = self._hi_spin.value()
-        if lo > hi:
+        # Spinbox values are in the current display mode. Convert back
+        # to fingered (canonical) before persisting so the file format
+        # is stable across users with different display preferences.
+        disp_lo = self._lo_spin.value()
+        disp_hi = self._hi_spin.value()
+        if disp_lo > disp_hi:
             return
+        lo = disp_lo - self._transp
+        hi = disp_hi - self._transp
         # If the user dialed back to the baked default AND a baked entry
         # exists, clear the override instead of writing a redundant
         # entry. Keeps the overrides file lean and lets future baked
@@ -2157,7 +2221,11 @@ class MainWindow(QMainWindow):
         # Pick the user's system language as the default. German-speaking
         # locales get the original DE strings; anyone else gets English.
         self.lang       = 'de' if QLocale.system().name().startswith('de') else 'en'
-        self.instrument = 'eb_alto'   # default; saxophone family, alto
+        # v0.5.7.1: default to Bb tenor — the most common community-band
+        # sax. Existing users with a persisted ``last_instrument_key``
+        # keep their own choice (restored a few lines below); this only
+        # affects fresh installs and first-launches.
+        self.instrument = 'bb_tenor'
         self.display    = 'griff'
         self.stats: dict[int, NoteStats] = {}
         self._lock = threading.Lock()
@@ -2336,7 +2404,11 @@ class MainWindow(QMainWindow):
 
         self._nick_edit = QLineEdit()
         self._nick_edit.setPlaceholderText(self._t('nickname_tip'))
-        self._nick_edit.setMaximumWidth(160)
+        # v0.5.7.1: 160px capped at ~12 characters, which truncated real
+        # horn names like "Selmer Reference 54 Tenor #2" before the user
+        # could see what they'd typed. Bump to 320 max / 280 min.
+        self._nick_edit.setMinimumWidth(280)
+        self._nick_edit.setMaximumWidth(320)
         self._nick_edit.editingFinished.connect(self._on_nickname_changed)
         self._nick_edit.setStyleSheet("""
             QLineEdit{background:#1e1e2e;border:1px solid #444;
@@ -2632,8 +2704,18 @@ class MainWindow(QMainWindow):
             QGroupBox::title{subcontrol-origin:margin;left:8px;top:-2px;}
             QComboBox{background:#1e1e2e;border:1px solid #444;border-radius:5px;
                       color:#ddd;padding:4px 8px;font-size:13px;min-height:28px;}
-            QComboBox::drop-down{border:none;width:20px;}
-            QComboBox QAbstractItemView{background:#1e1e2e;color:#ddd;}
+            QComboBox:hover{background:#252535;border:1px solid #6699cc;}
+            QComboBox::drop-down{border:none;width:20px;background:#1e1e2e;}
+            QComboBox QAbstractItemView{background:#1e1e2e;color:#ddd;
+                      border:1px solid #444;outline:0;
+                      selection-background-color:#34495e;
+                      selection-color:#fff;}
+            QComboBox QAbstractItemView::item{background:#1e1e2e;color:#ddd;
+                      padding:4px 8px;border:none;}
+            QComboBox QAbstractItemView::item:selected{background:#34495e;
+                      color:#fff;}
+            QComboBox QAbstractItemView::item:hover{background:#2a2a3a;
+                      color:#fff;}
             QSplitter::handle{background:#333;}
         """)
 
@@ -3211,9 +3293,14 @@ class MainWindow(QMainWindow):
         baked_lo, baked_hi = sax_instruments.baked_fingered_range(key)
         has_baked = sax_instruments.has_baked_range(key)
         name = instrument_display_name(key, self.lang)
+        # v0.5.7.1: pass display mode + instrument transposition so the
+        # dialog can render values in whichever notation the user is
+        # already reading on the matrix. File format stays fingered.
+        transp = TRANSP_MAP.get(key, 0)
         dlg = RangeEditorDialog(
             self, self._t, key, name,
-            cur_lo, cur_hi, baked_lo, baked_hi, has_baked)
+            cur_lo, cur_hi, baked_lo, baked_hi, has_baked,
+            display=self.display, transp=transp)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             # Re-seed expected notes with the new bounds so the table
             # immediately reflects what changed.
