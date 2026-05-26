@@ -51,7 +51,7 @@ from sax_instruments import (
 import sax_config
 
 APP_NAME = 'Intonation Analyzer'
-APP_VERSION = '0.5.7.5'
+APP_VERSION = '0.5.7.6'
 
 # v0.5.4: AudioEngine + pitch detection + filter presets live in their own
 # module so the engine has a state machine, host-API fallback chain, and
@@ -3035,12 +3035,12 @@ class MainWindow(QMainWindow):
         # Per-measurement log. Instrument/A4 are read off the active run
         # inside the log, not from `self`, so a callback firing during a UI
         # change still attributes to the run that was active when it fired.
-        midi_gr = midi_kl - TRANSP_MAP[self.instrument]
+        midi_gr = midi_kl - TRANSP_MAP.get(self.instrument, 0)
         self._log.add_measurement(midi_sounding=midi_kl,
                                    midi_fingered=midi_gr,
                                    cents=cents, freq_hz=freq)
 
-        transp     = TRANSP_MAP[self.instrument]
+        transp     = TRANSP_MAP.get(self.instrument, 0)
         midi_gr    = midi_kl - transp
         kl_name    = midi_note_name(midi_kl)
         gr_name    = midi_note_name(midi_gr)
@@ -3208,7 +3208,7 @@ class MainWindow(QMainWindow):
         return self._active_midi
 
     def _refresh_table_single(self):
-        transp     = TRANSP_MAP[self.instrument]
+        transp     = TRANSP_MAP.get(self.instrument, 0)
         disp_griff = (self.display == 'griff')
 
         if disp_griff:
@@ -3285,7 +3285,7 @@ class MainWindow(QMainWindow):
         self._table_lbl.setText(label)
 
     def _refresh_table_matrix(self):
-        transp     = TRANSP_MAP[self.instrument]
+        transp     = TRANSP_MAP.get(self.instrument, 0)
         disp_griff = (self.display == 'griff')
         lo_f, hi_f = sax_instruments.fingered_range(self.instrument)
         lo_oct, hi_oct = self._matrix_octave_range()
@@ -3522,7 +3522,7 @@ class MainWindow(QMainWindow):
         """Write the engine's currently-active device back to config.
         Index is deliberately NOT stored — only name + host API + rate,
         per Gandalf's persistence design."""
-        dev = self._engine.active_device
+        dev = self._engine.get_active_device()
         if dev is None:
             return
         self._cfg.audio_device_name = dev.name
@@ -3541,7 +3541,7 @@ class MainWindow(QMainWindow):
         if not AUDIO_OK:
             return
         dlg = AudioPickerDialog(self, self._t, self._engine, self._cfg,
-                                self._engine.active_device)
+                                self._engine.get_active_device())
         if dlg.exec() == QDialog.DialogCode.Accepted:
             chosen = dlg.chosen()
             if chosen is not None:
@@ -3574,7 +3574,7 @@ class MainWindow(QMainWindow):
     def _on_engine_state(self, state, err, msg) -> None:
         """React to engine state transitions: update chip, banner, and
         diagnostics panel device label."""
-        dev = self._engine.active_device
+        dev = self._engine.get_active_device()
         name = dev.name if dev else ''
         host = dev.host_api if dev else ''
         sr = int(getattr(self._engine, 'samplerate', 0) or 0)
@@ -3615,8 +3615,12 @@ class MainWindow(QMainWindow):
         user isn't trained to dismiss it on every wake-from-sleep."""
         # Use a QMessageBox with a short title — close enough to a toast
         # for v0.5.4. A custom non-blocking widget is v0.5.5 work.
-        if self._engine.active_device is not None and (
-                self._engine.active_device.name == device.name):
+        # v0.5.7.6: single-snapshot read. Reading active_device twice
+        # opens a TOCTOU window — between the not-None check and the
+        # .name access the audio worker can tear the stream down and
+        # null the device out, raising AttributeError on .name.
+        dev = self._engine.get_active_device()
+        if dev is not None and dev.name == device.name:
             return
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Information)
@@ -3986,7 +3990,7 @@ class MainWindow(QMainWindow):
         if row < 0:
             return
 
-        transp = TRANSP_MAP[self.instrument]
+        transp = TRANSP_MAP.get(self.instrument, 0)
         midi_kl: int | None = None
 
         if self._layout_mode == 'matrix':
@@ -4193,7 +4197,7 @@ class MainWindow(QMainWindow):
             self._t('txt_filter'))
         if not path:
             return
-        transp = TRANSP_MAP[self.instrument]
+        transp = TRANSP_MAP.get(self.instrument, 0)
         instr_key = f'instr_long_{self.instrument}'
         lines = [
             self._t('txt_header'),
@@ -4261,7 +4265,7 @@ class MainWindow(QMainWindow):
         if not path:
             return
 
-        transp = TRANSP_MAP[self.instrument]
+        transp = TRANSP_MAP.get(self.instrument, 0)
         doc    = SimpleDocTemplate(path, pagesize=RL_A4,
                                    leftMargin=20*mm, rightMargin=20*mm,
                                    topMargin=20*mm, bottomMargin=20*mm)
@@ -4609,7 +4613,7 @@ class MainWindow(QMainWindow):
         if not path.lower().endswith('.png'):
             path += '.png'
 
-        transp = TRANSP_MAP[self.instrument]
+        transp = TRANSP_MAP.get(self.instrument, 0)
         disp_griff = (self.display == 'griff')
         sr_now = self._engine_sample_rate()
         a4 = self._engine.a4
