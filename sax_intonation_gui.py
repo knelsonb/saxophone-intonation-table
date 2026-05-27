@@ -1167,14 +1167,23 @@ class AudioChip(QPushButton):
         lay.setSpacing(8)
         self._dot = _StatusDot(self)
         lay.addWidget(self._dot)
+        # v0.6.2: explicit transparent backgrounds on the inner labels.
+        # The MainWindow-level stylesheet sets `QWidget{background:#12121a}`
+        # which is a type selector that matches QLabel too. Without a
+        # local `background:transparent` override, the labels paint dark
+        # navy rectangles on top of the chip's slate-blue button bg —
+        # rendering as vertical color bands across the chip.
         self._label = QLabel(self._t('audio_chip_label'))
-        self._label.setStyleSheet('color:#bdc3c7;font-size:10px;font-weight:bold;')
+        self._label.setStyleSheet('color:#bdc3c7;font-size:10px;'
+                                  'font-weight:bold;background:transparent;')
         lay.addWidget(self._label)
         self._name = QLabel(self._t('audio_chip_none'))
-        self._name.setStyleSheet('color:#eee;font-size:12px;')
+        self._name.setStyleSheet('color:#eee;font-size:12px;'
+                                 'background:transparent;')
         lay.addWidget(self._name, 1)
         self._chevron = QLabel('▾')
-        self._chevron.setStyleSheet('color:#888;font-size:12px;')
+        self._chevron.setStyleSheet('color:#888;font-size:12px;'
+                                    'background:transparent;')
         lay.addWidget(self._chevron)
 
     def retranslate(self, t_func) -> None:
@@ -1861,10 +1870,14 @@ class RangeEditorDialog(QDialog):
         self._hi_spin = QSpinBox()
         self._hi_spin.setRange(0, 127)
         self._hi_spin.setValue(int(current_hi) + self._transp)
-        spin_css = (
-            'QSpinBox{background:#1e1e2e;color:#ddd;border:1px solid #444;'
-            'border-radius:5px;padding:3px 6px;font-size:13px;min-width:70px;}'
-        )
+        # v0.6.2: explicit sub-control geometry for the up/down buttons.
+        # Setting bg + border + padding on QSpinBox without styling
+        # ::up-button / ::down-button leaves the buttons with effectively
+        # zero clickable width on Windows — the up arrow visibly draws
+        # but the hit-rect collapses. Reserving 18px of right padding +
+        # positioning the two sub-controls top/bottom right restores
+        # clickability and keeps the dark theme.
+        spin_css = self._spin_css_ok()
         self._lo_spin.setStyleSheet(spin_css)
         self._hi_spin.setStyleSheet(spin_css)
         # v0.6 Phase-4 (Item 4): primary input is the note-name QLineEdit;
@@ -2023,19 +2036,50 @@ class RangeEditorDialog(QDialog):
         edit.setStyleSheet(ok_css)
         spin.setValue(midi)
 
+    # v0.6.2: spin-button sub-controls. Same styling re-used at
+    # construction and on every _update_preview repaint so the up/down
+    # buttons remain clickable in both the ok and bad-range states.
+    _SPIN_SUBCONTROLS = (
+        'QSpinBox::up-button{subcontrol-origin:border;'
+        'subcontrol-position:top right;width:16px;'
+        'background:#2a2a3a;border:none;'
+        'border-top-right-radius:5px;border-left:1px solid #444;}'
+        'QSpinBox::up-button:hover{background:#3d566e;}'
+        'QSpinBox::up-button:pressed{background:#16161e;}'
+        'QSpinBox::down-button{subcontrol-origin:border;'
+        'subcontrol-position:bottom right;width:16px;'
+        'background:#2a2a3a;border:none;'
+        'border-bottom-right-radius:5px;border-left:1px solid #444;'
+        'border-top:1px solid #444;}'
+        'QSpinBox::down-button:hover{background:#3d566e;}'
+        'QSpinBox::down-button:pressed{background:#16161e;}'
+    )
+
+    def _spin_css_ok(self) -> str:
+        # Right-padding reserves 22px for the two stacked sub-controls
+        # (16px button + 1px border + 5px breathing room).
+        return (
+            'QSpinBox{background:#1e1e2e;color:#ddd;border:1px solid #444;'
+            'border-radius:5px;padding:3px 22px 3px 6px;font-size:13px;'
+            'min-width:80px;}'
+            + self._SPIN_SUBCONTROLS
+        )
+
+    def _spin_css_bad(self) -> str:
+        return (
+            'QSpinBox{background:#3a1e1e;color:#fdd;border:1px solid #c0392b;'
+            'border-radius:5px;padding:3px 22px 3px 6px;font-size:13px;'
+            'min-width:80px;}'
+            + self._SPIN_SUBCONTROLS
+        )
+
     def _update_preview(self) -> None:
         lo = self._lo_spin.value()
         hi = self._hi_spin.value()
         invalid = lo > hi
         # Visual cue on the offending field.
-        bad_css = (
-            'QSpinBox{background:#3a1e1e;color:#fdd;border:1px solid #c0392b;'
-            'border-radius:5px;padding:3px 6px;font-size:13px;min-width:70px;}'
-        )
-        ok_css = (
-            'QSpinBox{background:#1e1e2e;color:#ddd;border:1px solid #444;'
-            'border-radius:5px;padding:3px 6px;font-size:13px;min-width:70px;}'
-        )
+        bad_css = self._spin_css_bad()
+        ok_css = self._spin_css_ok()
         self._lo_spin.setStyleSheet(bad_css if invalid else ok_css)
         self._hi_spin.setStyleSheet(bad_css if invalid else ok_css)
         if invalid:
