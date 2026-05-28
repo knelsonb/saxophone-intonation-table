@@ -50,6 +50,7 @@ from typing import Optional
 import numpy as np
 
 from sax_mixer import Mixer, TestToneSource
+from sax_coordination import OutputCoordinator
 
 try:
     import sounddevice as sd
@@ -501,6 +502,20 @@ class AudioEngine:
         self.last_output_error: AudioEngineError = AudioEngineError.NONE
         self.last_output_error_message: str = ''
         self._out_underflow_count: int = 0
+
+        # ---- D3 mic-coordination (Sprint 3 consumer of the S1 policy) ------
+        # The coordinator is PURE policy (sax_coordination); the engine is its
+        # CONSUMER. Each detection hop the input callback runs one coordination
+        # step: vote-exclude the output's sounding MIDIs from the incumbent
+        # lock, and push the ducked gain target to the attached duck consumer
+        # (the drone source). Inert until something pitched is sounding —
+        # get_sounding_output_midis() is empty, so it excludes nothing and the
+        # duck stays fully open — so wiring it changes nothing until a drone
+        # plays (Sprint 3 makes sounding_midis() non-empty).
+        self.coordinator = OutputCoordinator(samplerate=DEFAULT_SAMPLE_RATE)
+        # The source whose gain the duck drives (drone). Attached by the
+        # DroneController on enable; duck-typed (anything with set_duck_target).
+        self._duck_consumer = None
         # Persisted (name, host_api) hint for output hot-plug auto-recovery,
         # mirroring _preferred_hint on the input side.
         self._preferred_output_hint: Optional[DeviceSelection] = None
@@ -1045,6 +1060,49 @@ class AudioEngine:
         pitch pipe). Consumed by the input pitch detector for vote-exclude +
         duck-on-suspicion (D3). Empty when nothing pitched is playing."""
         return self.mixer.sounding_midis()
+
+    def attach_duck_consumer(self, consumer) -> None:
+        """Register the source whose gain the D3 duck drives (the drone).
+        Duck-typed: ``consumer`` need only expose ``set_duck_target(level)``.
+        The DroneController calls this on enable; ``detach_duck_consumer`` on
+        disable. A bare attribute store — atomic under the GIL, no lock."""
+        self._duck_consumer = consumer
+
+    def detach_duck_consumer(self, consumer=None) -> None:
+        """Drop the duck consumer (drone disabled / stopped). With no arg, or
+        when ``consumer`` matches the current one, clears it; otherwise no-op
+        (so a stale detach can't unhook a newer consumer)."""
+        if consumer is None or consumer is self._duck_consumer:
+            self._duck_consumer = None
+
+    def coordination_step(self, detected_midi: Optional[int]) -> frozenset[int]:
+        """Run ONE D3 coordination hop and return the MIDIs to vote-exclude.
+
+        Called once per detection hop from the input callback — with the
+        detected incumbent MIDI, or ``None`` on silence/reject so the
+        coordinator's release ramp keeps advancing. Also the deterministic
+        test injection point: a test calls it directly with a synthetic
+        ``detected_midi`` (no mic audio needed) and asserts the duck/vote
+        behaviour.
+
+        Pushes the (already-ramped) duck level to the attached duck consumer
+        (the drone) via ``set_duck_target``; the consumer's own GainGlide does
+        the per-sample de-zipper. Inert when nothing pitched sounds: the
+        coordinator excludes nothing and the duck target stays 1.0.
+
+        Must be called OUTSIDE ``self._lock`` — it briefly takes the mixer lock
+        (via get_sounding_output_midis); never nest the two.
+        """
+        decision = self.coordinator.update(detected_midi,
+                                           self.get_sounding_output_midis())
+        consumer = self._duck_consumer
+        if consumer is not None:
+            try:
+                consumer.set_duck_target(decision.duck_level)
+            except Exception:
+                # A misbehaving consumer must not break the audio callback.
+                pass
+        return decision.excluded_midis
 
     def start_test_tone(self, freq: float = 440.0) -> Optional[object]:
         """Register a sine TestToneSource on the mixer and return its handle.
@@ -1695,6 +1753,7 @@ class AudioEngine:
                     with engine._lock:
                         engine.last_locked_midi = engine._locked_midi
                         engine._on_silence(params)
+                    engine.coordination_step(None)  # D3: advance release ramp on a no-pitch hop
                     return
                 sig = buf / (rms + 1e-9)
                 freq, ap = yin_pitch(sig, sr)
@@ -1704,9 +1763,23 @@ class AudioEngine:
                     with engine._lock:
                         engine.last_locked_midi = engine._locked_midi
                         engine._on_silence(params)
+                    engine.coordination_step(None)  # D3: advance release ramp on a no-pitch hop
                     return
                 mr, ct = cents_dev(freq, a4)
                 if not (engine._midi_min <= mr <= engine._midi_max):
+                    with engine._lock:
+                        engine.last_locked_midi = engine._locked_midi
+                        engine._on_silence(params)
+                    engine.coordination_step(None)  # D3: advance release ramp on a no-pitch hop
+                    return
+
+                # D3: one coordination hop with the detected pitch. If the
+                # output (drone) is currently sounding this MIDI, vote-exclude
+                # it — the drone's mic-bleed must never win the incumbent lock.
+                # The readout stays LIVE (we don't gate it); we just refuse to
+                # let the drone's own note become the locked reading. Inert
+                # when no drone sounds (coordination_step returns empty).
+                if int(mr) in engine.coordination_step(int(mr)):
                     with engine._lock:
                         engine.last_locked_midi = engine._locked_midi
                         engine._on_silence(params)

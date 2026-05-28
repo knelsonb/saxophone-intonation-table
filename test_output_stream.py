@@ -23,6 +23,7 @@ import time
 import types
 
 import numpy as np
+import pytest
 
 
 # ---------------------------------------------------------------------------
@@ -424,3 +425,91 @@ def test_open_output_construct_failure_reports_state():
     assert ok is False, 'a failing OutputStream construct must yield False'
     assert eng.output_running is False
     assert eng.last_output_error != AudioEngineError.NONE
+
+
+# ---------------------------------------------------------------------------
+# 8. D3 coordination END-TO-END — the payoff: Sprint-1 coordination firing
+#    against a real sounding source, via Gandalf's deterministic
+#    coordination_step seam (no mic audio needed).
+# ---------------------------------------------------------------------------
+class _PitchedSource:
+    """A registerable MixerSource that reports a sounding MIDI (silent audio is
+    fine — active_midi is the wire D3 reads)."""
+
+    def __init__(self, midi):
+        self._midi = midi
+
+    def render(self, out, frames, t0):
+        return  # contributes no audio; only its active_midi matters here
+
+    @property
+    def active_midi(self):
+        return self._midi
+
+
+class _DuckConsumer:
+    def __init__(self):
+        self.level = 1.0
+        self.history = []
+
+    def set_duck_target(self, level):
+        self.level = float(level)
+        self.history.append(float(level))
+
+
+def test_sounding_output_midis_reflects_pitched_source():
+    eng = _new_engine()
+    eng.mixer.register(_PitchedSource(60))
+    eng.mixer.register(_PitchedSource(None))   # unpitched contributes nothing
+    assert eng.get_sounding_output_midis() == frozenset({60})
+
+
+def test_coordination_vote_excludes_and_ducks_on_sustained_match():
+    """The end-to-end D3 contract: a sounding output MIDI is vote-excluded
+    every hop, and sustained mic-detection of it (>=3 consecutive) ducks the
+    output via the attached consumer — then clears on release."""
+    eng = _new_engine()
+    eng.mixer.register(_PitchedSource(60))
+    consumer = _DuckConsumer()
+    eng.attach_duck_consumer(consumer)
+
+    # Vote-exclude is immediate (every hop the note is sounding).
+    assert 60 in eng.coordination_step(60), "sounding MIDI must be vote-excluded"
+
+    # Sustain the match: by >=3 consecutive hops the duck must engage.
+    for _ in range(4):
+        eng.coordination_step(60)
+    assert consumer.level < 1.0, (
+        f"sustained mic-bleed of the sounding note must duck the output, "
+        f"level={consumer.level}")
+
+    # Release: detection clears -> duck glides back toward open.
+    for _ in range(40):
+        eng.coordination_step(None)
+    assert consumer.level == pytest.approx(1.0, abs=1e-3), (
+        f"duck must release toward 1.0 after leakage clears, got {consumer.level}")
+
+
+def test_coordination_inert_when_nothing_sounding():
+    """Pre-drone (no pitched output source) the coordinator is INERT: no
+    exclusion, no duck — so S1/S2 behaviour is unchanged. This locks that the
+    D3 wiring is dormant until a drone/pitch-pipe actually sounds."""
+    eng = _new_engine()
+    consumer = _DuckConsumer()
+    eng.attach_duck_consumer(consumer)
+    excluded = eng.coordination_step(60)          # 60 detected, but nothing sounds
+    assert excluded == frozenset(), "nothing sounding -> nothing to vote-exclude"
+    for _ in range(5):
+        eng.coordination_step(60)
+    assert consumer.level == 1.0, "no sounding output -> duck never engages"
+
+
+def test_detach_duck_consumer_stops_delivery():
+    eng = _new_engine()
+    eng.mixer.register(_PitchedSource(60))
+    consumer = _DuckConsumer()
+    eng.attach_duck_consumer(consumer)
+    eng.detach_duck_consumer(consumer)
+    for _ in range(5):
+        eng.coordination_step(60)
+    assert consumer.history == [], "a detached consumer must receive no duck targets"
