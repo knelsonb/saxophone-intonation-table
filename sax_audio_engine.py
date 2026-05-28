@@ -523,6 +523,27 @@ class AudioEngine:
         # start/stop_test_tone are idempotent and don't leak sources.
         self._test_tone_handle = None
 
+        # ---- Sprint 4 tape-deck input-recording tap -----------------------
+        # The deck records the MIC (not the mixer output — Android parity) to
+        # a single take. The engine is pure MECHANISM: a bounded preallocated
+        # capture buffer the input hot path slice-assigns into while armed.
+        # Sauron's DeckController (policy) drives start/stop and owns the
+        # state machine, WAV encode, and playback source — it never touches
+        # the audio callback. A bounded buffer gives ZERO drop until cap and
+        # ZERO hot-path alloc (no drain-pump, no chunk queue). The cap is
+        # sized at arm time on the CALLING thread, so the callback never
+        # allocates. All five fields are protected by self._lock.
+        self._deck_armed = False
+        self._deck_sink: Optional[np.ndarray] = None
+        self._deck_head: int = 0
+        self._deck_full: bool = False
+        self._deck_sr: int = 0
+        # Set when an in-progress take is cut short by an abrupt stream
+        # teardown (device switch / stop) rather than a clean stop — the next
+        # stop_input_recording() surfaces it via the `truncated` flag so the
+        # deck state machine can mark the take partial, never orphan it.
+        self._deck_truncated_by_close = False
+
         # Hot-plug snapshot.
         self._last_device_snapshot: tuple = ()
         # Wall-clock timestamp of the most recent refresh_devices() tick.
@@ -814,6 +835,102 @@ class AudioEngine:
         """Tear down the stream cleanly. Never raises."""
         self._teardown_stream()
         self._set_state(AudioEngineState.STOPPED)
+
+    @property
+    def input_running(self) -> bool:
+        """True while the input (mic) stream is open.
+
+        The HONEST pre-click probe the deck's can_record() reads — the
+        mirror of ``output_running``, but DERIVED from the live stream
+        rather than a stored bool, so it can never drift out of sync if a
+        teardown path forgets to clear a flag. start_input_recording()
+        shares this same open-check.
+        """
+        return self._stream is not None
+
+    # ---- tape-deck input recording (Sprint 4) -----------------------------
+    # Pure MECHANISM: a bounded preallocated mic-capture buffer the input hot
+    # path (_on_input) slice-assigns into while armed. Policy — the state
+    # machine, WAV encode, and playback source — lives in
+    # sax_deck.DeckController, which drives these and never touches the audio
+    # callback. Same mechanism/policy split as D3 (GainGlide vs
+    # OutputCoordinator). The buffer gives ZERO drop until cap and ZERO
+    # hot-path alloc; the (multi-MB) allocation happens here on the CALLING
+    # thread, never in the callback.
+    def start_input_recording(self, max_seconds: float) -> bool:
+        """Arm the deck tap: capture every mic frame into a bounded buffer
+        until stop_input_recording() or the cap (``max_seconds``) is hit.
+
+        Returns False and stays disarmed if the input stream isn't open
+        (no false 'recording' with no mic) or ``max_seconds`` is
+        non-positive / non-finite. A fresh call discards any prior take.
+        """
+        try:
+            secs = float(max_seconds)
+        except (TypeError, ValueError):
+            return False
+        if not math.isfinite(secs) or secs <= 0.0:
+            return False
+        with self._lock:
+            if self._stream is None:
+                return False
+            sr = int(self.samplerate)
+        # Allocate OUTSIDE the lock — a multi-MB np.zeros must not stall the
+        # audio callback. Arm (pointer swap + flags) under the lock briefly.
+        cap = max(1, int(secs * sr))
+        sink = np.zeros(cap, dtype=np.float32)
+        with self._lock:
+            if self._stream is None:
+                return False  # torn down during the allocation
+            self._deck_sink = sink
+            self._deck_head = 0
+            self._deck_full = False
+            self._deck_truncated_by_close = False
+            self._deck_sr = sr
+            self._deck_armed = True
+        return True
+
+    def stop_input_recording(self) -> tuple[np.ndarray, int, bool]:
+        """Disarm and return ``(take_f32_mono, samplerate, truncated)``.
+
+        ``take`` is a COPY of exactly the frames captured (an empty array
+        if none). ``truncated`` is True when the take was cut short — by
+        hitting the cap, or by an abrupt stream teardown (device switch /
+        stop) rather than this call. The copy runs on the CALLING thread,
+        outside the audio hot path.
+        """
+        with self._lock:
+            sink = self._deck_sink
+            head = self._deck_head
+            sr = self._deck_sr or int(self.samplerate)
+            truncated = self._deck_full or self._deck_truncated_by_close
+            self._deck_armed = False
+            self._deck_sink = None
+            self._deck_head = 0
+            self._deck_full = False
+            self._deck_truncated_by_close = False
+        if sink is None or head <= 0:
+            return (np.zeros(0, dtype=np.float32), sr, truncated)
+        return (sink[:head].copy(), sr, truncated)
+
+    def is_input_recording(self) -> bool:
+        """True while the deck tap is armed and capturing mic frames.
+
+        Flips False the instant the cap is hit (auto-disarm) even before
+        stop_input_recording() — the deck pump() reads that as 'cap hit'.
+        """
+        with self._lock:
+            return self._deck_armed
+
+    def recorded_frame_count(self) -> int:
+        """Frames captured into the current take so far.
+
+        Grows monotonically while recording (the continuous-capture
+        observable); equals the cap once a take has hit deck_max_seconds;
+        resets to 0 after stop_input_recording().
+        """
+        with self._lock:
+            return self._deck_head
 
     def refresh_devices(self) -> list[DeviceInfo]:
         """Poll the device list. Emits ``devices_changed`` on a diff.
@@ -1371,6 +1488,14 @@ class AudioEngine:
             stream = self._stream
             self._stream = None
             self._reset_filter_state()
+            # Orphan-disposal for the deck: an abrupt teardown while
+            # recording (device switch / stop mid-take) disarms the tap but
+            # KEEPS the partial take so the deck's next stop_input_recording()
+            # can still return it, flagged truncated — never orphan the take
+            # or leave _deck_armed pointing at a closed stream.
+            if self._deck_armed:
+                self._deck_armed = False
+                self._deck_truncated_by_close = True
         if stream is None:
             return
         try:
@@ -1677,160 +1802,213 @@ class AudioEngine:
 
     # ---- pitch detection callback -----------------------------------------
     def _make_callback(self, samplerate: int):
-        """Build a PortAudio callback bound to a specific sample rate.
+        """Build a PortAudio input callback bound to a sample rate.
 
-        The callback acquires self._lock briefly to mutate shared state
-        but releases it before YIN runs. YIN itself reads the local
-        ``buf`` copy under the lock, so even a concurrent
-        ``get_buf_snapshot()`` sees a consistent frame.
+        The body lives in :meth:`_on_input` (a real method) so tests can
+        feed synthetic frames with no device, and call it in a loop for
+        the non-scaling no-alloc gate. This wrapper only binds the
+        negotiated rate into the closure.
         """
         sr = int(samplerate)
         engine = self
 
         def cb(indata, frames, ti, st):
-            try:
-                if st is not None:
-                    # v0.5.7.9: lock the counter increments. += is GIL-atomic
-                    # against torn values but can still drop increments under
-                    # contention with get_diagnostics() reads. Lock is held
-                    # for microseconds — no audio glitch risk.
-                    if getattr(st, 'input_overflow', False):
-                        with engine._lock:
-                            engine._overflow_count += 1
-                    if getattr(st, 'input_underflow', False):
-                        with engine._lock:
-                            engine._underflow_count += 1
-                mono = indata[:, 0]
-                # Update the ring buffer + read filter snapshot under
-                # the lock. YIN runs outside the lock.
-                with engine._lock:
-                    if engine._emissions_paused:
-                        return
-                    if engine._buf_ring is None or engine._buf_ring.size < frames:
-                        # Reallocate if a rebind happened mid-callback.
-                        new_size = max(DEFAULT_BLOCK_SIZE, frames * 8)
-                        engine._buf_ring = np.zeros(new_size, dtype=np.float32)
-                        engine._buf_head = 0
-                    # Write incoming samples into the ring via at most two
-                    # slice assignments (one if no wrap, two at the boundary).
-                    n = mono.shape[0]
-                    end = engine._buf_head + n
-                    if end <= engine._buf_ring.size:
-                        engine._buf_ring[engine._buf_head:end] = mono
-                    else:
-                        first = engine._buf_ring.size - engine._buf_head
-                        engine._buf_ring[engine._buf_head:] = mono[:first]
-                        engine._buf_ring[:n - first] = mono[first:]
-                    engine._buf_head = (engine._buf_head + n) % engine._buf_ring.size
-                    # Materialise a contiguous chronological view for YIN and
-                    # for get_buf_snapshot() readers outside the lock.
-                    h = engine._buf_head
-                    buf_local = np.concatenate(
-                        (engine._buf_ring[h:], engine._buf_ring[:h]))
-                    engine._buf = buf_local
-                    buf = buf_local
-                    mode = engine.filter_mode
-                    a4 = engine.a4
-                params = FILTER_PRESETS.get(mode, FILTER_PRESETS['normal'])
-
-                rms = math.sqrt(float(np.dot(buf, buf)) / buf.size)
-                # Guard against a corrupt/overflow PortAudio buffer that
-                # produces NaN — bail on the frame, resume clean on the next.
-                if not math.isfinite(rms):
-                    return
-                # CPython GIL note: last_rms_db / last_ap / last_freq are
-                # written unlocked deliberately. Simple float assignments are
-                # atomic under the GIL, so get_diagnostics() reads either the
-                # old or new value — never a torn intermediate. Taking the
-                # lock here would cost a frame-rate acquire just to write
-                # three floats; the diagnostic readout tolerates one-frame
-                # staleness.
-                engine.last_rms_db = 20.0 * math.log10(max(rms, 1e-9))
-
-                if rms < params['rms_floor']:
-                    engine.last_ap = 1.0
-                    engine.last_freq = 0.0
-                    with engine._lock:
-                        engine.last_locked_midi = engine._locked_midi
-                        engine._on_silence(params)
-                    engine.coordination_step(None)  # D3: advance release ramp on a no-pitch hop
-                    return
-                sig = buf / (rms + 1e-9)
-                freq, ap = yin_pitch(sig, sr)
-                engine.last_ap = float(ap)
-                engine.last_freq = float(freq)
-                if ap > params['yin_thr'] or not (MIN_FREQ < freq < MAX_FREQ):
-                    with engine._lock:
-                        engine.last_locked_midi = engine._locked_midi
-                        engine._on_silence(params)
-                    engine.coordination_step(None)  # D3: advance release ramp on a no-pitch hop
-                    return
-                mr, ct = cents_dev(freq, a4)
-                if not (engine._midi_min <= mr <= engine._midi_max):
-                    with engine._lock:
-                        engine.last_locked_midi = engine._locked_midi
-                        engine._on_silence(params)
-                    engine.coordination_step(None)  # D3: advance release ramp on a no-pitch hop
-                    return
-
-                # D3: one coordination hop with the detected pitch. If the
-                # output (drone) is currently sounding this MIDI, vote-exclude
-                # it — the drone's mic-bleed must never win the incumbent lock.
-                # The readout stays LIVE (we don't gate it); we just refuse to
-                # let the drone's own note become the locked reading. Inert
-                # when no drone sounds (coordination_step returns empty).
-                if int(mr) in engine.coordination_step(int(mr)):
-                    with engine._lock:
-                        engine.last_locked_midi = engine._locked_midi
-                        engine._on_silence(params)
-                    return
-
-                # Mutate filter state under the lock.
-                emit_payload = None
-                with engine._lock:
-                    engine.last_locked_midi = (
-                        engine._locked_midi if engine._locked_midi is not None
-                        else int(mr))
-                    engine._recent.append((int(mr), float(freq)))
-                    if len(engine._recent) > params['window']:
-                        engine._recent.pop(0)
-                    if not engine._recent:
-                        return  # cleared mid-flight by set_filter_mode
-                    latest_midi = engine._recent[-1][0]
-                    matches = sum(1 for m, _f in engine._recent
-                                  if m == latest_midi)
-                    if matches < params['confirm']:
-                        return
-                    if engine._locked_midi != latest_midi:
-                        engine._drop_pending_for_edge(params)
-                        # Flush survivors before relocking.
-                        while engine._pending:
-                            mi, fr, ce = engine._pending.pop(0)
-                            engine._enqueue_emit(mi, fr, ce)
-                        engine._locked_midi = latest_midi
-                        engine._hop_in_note = 0
-                    engine._hop_in_note += 1
-                    if engine._hop_in_note <= params['edge_hops']:
-                        return
-                    same = [f for m, f in engine._recent
-                            if m == latest_midi]
-                    if not same:
-                        return  # cleared mid-flight
-                    median_freq = float(np.median(same))
-                    _mr2, median_cents = cents_dev(median_freq, a4)
-                    engine._pending.append(
-                        (latest_midi, median_freq, median_cents))
-                    if len(engine._pending) > params['edge_hops']:
-                        emit_payload = engine._pending.pop(0)
-                # Emit outside the lock — Qt signal delivery shouldn't
-                # hold the audio mutex.
-                if emit_payload is not None:
-                    engine._emit(*emit_payload)
-            except Exception:
-                # Audio callback must never raise back into PortAudio.
-                pass
-
+            engine._on_input(indata, frames, ti, st, sr)
         return cb
+
+    def _on_input(self, indata, frames, ti, status, sr=None):
+        """PortAudio input hot path, extracted from the callback closure.
+
+        Directly callable from tests: feed synthetic ``indata`` shaped
+        (frames, channels) float32 with no device, and call it in a loop
+        to lock "no unbounded alloc in the hot path". ``sr`` defaults to
+        the active negotiated rate. Acquires self._lock briefly but
+        releases it before YIN runs; like the callback it must never
+        raise. The Sprint-4 deck tap lives at the TOP of the locked
+        section (before the emissions-pause gate) so an armed take
+        captures every mic frame even across a transient A4-remap pause.
+        """
+        sr = int(sr) if sr is not None else int(self.samplerate)
+        engine = self
+        st = status
+        try:
+            if st is not None:
+                # v0.5.7.9: lock the counter increments. += is GIL-atomic
+                # against torn values but can still drop increments under
+                # contention with get_diagnostics() reads. Lock is held
+                # for microseconds — no audio glitch risk.
+                if getattr(st, 'input_overflow', False):
+                    with engine._lock:
+                        engine._overflow_count += 1
+                if getattr(st, 'input_underflow', False):
+                    with engine._lock:
+                        engine._underflow_count += 1
+            mono = indata[:, 0]
+            # Update the ring buffer + read filter snapshot under
+            # the lock. YIN runs outside the lock.
+            with engine._lock:
+                # ---- Sprint 4 deck input-recording tap ------------------
+                # Capture EVERY mic frame while armed, BEFORE the
+                # emissions-pause gate below, so a transient A4-remap pause
+                # never punches a hole in the take (Sauron + Treebeard
+                # ratified continuous capture). Bounded prealloc sink +
+                # slice-assign: no hot-path alloc. Overflow clamps at cap,
+                # marks the take full, and auto-disarms — the deck pump()
+                # reads is_input_recording()==False as "cap hit".
+                if engine._deck_armed and engine._deck_sink is not None:
+                    _dh = engine._deck_head
+                    _cap = engine._deck_sink.size
+                    if _dh >= _cap:
+                        engine._deck_full = True
+                        engine._deck_armed = False
+                    else:
+                        _dn = mono.shape[0]
+                        _dend = _dh + _dn
+                        if _dend <= _cap:
+                            engine._deck_sink[_dh:_dend] = mono
+                            engine._deck_head = _dend
+                        else:
+                            engine._deck_sink[_dh:_cap] = mono[:_cap - _dh]
+                            engine._deck_head = _cap
+                            engine._deck_full = True
+                            engine._deck_armed = False
+                if engine._emissions_paused:
+                    return
+                if engine._buf_ring is None or engine._buf_ring.size < frames:
+                    # Reallocate if a rebind happened mid-callback.
+                    new_size = max(DEFAULT_BLOCK_SIZE, frames * 8)
+                    engine._buf_ring = np.zeros(new_size, dtype=np.float32)
+                    engine._buf_head = 0
+                # Write incoming samples into the ring via at most two
+                # slice assignments (one if no wrap, two at the boundary).
+                n = mono.shape[0]
+                end = engine._buf_head + n
+                if end <= engine._buf_ring.size:
+                    engine._buf_ring[engine._buf_head:end] = mono
+                else:
+                    first = engine._buf_ring.size - engine._buf_head
+                    engine._buf_ring[engine._buf_head:] = mono[:first]
+                    engine._buf_ring[:n - first] = mono[first:]
+                engine._buf_head = (engine._buf_head + n) % engine._buf_ring.size
+                # Materialise a contiguous chronological view for YIN and
+                # for get_buf_snapshot() readers outside the lock.
+                h = engine._buf_head
+                buf_local = np.concatenate(
+                    (engine._buf_ring[h:], engine._buf_ring[:h]))
+                engine._buf = buf_local
+                buf = buf_local
+                mode = engine.filter_mode
+                a4 = engine.a4
+            params = FILTER_PRESETS.get(mode, FILTER_PRESETS['normal'])
+
+            rms = math.sqrt(float(np.dot(buf, buf)) / buf.size)
+            # Guard against a corrupt/overflow PortAudio buffer that
+            # produces NaN — bail on the frame, resume clean on the next.
+            if not math.isfinite(rms):
+                return
+            # CPython GIL note: last_rms_db / last_ap / last_freq are
+            # written unlocked deliberately. Simple float assignments are
+            # atomic under the GIL, so get_diagnostics() reads either the
+            # old or new value — never a torn intermediate. Taking the
+            # lock here would cost a frame-rate acquire just to write
+            # three floats; the diagnostic readout tolerates one-frame
+            # staleness.
+            engine.last_rms_db = 20.0 * math.log10(max(rms, 1e-9))
+
+            if rms < params['rms_floor']:
+                engine.last_ap = 1.0
+                engine.last_freq = 0.0
+                with engine._lock:
+                    engine.last_locked_midi = engine._locked_midi
+                    engine._on_silence(params)
+                engine.coordination_step(None)  # D3: advance release ramp on a no-pitch hop
+                return
+            sig = buf / (rms + 1e-9)
+            freq, ap = yin_pitch(sig, sr)
+            engine.last_ap = float(ap)
+            engine.last_freq = float(freq)
+            if ap > params['yin_thr'] or not (MIN_FREQ < freq < MAX_FREQ):
+                with engine._lock:
+                    engine.last_locked_midi = engine._locked_midi
+                    engine._on_silence(params)
+                engine.coordination_step(None)  # D3: advance release ramp on a no-pitch hop
+                return
+            mr, ct = cents_dev(freq, a4)
+            if not (engine._midi_min <= mr <= engine._midi_max):
+                with engine._lock:
+                    engine.last_locked_midi = engine._locked_midi
+                    engine._on_silence(params)
+                engine.coordination_step(None)  # D3: advance release ramp on a no-pitch hop
+                return
+
+            # D3: one coordination hop with the detected pitch. If the
+            # output (drone) is currently sounding this MIDI, vote-exclude
+            # it — the drone's mic-bleed must never win the incumbent lock.
+            # The readout stays LIVE (we don't gate it); we just refuse to
+            # let the drone's own note become the locked reading. Inert
+            # when no drone sounds (coordination_step returns empty).
+            if int(mr) in engine.coordination_step(int(mr)):
+                with engine._lock:
+                    engine.last_locked_midi = engine._locked_midi
+                    engine._on_silence(params)
+                return
+
+            # Mutate filter state under the lock.
+            emit_payload = None
+            with engine._lock:
+                engine.last_locked_midi = (
+                    engine._locked_midi if engine._locked_midi is not None
+                    else int(mr))
+                engine._recent.append((int(mr), float(freq)))
+                if len(engine._recent) > params['window']:
+                    engine._recent.pop(0)
+                if not engine._recent:
+                    return  # cleared mid-flight by set_filter_mode
+                latest_midi = engine._recent[-1][0]
+                matches = sum(1 for m, _f in engine._recent
+                              if m == latest_midi)
+                if matches < params['confirm']:
+                    return
+                if engine._locked_midi != latest_midi:
+                    engine._drop_pending_for_edge(params)
+                    # Flush survivors before relocking.
+                    while engine._pending:
+                        mi, fr, ce = engine._pending.pop(0)
+                        engine._enqueue_emit(mi, fr, ce)
+                    engine._locked_midi = latest_midi
+                    engine._hop_in_note = 0
+                engine._hop_in_note += 1
+                if engine._hop_in_note <= params['edge_hops']:
+                    return
+                same = [f for m, f in engine._recent
+                        if m == latest_midi]
+                if not same:
+                    return  # cleared mid-flight
+                median_freq = float(np.median(same))
+                _mr2, median_cents = cents_dev(median_freq, a4)
+                engine._pending.append(
+                    (latest_midi, median_freq, median_cents))
+                if len(engine._pending) > params['edge_hops']:
+                    emit_payload = engine._pending.pop(0)
+            # Emit outside the lock — Qt signal delivery shouldn't
+            # hold the audio mutex.
+            if emit_payload is not None:
+                engine._emit(*emit_payload)
+        except Exception:
+            # Audio callback must never raise back into PortAudio.
+            pass
+
+    def feed_input_frames(self, mono) -> None:
+        """Test/diagnostic entry: feed a 1-D float32 mono block straight into
+        the input hot path, as if PortAudio delivered it.
+
+        Shapes the block to the (frames, 1) ``indata`` the callback expects
+        and uses a null status; ``sr`` falls back to the active rate. No
+        device needed. Fed a contiguous float32 1-D array it allocates
+        nothing, so it is safe in the no-alloc-gate loop.
+        """
+        arr = np.asarray(mono, dtype=np.float32).reshape(-1, 1)
+        self._on_input(arr, arr.shape[0], None, None)
 
     def _drop_pending_for_edge(self, params: dict) -> None:
         keep = max(0, len(self._pending) - params['edge_hops'])
