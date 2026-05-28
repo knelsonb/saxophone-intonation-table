@@ -256,6 +256,117 @@ def main() -> int:
         win._btn_drone_on.setChecked(False)
         app.processEvents()
 
+    # DECK tab (Sprint 4) — built inert here (sax_deck lands in CI's venv; and
+    # headless has no input device anyway). This is the HONESTY LOCK Treebeard
+    # pins: a record attempt that can't arm the mic must NEVER show the pulsing
+    # red dot or claim 'recording' — the dot is driven off controller.state, and
+    # with no armable input the state stays idle, so set_deck_recording(True)
+    # never fires. Mirror of the drone/metro revert lock, input-side.
+    win._tabs.setCurrentIndex(win._tab_keys.index("deck"))
+    app.processEvents()
+    for _name in ("_btn_deck_record", "_btn_deck_stop", "_btn_deck_play",
+                  "_btn_deck_export"):
+        check(hasattr(win, _name), f"deck transport button {_name} missing")
+    # Nothing recorded/playing and no input: Stop/Play/Export disabled, dot hidden.
+    check(not win._btn_deck_stop.isEnabled(),
+          "deck Stop enabled with nothing recording/playing")
+    check(not win._btn_deck_play.isEnabled(),
+          "deck Play enabled with no take")
+    check(not win._btn_deck_export.isEnabled(),
+          "deck Export enabled with no take")
+    check(win._deck_dot.isHidden(),
+          "deck recording dot visible at rest (should be hidden)")
+    # The honesty seam: attempt to record with no armable input → button reverts
+    # unchecked, inline status shown, dot stays HIDDEN + pulse timer INACTIVE.
+    win._btn_deck_record.setChecked(True)
+    app.processEvents()
+    check(not win._btn_deck_record.isChecked(),
+          "deck Record stayed checked with no input (button lies)")
+    check(win._deck_status.isVisible(),
+          "deck 'unavailable' status not shown when record could not arm")
+    check(win._deck_dot.isHidden(),
+          "deck recording dot shown despite no armed take (false recording)")
+    check(not win._deck_pulse_timer.isActive(),
+          "deck pulse timer running despite no armed take (false recording)")
+
+    # DECK live-wiring lock (Sprint 4): with sax_deck present, prove the GUI
+    # transport actually DRIVES the controller and the pulsing-red dot follows
+    # controller state — the deck analog of the drone duck-attach lock (a wiring
+    # bug a pure unit test can't see, because the unit tests call the controller
+    # directly and bypass the button → handler → controller path). We build a
+    # controller on a FAKE input engine + the REAL mixer, swap it in, and drive
+    # the real buttons. Faking the engine's input methods keeps this independent
+    # of whether the engine input-tap has landed yet. Skips if sax_deck absent.
+    if win._deck_ctrl is not None:
+        import numpy as _np
+        import sax_deck as _sd
+
+        class _FakeInputEngine:
+            """Minimal engine the DeckController needs: an armable mic input and
+            an output samplerate. Mirrors Gandalf's engine input-tap surface."""
+            def __init__(self, mixer):
+                self.mixer = mixer
+                self.input_running = True
+                self.output_running = True
+                self.output_samplerate = 44100
+                self.samplerate = 44100
+                self._armed = False
+
+            def start_input_recording(self, _max_s):
+                self._armed = True
+                return True
+
+            def is_input_recording(self):
+                return self._armed
+
+            def stop_input_recording(self):
+                self._armed = False
+                return (_np.zeros(2048, dtype=_np.float32), 44100, False)
+
+        win._deck_ctrl = _sd.DeckController(
+            win._engine.mixer, 44100, engine=_FakeInputEngine(win._engine.mixer),
+            on_state_changed=win._on_deck_state_changed)
+        win._engine.output_running = True  # so _ensure_output_open() is True
+        win._tabs.setCurrentIndex(win._tab_keys.index("deck"))
+        app.processEvents()
+        win._sync_deck_transport()
+        check(win._btn_deck_record.isEnabled(),
+              "deck Record not enabled when the input is armable")
+
+        # Record → recording: the dot must light + pulse, button checked.
+        win._btn_deck_record.setChecked(True)
+        app.processEvents()
+        check(str(win._deck_ctrl.state) == "recording",
+              f"deck did not enter recording on Record: {win._deck_ctrl.state}")
+        check(win._deck_dot.isVisible() and win._deck_pulse_timer.isActive(),
+              "recording dot/pulse not active while recording (GUI-wiring gap)")
+        check(win._btn_deck_record.isChecked(),
+              "deck Record button not checked while recording")
+
+        # Stop → have-take: dot off, Play + Export enabled.
+        win._on_deck_stop()
+        app.processEvents()
+        check(str(win._deck_ctrl.state) == "have-take",
+              f"deck did not reach have-take on Stop: {win._deck_ctrl.state}")
+        check(win._deck_dot.isHidden() and not win._deck_pulse_timer.isActive(),
+              "deck recording dot still showing after recording stopped")
+        check(win._btn_deck_play.isEnabled() and win._btn_deck_export.isEnabled(),
+              "deck Play/Export not enabled with a take present")
+
+        # Play → playing: registers the source; the recording dot stays HIDDEN
+        # (playback is not recording — no false recording indicator).
+        win._on_deck_play()
+        app.processEvents()
+        check(str(win._deck_ctrl.state) == "playing",
+              f"deck did not enter playing on Play: {win._deck_ctrl.state}")
+        check(win._deck_dot.isHidden(),
+              "deck recording dot lit during playback (false recording)")
+
+        # Clean up: drop the playback source from the real mixer, then shut down.
+        win._on_deck_stop()
+        app.processEvents()
+        win._deck_ctrl.shutdown()
+
     win.close()
 
     if failures:
@@ -264,7 +375,7 @@ def main() -> int:
             print(f"  - {f}")
         return 1
     print("GUI SMOKE OK — nav shell, status dots, SETUP + METRO + drone/pipes "
-          "panels, device-switch bracket all sound.")
+          "+ deck panels, device-switch bracket, deck honesty lock all sound.")
     return 0
 
 
