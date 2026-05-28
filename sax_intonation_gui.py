@@ -2899,6 +2899,22 @@ class MainWindow(QMainWindow):
         vg.addRow(self._t('setup_drone_voice'), self._drone_voice_combo)
         outer.addWidget(voice_grp)
 
+        # Appearance — theme switching (Sprint 5 parity: dark / night / light).
+        appear_grp = QGroupBox(self._t('setup_appearance_group'))
+        ag = QFormLayout(appear_grp)
+        ag.setContentsMargins(12, 10, 12, 10)
+        self._theme_combo = QComboBox()
+        for _tname in sax_theme.THEME_ORDER:
+            self._theme_combo.addItem(self._t(f'theme_{_tname}'), _tname)
+        _cur_theme = sax_theme.active_name()
+        for i in range(self._theme_combo.count()):
+            if self._theme_combo.itemData(i) == _cur_theme:
+                self._theme_combo.setCurrentIndex(i)
+                break
+        self._theme_combo.currentIndexChanged.connect(self._on_theme_changed)
+        ag.addRow(self._t('setup_theme'), self._theme_combo)
+        outer.addWidget(appear_grp)
+
         # Test tone — proves the output path end to end.
         tone_grp = QGroupBox(self._t('setup_testtone_group'))
         tg = QVBoxLayout(tone_grp)
@@ -3032,6 +3048,29 @@ class MainWindow(QMainWindow):
         # device opens. We don't re-open mid-tone — that would chop a
         # playing test tone for a setting that costs nothing to defer.
         self._cfg.output_prefer_duplex = bool(checked)
+        try:
+            sax_config.save_config(self._cfg)
+        except Exception:
+            pass
+
+    def _on_theme_changed(self, _idx: int) -> None:
+        name = self._theme_combo.currentData() or sax_theme.DEFAULT_THEME
+        self._apply_theme(str(name))
+
+    def _apply_theme(self, name: str) -> None:
+        """Switch the live UI theme: set the active palette, re-render the
+        global stylesheet, repaint the custom-painted widgets (which read
+        sax_theme.active() each paint), and persist the choice. Coerces any
+        value; never raises into the signal."""
+        pal = sax_theme.set_active(name)
+        self.setStyleSheet(sax_theme.build_app_qss(pal))
+        # The stylesheet re-polish repaints QSS-styled widgets; the QPainter-
+        # based widgets (tuner, table, chart) need an explicit nudge to re-read
+        # the palette.
+        self.update()
+        for _w in self.findChildren(QWidget):
+            _w.update()
+        self._cfg.theme = pal.name
         try:
             sax_config.save_config(self._cfg)
         except Exception:
