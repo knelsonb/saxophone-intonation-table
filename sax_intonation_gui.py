@@ -93,6 +93,19 @@ try:
 except Exception:
     _PitchPipesController = None
 
+# Sprint 4: the tape deck (record mic → single take → playback/export) lives in
+# sax_deck.py (DeckController state machine + DeckPlaybackSource + WAV io). Same
+# inert-until-landed discipline as metro/drone — the DECK tab builds and renders
+# its transport, and every controller call is guarded, whether or not sax_deck
+# has landed yet. The GUI-facing contract (channel-firmed): DeckController(
+# mixer, samplerate, *, engine, scratch_dir, on_state_changed); .state ∈
+# {idle, recording, have_take, playing} (hyphen/underscore tolerated);
+# start_record()->bool, stop(), play(), export(path)->bool.
+try:
+    from sax_deck import DeckController as _DeckController
+except Exception:
+    _DeckController = None
+
 APP_NAME = 'Intonation Analyzer'
 APP_VERSION = '0.9.0'
 
@@ -2764,8 +2777,7 @@ class MainWindow(QMainWindow):
         self._tab_keys = ['tuner', 'metro', 'deck', 'setup']
         self._tabs.addTab(splitter, self._t('nav_tab_tuner'))
         self._tabs.addTab(self._build_metro_tab(), self._t('nav_tab_metro'))
-        self._tabs.addTab(self._build_placeholder_tab('deck'),
-                          self._t('nav_tab_deck'))
+        self._tabs.addTab(self._build_deck_tab(), self._t('nav_tab_deck'))
         self._tabs.addTab(self._build_setup_tab(), self._t('nav_tab_setup'))
         for i, key in enumerate(self._tab_keys):
             self._tabs.setTabToolTip(i, self._t(f'nav_tab_{key}_tip'))
@@ -2839,26 +2851,6 @@ class MainWindow(QMainWindow):
         self._populate_instrument_combo(select_key=self.instrument)
 
     # ── Navigation shell helpers (Sprint 1) ──────────────────────────────────
-    def _build_placeholder_tab(self, key: str) -> QWidget:
-        """A holding body for METRO / DECK until Sprints 2 and 4 fill them.
-        The tab + its status-dot hook already exist so the nav shell is
-        stable now; the feature sprints replace this body only. The label
-        names the feature and its purpose so the tab never reads as broken."""
-        w = QWidget()
-        lay = QVBoxLayout(w)
-        lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title = QLabel(self._t(f'nav_tab_{key}'))
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setStyleSheet('color:#555;font-size:22px;font-weight:bold;'
-                             'letter-spacing:3px;')
-        sub = QLabel(self._t(f'nav_tab_{key}_tip'))
-        sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        sub.setWordWrap(True)
-        sub.setStyleSheet('color:#444;font-size:13px;padding-top:6px;')
-        lay.addWidget(title)
-        lay.addWidget(sub)
-        return w
-
     def _build_setup_tab(self) -> QWidget:
         """SETUP tab. Sprint 1 delivers the audio-OUTPUT controls: an
         output-device picker, the duplex-preference toggle (D5), and a
@@ -3142,8 +3134,11 @@ class MainWindow(QMainWindow):
         self._metro_dot.setVisible(bool(running))
 
     def set_deck_recording(self, recording: bool) -> None:
-        """Public hook for the (future) DeckController: show a pulsing red
-        dot on the DECK tab while a take is recording."""
+        """Public hook for the DeckController: show a pulsing red dot on the
+        DECK tab while a take is recording. No-ops if the indicator hasn't been
+        built yet (the deck tab is built before _install_tab_indicators runs)."""
+        if not hasattr(self, '_deck_dot'):
+            return
         if recording:
             self._deck_pulse_bright = True
             self._deck_dot.set_color('#e74c3c')
@@ -3441,6 +3436,325 @@ class MainWindow(QMainWindow):
                 b.setChecked(k == ts)
                 b.blockSignals(bb)
             self._cfg.last_time_sig = ts
+
+    # ── Tape deck (Sprint 4) ──────────────────────────────────────────────────
+    # Android useDeck parity: record the MIC to a single take, play it back
+    # through the mixer, export it to a WAV. DeckController (sax_deck.py) owns the
+    # state machine + the engine input-recording tap + WAV io; this panel is its
+    # transport and is inert+guarded until the module lands. Honesty discipline:
+    # the pulsing-red dot + a 'recording' state appear ONLY when the controller
+    # actually armed the mic input — never on a bare button press.
+    #
+    # The one wire beyond the drone/metro pattern: deck.pump() runs on a GUI-side
+    # timer. Playback-end and cap-hit transitions are detected there (the audio
+    # thread only flips a lock-free .finished flag); pump() performs the
+    # transition and fires on_state_changed ON THE GUI THREAD, so buttons are
+    # always relabelled on-thread (Sauron's contract, 3550).
+    DECK_STATES = ('idle', 'recording', 'have_take', 'playing')
+
+    def _build_deck_tab(self) -> QWidget:
+        """The DECK tab: Record / Stop / Play / Export transport with
+        state-driven enable + labels, an inline status line, and the pulsing-red
+        recording dot (set_deck_recording, built Sprint 1). Wired to
+        DeckController once sax_deck lands; inert + guarded until then."""
+        self._deck_played_once = False
+        self._deck_last_state = None
+        self._deck_last_can_record = None
+        # Construct the controller (None → inert transport). Mirrors drone/metro,
+        # plus max_seconds (Sauron's contract) from the clamped config field.
+        self._deck_ctrl = None
+        if (_DeckController is not None
+                and getattr(self._engine, 'mixer', None) is not None):
+            try:
+                sr = int(getattr(self._engine, 'output_samplerate', 0)
+                         or self._engine_sample_rate() or 44100)
+                self._deck_ctrl = _DeckController(
+                    self._engine.mixer, sr,
+                    engine=self._engine,           # arms the input-recording tap
+                    max_seconds=float(getattr(self._cfg, 'deck_max_seconds',
+                                              300.0) or 300.0),
+                    scratch_dir=(str(getattr(self._cfg, 'deck_scratch_dir', '')
+                                     or '') or None),
+                    on_state_changed=self._on_deck_state_changed)
+            except Exception:
+                self._deck_ctrl = None
+
+        w = QWidget()
+        outer = QVBoxLayout(w)
+        outer.setContentsMargins(24, 20, 24, 20)
+        outer.setSpacing(16)
+        outer.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        title = QLabel(self._t('deck_group'))
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setStyleSheet('color:#888;font-size:18px;font-weight:bold;'
+                            'letter-spacing:3px;')
+        outer.addWidget(title)
+
+        # Big state readout: empty / recording / take ready / playing.
+        self._deck_state_lbl = QLabel('')
+        self._deck_state_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._deck_state_lbl.setStyleSheet('color:#6699cc;font-size:20px;'
+                                           'font-weight:bold;padding:8px;')
+        outer.addWidget(self._deck_state_lbl)
+
+        # Transport: Record (toggle, green→red) · Stop · Play/Replay · Export.
+        row = QHBoxLayout()
+        self._btn_deck_record = QPushButton(self._t('deck_record'))
+        self._btn_deck_record.setCheckable(True)
+        self._btn_deck_record.setToolTip(self._t('deck_record_tip'))
+        self._btn_deck_record.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_deck_record.toggled.connect(self._on_deck_record_toggle)
+        self._btn_deck_record.setStyleSheet(
+            'QPushButton{background:#1a6b3a;color:#fff;border:none;border-radius:'
+            '6px;padding:12px 18px;font-size:15px;font-weight:bold;}'
+            'QPushButton:hover{background:#218a4b;}'
+            'QPushButton:checked{background:#c0392b;}'
+            'QPushButton:disabled{background:#222;color:#666;}')
+        self._btn_deck_stop = QPushButton(self._t('deck_stop'))
+        self._btn_deck_play = QPushButton(self._t('deck_play'))
+        self._btn_deck_play.setToolTip(self._t('deck_play_tip'))
+        self._btn_deck_export = QPushButton(self._t('deck_export'))
+        self._btn_deck_export.setToolTip(self._t('deck_export_tip'))
+        self._btn_deck_stop.clicked.connect(self._on_deck_stop)
+        self._btn_deck_play.clicked.connect(self._on_deck_play)
+        self._btn_deck_export.clicked.connect(self._on_deck_export)
+        for b in (self._btn_deck_stop, self._btn_deck_play,
+                  self._btn_deck_export):
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.setStyleSheet(
+                'QPushButton{background:#34495e;color:#eee;border:none;'
+                'border-radius:6px;padding:12px 18px;font-size:15px;}'
+                'QPushButton:hover{background:#3d566e;}'
+                'QPushButton:disabled{background:#222;color:#666;}')
+        row.addWidget(self._btn_deck_record)
+        row.addWidget(self._btn_deck_stop)
+        row.addWidget(self._btn_deck_play)
+        row.addWidget(self._btn_deck_export)
+        outer.addLayout(row)
+
+        # Parity note: records the mic only, a single take.
+        hint = QLabel(self._t('deck_hint'))
+        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        hint.setWordWrap(True)
+        hint.setStyleSheet('color:#666;font-size:11px;padding-top:2px;')
+        outer.addWidget(hint)
+
+        # Inline status — shown only when an action can't run / fails or to
+        # confirm an export, so the transport never silently lies.
+        self._deck_status = QLabel('')
+        self._deck_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._deck_status.setWordWrap(True)
+        self._deck_status.setVisible(False)
+        outer.addWidget(self._deck_status)
+        outer.addStretch()
+
+        # GUI-thread pump tick: drives playback-end + cap-hit transitions and
+        # keeps the can_record() button-enable fresh as the mic opens/closes.
+        self._deck_pump_timer = QTimer(self)
+        self._deck_pump_timer.setInterval(100)
+        self._deck_pump_timer.timeout.connect(self._deck_pump)
+        if self._deck_ctrl is not None:
+            self._deck_pump_timer.start()
+
+        # Paint the initial (idle/empty, or controller-driven) transport.
+        self._sync_deck_transport()
+        return w
+
+    def _deck_state(self) -> str:
+        """Current deck state normalized into DECK_STATES. Tolerates a str or an
+        enum, and hyphen OR underscore ('have-take'/'have_take'), so the GUI
+        can't drift from sax_deck's exact spelling (str-enum, value 'have-take')."""
+        ctrl = self._deck_ctrl
+        if ctrl is None:
+            return 'idle'
+        raw = getattr(ctrl, 'state', 'idle')
+        val = getattr(raw, 'value', None) or getattr(raw, 'name', None) or raw
+        s = str(val).replace('-', '_').lower()
+        return s if s in self.DECK_STATES else 'idle'
+
+    def _deck_can_record(self) -> bool:
+        """Honest pre-click probe: can a take be armed right now? Backed by the
+        controller's can_record() (engine.input_running). Optimistic only when
+        the controller lacks the probe — start_record()'s False-return is the
+        authoritative post-click check either way."""
+        ctrl = self._deck_ctrl
+        if ctrl is None:
+            return False
+        if hasattr(ctrl, 'can_record'):
+            try:
+                return bool(ctrl.can_record())
+            except Exception:
+                return False
+        return True
+
+    def _sync_deck_transport(self) -> None:
+        """Single source of truth: paint every transport control, the recording
+        dot, and the state readout from the controller's state. Called at build,
+        on every on_state_changed, and on the pump tick (for can_record changes)."""
+        state = self._deck_state()
+        can_record = self._deck_can_record()
+        recording = state == 'recording'
+        playing = state == 'playing'
+        have_take = state in ('have_take', 'playing')
+
+        # Record toggle: checked iff recording; enabled while recording (so the
+        # untoggle can stop it) or when a fresh arm is honestly possible.
+        blocked = self._btn_deck_record.blockSignals(True)
+        self._btn_deck_record.setChecked(recording)
+        self._btn_deck_record.blockSignals(blocked)
+        self._btn_deck_record.setEnabled(
+            recording or (state in ('idle', 'have_take') and can_record))
+        # Stop: only while something is sounding/capturing.
+        self._btn_deck_stop.setEnabled(recording or playing)
+        # Play/Replay: a take exists (have-take → play; playing → restart@0).
+        self._btn_deck_play.setEnabled(have_take)
+        self._btn_deck_play.setText(
+            self._t('deck_replay') if (self._deck_played_once or playing)
+            else self._t('deck_play'))
+        # Export: whenever a take exists.
+        self._btn_deck_export.setEnabled(have_take)
+
+        # The pulsing-red dot is driven ONLY by a real 'recording' state — never
+        # by a bare button press (the honesty seam Treebeard locks).
+        self.set_deck_recording(recording)
+
+        key = {'idle': 'deck_status_empty', 'recording': 'deck_status_recording',
+               'have_take': 'deck_status_have_take',
+               'playing': 'deck_status_playing'}[state]
+        self._deck_state_lbl.setText(self._t(key))
+
+        self._deck_last_state = state
+        self._deck_last_can_record = can_record
+
+    def _deck_show_status(self, key: str, *, error: bool = True) -> None:
+        """Inline transport status. Red for can't/failed, green for confirmation
+        (export done) — never leave a stale message of the wrong colour."""
+        self._deck_status.setStyleSheet(
+            'color:%s;font-size:12px;padding-top:4px;'
+            % ('#c0392b' if error else '#2ecc71'))
+        self._deck_status.setText(self._t(key))
+        self._deck_status.setVisible(True)
+
+    def _on_deck_state_changed(self) -> None:
+        """Zero-arg slot for DeckController.on_state_changed — always fires on
+        the GUI thread (Sauron marshals playback-end/cap-hit through pump()).
+        Clears stale status and repaints the transport from the new state."""
+        self._deck_status.setVisible(False)
+        self._sync_deck_transport()
+
+    def _deck_pump(self) -> None:
+        """GUI-thread tick: let the controller detect playback-end / cap-hit
+        (it fires on_state_changed when a transition happens), then re-sync if
+        the state or the can_record() probe changed (e.g. the mic opened)."""
+        ctrl = self._deck_ctrl
+        if ctrl is None:
+            return
+        try:
+            if hasattr(ctrl, 'pump'):
+                ctrl.pump()          # may fire on_state_changed → _sync
+        except Exception:
+            pass
+        if (self._deck_state() != self._deck_last_state
+                or self._deck_can_record() != self._deck_last_can_record):
+            self._sync_deck_transport()
+
+    def _deck_revert_record(self) -> None:
+        """Un-check Record (without re-firing the toggle) and show 'unavailable'
+        — used whenever recording can't actually arm, so the button never claims
+        to be recording and the dot stays hidden."""
+        blocked = self._btn_deck_record.blockSignals(True)
+        self._btn_deck_record.setChecked(False)
+        self._btn_deck_record.blockSignals(blocked)
+        self.set_deck_recording(False)
+        self._deck_show_status('deck_unavailable')
+
+    def _on_deck_record_toggle(self, on: bool) -> None:
+        if self._deck_ctrl is None:
+            self._deck_revert_record()
+            return
+        if not on:
+            # Un-toggling Record while recording = stop the take.
+            try:
+                self._deck_ctrl.stop()      # fires on_state_changed
+            except Exception:
+                self._sync_deck_transport()
+            return
+        self._deck_status.setVisible(False)
+        # Recording arms the MIC INPUT (not the output). The controller opens it
+        # and returns False if it can't — then revert + status, so there is no
+        # false 'recording' state when the input isn't open.
+        ok = False
+        try:
+            ok = bool(self._deck_ctrl.start_record())
+        except Exception:
+            ok = False
+        if ok:
+            self._deck_played_once = False   # a fresh take replaces the old one
+            # success → controller fires on_state_changed → recording paint.
+        else:
+            self._deck_revert_record()
+            self._sync_deck_transport()
+
+    def _on_deck_stop(self) -> None:
+        if self._deck_ctrl is None:
+            return
+        try:
+            self._deck_ctrl.stop()           # fires on_state_changed
+        except Exception:
+            self._sync_deck_transport()
+
+    def _on_deck_play(self) -> None:
+        if self._deck_ctrl is None:
+            self._deck_show_status('deck_play_unavailable')
+            return
+        self._deck_status.setVisible(False)
+        # Playback sounds through the output mixer — ensure an output stream is
+        # open before claiming to play (don't show 'playing' if nothing can be
+        # heard). Mirrors drone/metro.
+        if not self._ensure_output_open():
+            self._deck_show_status('deck_play_unavailable')
+            return
+        sr = int(getattr(self._engine, 'output_samplerate', 0) or 0)
+        if sr and hasattr(self._deck_ctrl, 'set_samplerate'):
+            try:
+                self._deck_ctrl.set_samplerate(sr)
+            except Exception:
+                pass
+        ok = False
+        try:
+            ok = bool(self._deck_ctrl.play())   # fires on_state_changed
+        except Exception:
+            ok = False
+        if ok:
+            self._deck_played_once = True
+        else:
+            self._deck_show_status('deck_play_unavailable')
+            self._sync_deck_transport()
+
+    def _on_deck_export(self) -> None:
+        if self._deck_ctrl is None:
+            self._deck_show_status('deck_export_fail')
+            return
+        # File dialog — reuse sax_export's getSaveFileName pattern, .wav filter.
+        start = str(getattr(self._cfg, 'last_take_path', '') or '')
+        path, _sel = QFileDialog.getSaveFileName(
+            self, self._t('deck_export_title'), start,
+            self._t('deck_export_filter'))
+        if not path:
+            return
+        if not path.lower().endswith('.wav'):
+            path += '.wav'
+        ok = False
+        try:
+            ok = bool(self._deck_ctrl.export(path))
+        except Exception:
+            ok = False
+        if ok:
+            self._cfg.last_take_path = path
+            self._deck_show_status('deck_export_done', error=False)
+        else:
+            self._deck_show_status('deck_export_fail')
 
     # ── Drone + pitch pipes (Sprint 3) ────────────────────────────────────────
     @staticmethod
@@ -4606,6 +4920,16 @@ class MainWindow(QMainWindow):
         # dangling audio stream is not.
         try:
             self._save_session_state()
+        except Exception:
+            pass
+        # Tear the tape deck down BEFORE the engine stops, so a recording/playing
+        # take disarms the input tap and unregisters its mixer source — close()
+        # is idempotent and never raises (Sauron's contract), never orphans.
+        try:
+            if getattr(self, '_deck_pump_timer', None) is not None:
+                self._deck_pump_timer.stop()
+            if getattr(self, '_deck_ctrl', None) is not None:
+                self._deck_ctrl.close()
         except Exception:
             pass
         self._engine.stop()
