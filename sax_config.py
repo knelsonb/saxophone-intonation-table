@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Optional
 
 from sax_atomic import atomic_write_json
+from sax_theme import coerce_theme_name
 
 
 CONFIG_DIR = Path.home() / ".intonation_analyzer"
@@ -153,6 +154,13 @@ class AppConfig:
     # Kept distinct from last_take_path (export destination) so the scratch
     # lifecycle and the user's chosen save location never collide.
     deck_scratch_dir: str = ""
+
+    # ---- v0.11.0 theme switching (parity Sprint 5) -----------------------
+    # UI theme: 'dark' (default, the original look), 'night' (red-shifted,
+    # low-blue for dark-hall tuning), or 'light'. Coerced to a known theme on
+    # load via sax_theme.coerce_theme_name, so a stale/unknown value degrades
+    # to dark rather than leaving the app unstyled.
+    theme: str = "dark"
 
     def effective_log_path(self) -> Optional[Path]:
         if not self.persistence_enabled:
@@ -345,6 +353,7 @@ def load_config() -> AppConfig:
         deck_max_seconds=max(1, min(600, _as_int(data.get("deck_max_seconds"), 300))),
         last_take_path=_as_str(data.get("last_take_path"), ""),
         deck_scratch_dir=_as_str(data.get("deck_scratch_dir"), ""),
+        theme=coerce_theme_name(data.get("theme")),
     )
 
 

@@ -298,6 +298,35 @@ def test_last_bpm_clamped_to_range(isolated_config, raw, expected):
         f"last_bpm({raw!r}) -> {cfg.last_bpm}, expected {expected} (clamp 30-300)")
 
 
+# ---------------------------------------------------------------------------
+# v0.11.0 theme field (Sprint 5) -- coerced via sax_theme.coerce_theme_name.
+# ---------------------------------------------------------------------------
+def test_theme_roundtrip(isolated_config):
+    for name in ("dark", "night", "light"):
+        save_config(AppConfig(theme=name))
+        assert load_config().theme == name, f"theme {name!r} did not round-trip"
+
+
+@pytest.mark.parametrize("raw,expected", [
+    pytest.param("dark", "dark", id="dark"),
+    pytest.param("night", "night", id="night"),
+    pytest.param("light", "light", id="light"),
+    pytest.param("LIGHT", "light", id="uppercase_normalised"),
+    pytest.param("  Night ", "night", id="whitespace_stripped"),
+    pytest.param("bogus", "dark", id="unknown_degrades"),
+    pytest.param("", "dark", id="empty_degrades"),
+    pytest.param(None, "dark", id="missing_degrades"),
+    pytest.param(123, "dark", id="wrong_type_degrades"),
+])
+def test_theme_coercion(isolated_config, raw, expected):
+    import json
+    isolated_config.parent.mkdir(parents=True, exist_ok=True)
+    isolated_config.write_text(json.dumps({"theme": raw}), encoding="utf-8")
+    cfg = load_config()
+    assert cfg.theme == expected, (
+        f"theme({raw!r}) -> {cfg.theme}, expected {expected}")
+
+
 @pytest.mark.parametrize("raw,expected", [
     pytest.param("2/4", "2/4", id="two_four"),
     pytest.param("3/4", "3/4", id="three_four"),
