@@ -49,6 +49,8 @@ from typing import Optional
 
 import numpy as np
 
+from sax_mixer import Mixer, TestToneSource
+
 try:
     import sounddevice as sd
     AUDIO_OK = True
@@ -71,6 +73,15 @@ HOP_MS = 1000.0 * 2048.0 / 44100.0       # ~46 ms; preserved across rates
 BLOCK_MS = 1000.0 * 16384.0 / 44100.0    # ~372 ms; preserved across rates
 DEFAULT_HOP_SIZE = 2048
 DEFAULT_BLOCK_SIZE = 16384
+
+# Output-stream callback block. Unlike the input path (which needs a long
+# ~370 ms YIN window), the output mixer only has to fill the next playback
+# block, so it runs at the hop cadence (~46 ms) for low added latency. The
+# mixer's accumulator is sized to exactly this so its zero-allocation fast
+# path (frames == max_block) stays armed; recomputed per sample rate to hold
+# ~46 ms, mirroring the input hop. See OUT_BLOCK_MS.
+OUT_BLOCK_MS = HOP_MS                       # ~46 ms; preserved across rates
+DEFAULT_OUT_BLOCK = DEFAULT_HOP_SIZE        # 2048 frames at 44.1k
 
 # v0.5.6: candidate sample rates probed highest-first when the user picks
 # "auto". Higher rates buy parabolic-interpolation precision (see
@@ -362,6 +373,54 @@ def _probe_default_input_index() -> Optional[int]:
         return None
 
 
+def query_output_devices() -> list[DeviceInfo]:
+    """Return all output-capable devices. Empty list on any failure — the
+    mirror of ``query_input_devices`` for the output picker (D5: the input
+    picker pattern, generalized). ``max_input_channels`` in the returned
+    DeviceInfo carries the OUTPUT channel count for output devices, so the
+    same DeviceInfo/DeviceSelection persistence path is reused unchanged.
+    """
+    if not AUDIO_OK:
+        return []
+    out: list[DeviceInfo] = []
+    try:
+        devs = sd.query_devices()
+    except Exception:
+        return out
+    for i, d in enumerate(devs):
+        try:
+            ch = int(d.get('max_output_channels', 0))
+            if ch < 1:
+                continue
+            out.append(DeviceInfo(
+                index=i,
+                name=str(d.get('name', f'device #{i}')),
+                host_api=_host_api_name(int(d.get('hostapi', -1))),
+                max_input_channels=ch,
+                default_samplerate=float(d.get('default_samplerate', 44100.0)),
+            ))
+        except Exception:
+            continue
+    return out
+
+
+def _probe_default_output_index() -> Optional[int]:
+    """Return the system default OUTPUT device index, or None. Mirror of
+    ``_probe_default_input_index``; never raises."""
+    if not AUDIO_OK:
+        return None
+    try:
+        idx = sd.default.device[1]
+        if idx is None or idx < 0:
+            return None
+        info = sd.query_devices(idx)
+        if int(info.get('max_output_channels', 0)) < 1:
+            return None
+        return int(idx)
+    except Exception:
+        return None
+
+
 # ---------------------------------------------------------------------------
 # AudioEngine
 # ---------------------------------------------------------------------------
@@ -416,6 +475,38 @@ class AudioEngine:
         self._emissions_paused = False
         self._transitioning = False
         self._reset_filter_state()
+
+        # ---- output side (Sprint 1 audio-output foundation) ----------------
+        # Separate sd.OutputStream is the PRIMARY path (D5): it matches the
+        # common topology (mic on one device, playback on another), keeps the
+        # proven input lifecycle untouched, and owns the sample-accurate
+        # master clock via the mixer. Duplex stays a same-device opt-in for
+        # later. The output stream mirrors the input stream's lifecycle —
+        # worker-thread open with timeout, orphan disposal, hot-plug recovery
+        # — but on its OWN transitioning guard so it can never corrupt the
+        # input guard (both run on the Qt main thread; the guards are
+        # independent re-entrancy locks, not cross-thread sync).
+        self.mixer = Mixer(max_block=DEFAULT_OUT_BLOCK)
+        self._out_stream = None
+        self._out_transitioning = False
+        self.output_samplerate = DEFAULT_SAMPLE_RATE
+        self.output_block_size = DEFAULT_OUT_BLOCK
+        self.active_output_device: Optional[DeviceInfo] = None
+        self._last_output_snapshot: tuple = ()
+        # Output status — kept separate from the input state machine (which
+        # owns the pitch-detection lifecycle) so the two streams never
+        # contend for one state field. The GUI polls these / gets the bool
+        # back from open_output_device.
+        self.output_running: bool = False
+        self.last_output_error: AudioEngineError = AudioEngineError.NONE
+        self.last_output_error_message: str = ''
+        self._out_underflow_count: int = 0
+        # Persisted (name, host_api) hint for output hot-plug auto-recovery,
+        # mirroring _preferred_hint on the input side.
+        self._preferred_output_hint: Optional[DeviceSelection] = None
+        # Handle for the engine-managed test tone (Sprint-1 acceptance), so
+        # start/stop_test_tone are idempotent and don't leak sources.
+        self._test_tone_handle = None
 
         # Hot-plug snapshot.
         self._last_device_snapshot: tuple = ()
@@ -823,6 +914,393 @@ class AudioEngine:
         # open_device handles its own transitioning guard, teardown,
         # and FAILED/RUNNING transitions.
         self.open_device(sel)
+
+    # ---- output path (Sprint 1 audio-output foundation) -------------------
+    # Mirrors the input lifecycle on a separate sd.OutputStream (D5). Never
+    # raises across its public surface; failure becomes status
+    # (output_running=False + last_output_error*). All entry points run on the
+    # Qt main thread and use the independent _out_transitioning guard.
+    def open_output_device(self, sel: Optional[DeviceSelection],
+                           samplerate_pref: Optional[str] = None) -> bool:
+        """Open (or switch to) an output device and start pulling the mixer.
+
+        ``sel`` of None opens the system default output. Tears down any
+        current output stream first. Returns True on success, False on
+        failure; never raises. The new stream restarts the mixer's sample
+        clock so absolute-sample scheduling has a known origin.
+        """
+        if samplerate_pref is not None:
+            self.set_samplerate_pref(samplerate_pref)
+        if not AUDIO_OK:
+            self._set_output_failed(AudioEngineError.NO_DEVICE,
+                                    'sounddevice / PortAudio not available')
+            return False
+        if self._out_transitioning:
+            return False
+        self._out_transitioning = True
+        try:
+            self._teardown_output_stream()
+            devices = query_output_devices()
+            if not devices:
+                self._set_output_failed(AudioEngineError.NO_DEVICE,
+                                        'No audio output devices detected')
+                self._last_output_snapshot = ()
+                return False
+            self._last_output_snapshot = self._snapshot_key(devices)
+            return self._open_output_with_fallback(sel, devices)
+        finally:
+            self._out_transitioning = False
+
+    def stop_output(self) -> None:
+        """Tear down the output stream cleanly. Never raises. Leaves the mixer
+        and its registered sources intact so a re-open resumes them."""
+        self._teardown_output_stream()
+        self.output_running = False
+        self.last_output_error = AudioEngineError.NONE
+        self.last_output_error_message = ''
+
+    def set_preferred_output_hint(self, sel: Optional[DeviceSelection]) -> None:
+        """Stash the persisted output (name, host_api) for hot-plug recovery,
+        mirroring set_preferred_hint on the input side."""
+        if sel and sel.name:
+            self._preferred_output_hint = sel
+        else:
+            self._preferred_output_hint = None
+
+    def refresh_output_devices(self) -> list[DeviceInfo]:
+        """Poll the output device list. Mirror of refresh_devices for output.
+
+        If the active output device vanished while running, tears the stream
+        down and records DEVICE_DISCONNECTED. If a new output device appears
+        while we're stopped after a disconnect / no-device, auto-recovers the
+        same way the input path does.
+        """
+        if not AUDIO_OK:
+            return []
+        if self._out_transitioning:
+            return []
+        devices = query_output_devices()
+        active = self.active_output_device
+        key = self._snapshot_key(devices)
+        if key == self._last_output_snapshot:
+            return devices
+        prev_names = {n for (n, _h, _c) in self._last_output_snapshot}
+        new_names = {n for (n, _h, _c) in key}
+        appeared = new_names - prev_names
+        self._last_output_snapshot = key
+        # Active output device vanished?
+        if (self.output_running and active is not None
+                and not any(d.name == active.name
+                            and d.host_api == active.host_api
+                            for d in devices)):
+            self._teardown_output_stream()
+            self._set_output_failed(AudioEngineError.DEVICE_DISCONNECTED,
+                                    f'Output device disconnected: {active.name}')
+        # New output device appeared while we're down → auto-recover.
+        if (not self.output_running
+                and self.last_output_error in (
+                    AudioEngineError.NO_DEVICE,
+                    AudioEngineError.DEVICE_DISCONNECTED)
+                and appeared and devices):
+            self._auto_recover_output_after_hotplug(devices)
+        return devices
+
+    def _auto_recover_output_after_hotplug(
+            self, devices: list[DeviceInfo]) -> None:
+        """Pick an output device from the fresh list and try to open it.
+        Priority: persisted hint (name+host_api) → vendor-class → default."""
+        sel: Optional[DeviceSelection] = None
+        hint = self._preferred_output_hint
+        if hint and hint.name:
+            for d in devices:
+                if (d.name == hint.name
+                        and (not hint.host_api or d.host_api == hint.host_api)):
+                    sel = DeviceSelection(name=d.name, host_api=d.host_api,
+                                          samplerate=0)
+                    break
+        if sel is None:
+            best: Optional[DeviceInfo] = None
+            for d in devices:
+                if VENDOR_RE.search(d.name):
+                    if (best is None
+                            or d.default_samplerate > best.default_samplerate):
+                        best = d
+            if best is not None:
+                sel = DeviceSelection(name=best.name, host_api=best.host_api,
+                                      samplerate=0)
+        if sel is None:
+            di = _probe_default_output_index()
+            if di is not None:
+                for d in devices:
+                    if d.index == di:
+                        sel = DeviceSelection(name=d.name, host_api=d.host_api,
+                                              samplerate=0)
+                        break
+        if sel is None:
+            return
+        self.open_output_device(sel)
+
+    def get_sounding_output_midis(self) -> frozenset[int]:
+        """The set of MIDI notes the output is currently sounding (drone /
+        pitch pipe). Consumed by the input pitch detector for vote-exclude +
+        duck-on-suspicion (D3). Empty when nothing pitched is playing."""
+        return self.mixer.sounding_midis()
+
+    def start_test_tone(self, freq: float = 440.0) -> Optional[object]:
+        """Register a sine TestToneSource on the mixer and return its handle.
+
+        Sprint-1 acceptance vehicle ("a test tone plays through the mixer
+        while the tuner still reads the mic"). Idempotent: a second call
+        replaces the previous tone rather than stacking. Returns None if no
+        output stream is running (nothing would be heard)."""
+        if not self.output_running:
+            return None
+        self.stop_test_tone(self._test_tone_handle)
+        tone = TestToneSource(freq=float(freq),
+                              samplerate=int(self.output_samplerate),
+                              max_block=int(self.output_block_size),
+                              gain=0.2)
+        self._test_tone_handle = self.mixer.register(tone)
+        return self._test_tone_handle
+
+    def stop_test_tone(self, handle: Optional[object] = None) -> None:
+        """Unregister the test tone. With no handle, stops the engine-managed
+        one. Silent if nothing is registered."""
+        h = handle if handle is not None else self._test_tone_handle
+        if h is not None:
+            self.mixer.unregister(h)  # type: ignore[arg-type]
+        if handle is None or handle is self._test_tone_handle:
+            self._test_tone_handle = None
+
+    # ---- output internals -------------------------------------------------
+    def _set_output_failed(self, err: AudioEngineError, msg: str) -> None:
+        self.output_running = False
+        self.last_output_error = err
+        self.last_output_error_message = msg
+
+    def _resolve_output_candidates(
+            self, sel: Optional[DeviceSelection],
+            devices: list[DeviceInfo]) -> list[DeviceInfo]:
+        """Ordered output devices to attempt: saved selection (name+host_api,
+        then name), then system default output, then anything else; each
+        reordered by the platform host-API preference. Mirror of
+        _resolve_candidates for the output side."""
+        out: list[DeviceInfo] = []
+        if sel and sel.name:
+            for d in devices:
+                if (d.name == sel.name
+                        and (not sel.host_api or d.host_api == sel.host_api)):
+                    out.append(d)
+            for d in devices:
+                if d.name == sel.name and d not in out:
+                    out.append(d)
+        default_idx = _probe_default_output_index()
+        default_name = ''
+        if default_idx is not None:
+            for d in devices:
+                if d.index == default_idx:
+                    default_name = d.name
+                    break
+        if default_name:
+            for d in devices:
+                if d.name == default_name and d not in out:
+                    out.append(d)
+        for d in devices:
+            if d not in out:
+                out.append(d)
+        return self._reorder_by_host_api(out)
+
+    def _negotiate_output_sample_rate(self, dev: DeviceInfo) -> list[int]:
+        """Output-side mirror of _negotiate_sample_rate, using
+        check_output_settings. Honors a pinned rate; otherwise probes
+        SAMPLERATE_CANDIDATES highest-first then the device default."""
+        pref = self.samplerate_pref or 'auto'
+        if pref != 'auto':
+            try:
+                rate = int(pref)
+            except ValueError:
+                rate = 0
+            return [rate] if rate else []
+        out: list[int] = []
+        for rate in SAMPLERATE_CANDIDATES:
+            try:
+                sd.check_output_settings(device=dev.index, channels=1,
+                                         dtype='float32', samplerate=rate)
+                out.append(rate)
+            except Exception:
+                continue
+        dev_default = int(dev.default_samplerate or 0)
+        if dev_default and dev_default not in out:
+            try:
+                sd.check_output_settings(device=dev.index, channels=1,
+                                         dtype='float32',
+                                         samplerate=dev_default)
+                out.append(dev_default)
+            except Exception:
+                pass
+        return out
+
+    def _open_output_with_fallback(self, sel: Optional[DeviceSelection],
+                                   devices: list[DeviceInfo]) -> bool:
+        """Walk candidate devices × sample rates until one OutputStream opens.
+        Mirror of _open_with_fallback. Returns True on success."""
+        candidates = self._resolve_output_candidates(sel, devices)
+        pinned = (self.samplerate_pref or 'auto') != 'auto'
+        last_err: AudioEngineError = AudioEngineError.UNKNOWN
+        last_msg = ''
+        for dev in candidates:
+            sr_clean = self._negotiate_output_sample_rate(dev)
+            if not sr_clean:
+                last_err = AudioEngineError.UNSUPPORTED_RATE
+                last_msg = (f'{dev.name} [{dev.host_api}]: output does not '
+                            f'accept the requested sample rate')
+                continue
+            for sr in sr_clean:
+                ok, err_kind, err_msg = self._try_open_output(dev, sr)
+                if ok:
+                    return True
+                last_err, last_msg = err_kind, err_msg
+                if pinned:
+                    break
+                if err_kind not in (AudioEngineError.UNSUPPORTED_RATE,
+                                    AudioEngineError.HOSTAPI_FAILURE):
+                    break
+            if pinned:
+                break
+        self._set_output_failed(last_err, last_msg)
+        return False
+
+    def _try_open_output(self, dev: DeviceInfo,
+                         samplerate: int) -> tuple[bool, AudioEngineError, str]:
+        """One OutputStream open attempt. Mirror of _try_open: worker thread
+        with HOST_API_OPEN_TIMEOUT_S join + cancelled-flag orphan disposal so
+        a wedged output driver can't freeze the GUI and can't leak a started
+        stream."""
+        out_block = max(256, int(round(samplerate * OUT_BLOCK_MS / 1000.0)))
+        # Size the mixer to the actual block so its zero-alloc fast path is
+        # armed, and restart the sample clock for the new stream.
+        self.mixer.resize(out_block)
+        self.mixer.reset_clock(0)
+        result: dict = {'stream': None, 'err_kind': None, 'err_msg': '',
+                        'cancelled': False}
+        cb = self._make_output_callback(samplerate)
+
+        def worker() -> None:
+            try:
+                stream = sd.OutputStream(
+                    samplerate=samplerate,
+                    blocksize=out_block,
+                    channels=1,
+                    dtype='float32',
+                    callback=cb,
+                    device=dev.index,
+                )
+            except Exception as exc:
+                result['err_kind'] = self._classify_error(exc)
+                result['err_msg'] = f'{dev.name} [{dev.host_api}]: {exc}'
+                return
+            try:
+                stream.start()
+            except Exception as exc:
+                try:
+                    stream.close()
+                except Exception:
+                    pass
+                result['err_kind'] = self._classify_error(exc)
+                result['err_msg'] = f'{dev.name} [{dev.host_api}]: {exc}'
+                return
+            if result['cancelled']:
+                try:
+                    stream.stop()
+                except Exception:
+                    pass
+                try:
+                    stream.close()
+                except Exception:
+                    pass
+                return
+            result['stream'] = stream
+
+        t = threading.Thread(target=worker, daemon=True)
+        t.start()
+        t.join(timeout=HOST_API_OPEN_TIMEOUT_S)
+        if t.is_alive():
+            result['cancelled'] = True
+            handoff = result.get('stream')
+            if handoff is not None:
+                try:
+                    handoff.stop()
+                except Exception:
+                    pass
+                try:
+                    handoff.close()
+                except Exception:
+                    pass
+                result['stream'] = None
+            return False, AudioEngineError.HOSTAPI_FAILURE, (
+                f'{dev.name} [{dev.host_api}]: output open timed out '
+                f'after {HOST_API_OPEN_TIMEOUT_S:.1f}s')
+        if result['stream'] is None:
+            return False, (result['err_kind'] or AudioEngineError.UNKNOWN), \
+                   str(result['err_msg'])
+
+        # Success — install under the lock, same discipline as the input side.
+        with self._lock:
+            self._out_stream = result['stream']
+            self.output_samplerate = int(samplerate)
+            self.output_block_size = int(out_block)
+            self._out_underflow_count = 0
+            self.active_output_device = dev
+        self.output_running = True
+        self.last_output_error = AudioEngineError.NONE
+        self.last_output_error_message = ''
+        return True, AudioEngineError.NONE, ''
+
+    def _make_output_callback(self, samplerate: int):
+        """Build the PortAudio output callback. It pulls exactly one block
+        from the mixer into the device buffer. No allocation, no locks held
+        across numpy work (the mixer enforces both); never raises back into
+        PortAudio."""
+        engine = self
+
+        def cb(outdata, frames, ti, st):
+            try:
+                if st is not None and getattr(st, 'output_underflow', False):
+                    with engine._lock:
+                        engine._out_underflow_count += 1
+                # outdata is (frames, channels); the mixer is mono. Pulling
+                # into the first channel's view keeps a single source of
+                # truth; for a multi-channel device the mixer broadcasts.
+                if outdata.ndim == 2 and outdata.shape[1] == 1:
+                    engine.mixer.render(outdata[:, 0], frames)
+                else:
+                    engine.mixer.render(outdata, frames)
+            except Exception:
+                # Output callback must never raise into PortAudio. On any
+                # failure, emit silence for this block rather than garbage.
+                try:
+                    outdata.fill(0.0)
+                except Exception:
+                    pass
+
+        return cb
+
+    def _teardown_output_stream(self) -> None:
+        """Stop + close the output stream. Mirror of _teardown_stream: null
+        the handle under the lock, then stop/close outside it."""
+        with self._lock:
+            stream = self._out_stream
+            self._out_stream = None
+        if stream is None:
+            return
+        try:
+            stream.stop()
+        except Exception:
+            pass
+        try:
+            stream.close()
+        except Exception:
+            pass
 
     # ---- internals --------------------------------------------------------
     @staticmethod
