@@ -1362,6 +1362,10 @@ class AudioEngine:
         self.mixer.reset_clock(0)
         result: dict = {'stream': None, 'err_kind': None, 'err_msg': '',
                         'cancelled': False}
+        # Atomic hand-off lock, mirror of _try_open (backlog #7): serialises the
+        # worker's check-cancelled+hand-off against the main thread's
+        # set-cancelled+claim so a just-handed-off stream can't be orphaned.
+        hlock = threading.Lock()
         cb = self._make_output_callback(samplerate)
 
         def worker() -> None:
@@ -1388,7 +1392,11 @@ class AudioEngine:
                 result['err_kind'] = self._classify_error(exc)
                 result['err_msg'] = f'{dev.name} [{dev.host_api}]: {exc}'
                 return
-            if result['cancelled']:
+            with hlock:
+                cancelled = result['cancelled']
+                if not cancelled:
+                    result['stream'] = stream
+            if cancelled:
                 try:
                     stream.stop()
                 except Exception:
@@ -1397,15 +1405,16 @@ class AudioEngine:
                     stream.close()
                 except Exception:
                     pass
-                return
-            result['stream'] = stream
+            return
 
         t = threading.Thread(target=worker, daemon=True)
         t.start()
         t.join(timeout=HOST_API_OPEN_TIMEOUT_S)
         if t.is_alive():
-            result['cancelled'] = True
-            handoff = result.get('stream')
+            with hlock:
+                result['cancelled'] = True
+                handoff = result.get('stream')
+                result['stream'] = None
             if handoff is not None:
                 try:
                     handoff.stop()
@@ -1415,7 +1424,6 @@ class AudioEngine:
                     handoff.close()
                 except Exception:
                     pass
-                result['stream'] = None
             return False, AudioEngineError.HOSTAPI_FAILURE, (
                 f'{dev.name} [{dev.host_api}]: output open timed out '
                 f'after {HOST_API_OPEN_TIMEOUT_S:.1f}s')
@@ -1683,6 +1691,10 @@ class AudioEngine:
         # busy until process exit, and subsequent opens fail.
         result: dict = {'stream': None, 'err_kind': None, 'err_msg': '',
                         'cancelled': False}
+        # Serialise the worker's (check-cancelled + hand-off) against the main
+        # thread's (set-cancelled + claim-handoff) so a stream finished in the
+        # gap between those two steps can never be orphaned (backlog #7).
+        hlock = threading.Lock()
 
         cb = self._make_callback(samplerate)
 
@@ -1710,10 +1722,15 @@ class AudioEngine:
                 result['err_kind'] = self._classify_error(exc)
                 result['err_msg'] = f'{dev.name} [{dev.host_api}]: {exc}'
                 return
-            # Main thread may have timed out waiting for us. If so,
-            # dispose the stream rather than hand it off -- nobody is
-            # left to own it.
-            if result['cancelled']:
+            # The cancelled-check and the hand-off must be ONE critical section,
+            # else the main thread can set cancelled + read stream==None +
+            # return in the gap, orphaning this started stream. Dispose OUTSIDE
+            # the lock so a blocking stop()/close() can't stall the main thread.
+            with hlock:
+                cancelled = result['cancelled']
+                if not cancelled:
+                    result['stream'] = stream
+            if cancelled:
                 try:
                     stream.stop()
                 except Exception:
@@ -1722,8 +1739,7 @@ class AudioEngine:
                     stream.close()
                 except Exception:
                     pass
-                return
-            result['stream'] = stream
+            return
 
         t = threading.Thread(target=worker, daemon=True)
         t.start()
@@ -1734,11 +1750,14 @@ class AudioEngine:
             # completed by the time we set this flag, the assignment is
             # harmless -- result['stream'] is already populated and we
             # fall through to the success path below.
-            result['cancelled'] = True
-            # Race: the worker may have finished and assigned
-            # result['stream'] in the window between our t.is_alive()
-            # check and setting cancelled. Dispose it here too.
-            handoff = result.get('stream')
+            # Atomically mark cancelled AND claim any stream the worker already
+            # handed off, under the same lock the worker uses, so exactly one
+            # side owns the disposal -- no orphan, no double-dispose. Dispose
+            # outside the lock.
+            with hlock:
+                result['cancelled'] = True
+                handoff = result.get('stream')
+                result['stream'] = None
             if handoff is not None:
                 try:
                     handoff.stop()
@@ -1748,7 +1767,6 @@ class AudioEngine:
                     handoff.close()
                 except Exception:
                     pass
-                result['stream'] = None
             return False, AudioEngineError.HOSTAPI_FAILURE, (
                 f'{dev.name} [{dev.host_api}]: open timed out '
                 f'after {HOST_API_OPEN_TIMEOUT_S:.1f}s')
