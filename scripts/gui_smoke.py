@@ -194,6 +194,68 @@ def main() -> int:
     check(fake.is_running(),
           "metronome did not resume after the output device switch")
 
+    # Drone bar + pitch pipes (Sprint 3). The controllers may or may not be
+    # present (sax_drone / sax_pitch_pipes land in CI's venv). Either way,
+    # headless has NO real output device — so force output "down" and assert the
+    # honesty path: an audio action that can't sound must revert + show status,
+    # never claim to be running. (The prior device-switch block left output
+    # "up"; reset it here.)
+    win._engine.output_running = False
+    win._engine.open_output_device = lambda *a, **k: None  # never comes up
+    win._tabs.setCurrentIndex(win._tab_keys.index("tuner"))
+    app.processEvents()
+    check(len(win._drone_preset_btns) == 5,
+          f"expected 5 drone preset buttons, got {len(win._drone_preset_btns)}")
+    check(win._drone_voice_combo.count() >= 5,
+          "SETUP drone voice combo has no entries")
+    win._btn_drone_on.setChecked(True)
+    app.processEvents()
+    check(not win._btn_drone_on.isChecked(),
+          "drone on-button stayed checked with no audible output (button lies)")
+    check(win._drone_status.isVisible(),
+          "drone 'unavailable' status not shown when it could not sound")
+    win._on_drone_preset("cello")
+    check(win._drone_voice_id == "cello" and win._cfg.drone_voice_id == "cello",
+          f"drone preset did not update voice id: {win._drone_voice_id}")
+    win._drone_semitone_nudge(100)
+    check(win._drone_semitones == 12,
+          f"drone semitone did not clamp high: {win._drone_semitones}")
+    win._drone_semitone_nudge(-100)
+    check(win._drone_semitones == -12,
+          f"drone semitone did not clamp low: {win._drone_semitones}")
+    win._open_pitch_pipes()
+    app.processEvents()
+    check(len(win._pipe_btns) == 12,
+          f"expected 12 pitch-pipe pads, got {len(win._pipe_btns)}")
+    win._on_pipe_tapped(60)
+    check(win._pipes_status.isVisible(),
+          "pitch-pipe 'unavailable' status not shown when it could not sound")
+    if win._pipes_dlg is not None:
+        win._pipes_dlg.close()
+    app.processEvents()
+
+    # D3 duck-attach (GUI-wiring lock): enabling the drone with output "up" must
+    # attach its source to the engine's duck consumer, or the drone sounds but
+    # never ducks on mic bleed in the live app. The unit/e2e tests attach the
+    # consumer manually (engine.coordination_step), so ONLY a GUI-path check
+    # catches a controller built without engine=. Skip gracefully if the drone
+    # controller didn't construct (no sax_drone in this env).
+    if win._drone_ctrl is not None and hasattr(win._engine, "attach_duck_consumer"):
+        attached = []
+        _real_attach = win._engine.attach_duck_consumer
+        win._engine.attach_duck_consumer = (
+            lambda c: (attached.append(c), _real_attach(c))[1])
+        win._engine.output_running = True
+        win._engine.output_samplerate = 44100
+        win._engine.open_output_device = lambda *a, **k: None
+        win._btn_drone_on.setChecked(True)
+        app.processEvents()
+        check(bool(attached),
+              "enabling the drone did NOT attach a duck consumer "
+              "(DroneController missing engine= → no duck in the live app)")
+        win._btn_drone_on.setChecked(False)
+        app.processEvents()
+
     win.close()
 
     if failures:
@@ -201,8 +263,8 @@ def main() -> int:
         for f in failures:
             print(f"  - {f}")
         return 1
-    print("GUI SMOKE OK — nav shell, status dots, SETUP + METRO panels, "
-          "device-switch bracket all sound.")
+    print("GUI SMOKE OK — nav shell, status dots, SETUP + METRO + drone/pipes "
+          "panels, device-switch bracket all sound.")
     return 0
 
 
