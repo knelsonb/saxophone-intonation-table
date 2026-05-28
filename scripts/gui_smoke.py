@@ -127,6 +127,35 @@ def main() -> int:
     check(win._test_tone_status.isVisible(),
           "test-tone failure status not shown when start failed")
 
+    # METRO panel (Sprint 2) — built inert (no controller in headless). Verify
+    # the pure-UI controls respond and the audio actions don't lie.
+    win._tabs.setCurrentIndex(win._tab_keys.index("metro"))
+    app.processEvents()
+    start_bpm = win._metro_bpm
+    win._metro_nudge(5)
+    check(win._metro_bpm == start_bpm + 5 and win._metro_slider.value() == win._metro_bpm,
+          f"BPM nudge/slider out of sync: {win._metro_bpm} / {win._metro_slider.value()}")
+    win._metro_nudge(-100000)
+    check(win._metro_bpm == win.METRO_BPM_MIN,
+          f"BPM did not clamp to min: {win._metro_bpm}")
+    win._metro_nudge(100000)
+    check(win._metro_bpm == win.METRO_BPM_MAX,
+          f"BPM did not clamp to max: {win._metro_bpm}")
+    win._on_metro_timesig("6/8")
+    checked = [t for t, b in win._metro_ts_btns.items() if b.isChecked()]
+    check(checked == ["6/8"],
+          f"time-signature selection not exclusive: {checked}")
+    # Start with no controller (headless): must NOT claim running — button
+    # reverts, inline status shown, green dot stays hidden (N2 honesty).
+    win._btn_metro_start.setChecked(True)
+    app.processEvents()
+    check(not win._btn_metro_start.isChecked(),
+          "metro start button stayed checked with no controller (button lies)")
+    check(win._metro_status.isVisible(),
+          "metro 'unavailable' status not shown when start had no controller")
+    check(win._metro_dot.isHidden(),
+          "metro green dot shown despite no running metronome")
+
     win.close()
 
     if failures:
@@ -134,7 +163,7 @@ def main() -> int:
         for f in failures:
             print(f"  - {f}")
         return 1
-    print("GUI SMOKE OK — nav shell, status dots, SETUP controls all sound.")
+    print("GUI SMOKE OK — nav shell, status dots, SETUP + METRO panels all sound.")
     return 0
 
 
