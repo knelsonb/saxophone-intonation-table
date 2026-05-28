@@ -77,6 +77,9 @@ def test_roundtrip_preserves_all_fields(isolated_config):
         last_a4_hz=442,
         last_lang="de",
         last_active_tab="setup",
+        last_bpm=132,
+        last_time_sig="6/8",
+        click_volume=0.65,
     )
 
     save_config(original)
@@ -153,6 +156,10 @@ def test_partial_config_fills_new_field_defaults(isolated_config):
     assert cfg.output_device_samplerate == 0
     assert cfg.output_prefer_duplex is False
     assert cfg.last_active_tab == "tuner"
+    # v0.8.0 metronome fields also default cleanly for an old config.
+    assert cfg.last_bpm == 100
+    assert cfg.last_time_sig == "4/4"
+    assert cfg.click_volume == 1.0
 
 
 def test_unknown_keys_ignored(isolated_config):
@@ -248,3 +255,96 @@ def test_last_active_tab_values_match_allowlist():
     for tab in sax_config.TAB_VALUES:
         assert sax_config._as_active_tab(tab) == tab, (
             f"TAB_VALUES member {tab!r} not accepted by _as_active_tab")
+
+
+# ---------------------------------------------------------------------------
+# 7. v0.8.0 metronome fields — coercion + clamp (parity Sprint 2).
+# ---------------------------------------------------------------------------
+def test_metro_fields_roundtrip(isolated_config):
+    cfg = AppConfig(last_bpm=144, last_time_sig="3/4", click_volume=0.4)
+    save_config(cfg)
+    loaded = load_config()
+    assert loaded.last_bpm == 144
+    assert loaded.last_time_sig == "3/4"
+    assert loaded.click_volume == pytest.approx(0.4)
+
+
+@pytest.mark.parametrize("raw,expected", [
+    pytest.param(100, 100, id="default_mid"),
+    pytest.param(30, 30, id="low_bound"),
+    pytest.param(300, 300, id="high_bound"),
+    pytest.param(29, 30, id="below_clamps_up"),
+    pytest.param(0, 30, id="zero_clamps_up"),
+    pytest.param(-50, 30, id="negative_clamps_up"),
+    pytest.param(301, 300, id="above_clamps_down"),
+    pytest.param(99999, 300, id="far_above_clamps_down"),
+    pytest.param("120", 120, id="numeric_string"),
+    pytest.param("junk", 100, id="garbage_defaults_then_in_range"),
+    pytest.param(None, 100, id="missing_defaults"),
+])
+def test_last_bpm_clamped_to_range(isolated_config, raw, expected):
+    import json
+    isolated_config.parent.mkdir(parents=True, exist_ok=True)
+    isolated_config.write_text(json.dumps({"last_bpm": raw}), encoding="utf-8")
+    cfg = load_config()
+    assert cfg.last_bpm == expected, (
+        f"last_bpm({raw!r}) -> {cfg.last_bpm}, expected {expected} (clamp 30-300)")
+
+
+@pytest.mark.parametrize("raw,expected", [
+    pytest.param("2/4", "2/4", id="two_four"),
+    pytest.param("3/4", "3/4", id="three_four"),
+    pytest.param("4/4", "4/4", id="four_four"),
+    pytest.param("6/8", "6/8", id="six_eight"),
+    pytest.param(" 3/4 ", "3/4", id="whitespace_stripped"),
+    pytest.param("7/8", "4/4", id="unsupported_degrades"),
+    pytest.param("", "4/4", id="empty_degrades"),
+    pytest.param(None, "4/4", id="missing_degrades"),
+    pytest.param(44, "4/4", id="wrong_type_degrades"),
+])
+def test_last_time_sig_coercion(isolated_config, raw, expected):
+    import json
+    isolated_config.parent.mkdir(parents=True, exist_ok=True)
+    isolated_config.write_text(
+        json.dumps({"last_time_sig": raw}), encoding="utf-8")
+    cfg = load_config()
+    assert cfg.last_time_sig == expected, (
+        f"last_time_sig({raw!r}) -> {cfg.last_time_sig!r}, expected {expected!r}")
+
+
+@pytest.mark.parametrize("raw,expected", [
+    pytest.param(0.5, 0.5, id="mid"),
+    pytest.param(0.0, 0.0, id="silent"),
+    pytest.param(1.0, 1.0, id="full"),
+    pytest.param(-0.5, 0.0, id="below_clamps_to_zero"),
+    pytest.param(2.0, 1.0, id="above_clamps_to_one"),
+    pytest.param("0.25", 0.25, id="numeric_string"),
+    pytest.param("loud", 1.0, id="garbage_defaults"),
+    pytest.param(None, 1.0, id="missing_defaults"),
+])
+def test_click_volume_clamped_to_unit_interval(isolated_config, raw, expected):
+    import json
+    isolated_config.parent.mkdir(parents=True, exist_ok=True)
+    isolated_config.write_text(
+        json.dumps({"click_volume": raw}), encoding="utf-8")
+    cfg = load_config()
+    assert cfg.click_volume == pytest.approx(expected), (
+        f"click_volume({raw!r}) -> {cfg.click_volume}, expected {expected}")
+
+
+def test_click_volume_rejects_non_finite():
+    """NaN/inf in the config must degrade to the default (1.0), never reach
+    the audio path as a non-finite gain. JSON can't encode inf/nan natively,
+    so feed them via the coercer directly (the path a hand-edited or
+    programmatically-built dict could take)."""
+    assert sax_config._as_float(float("nan"), 1.0) == 1.0
+    assert sax_config._as_float(float("inf"), 1.0) == 1.0
+    assert sax_config._as_float(float("-inf"), 1.0) == 1.0
+
+
+def test_time_sig_values_match_allowlist():
+    """The coercer must accept every exported TIME_SIG_VALUES member, so the
+    GUI selector and the coercer can't drift apart."""
+    for sig in sax_config.TIME_SIG_VALUES:
+        assert sax_config._as_time_sig(sig) == sig, (
+            f"TIME_SIG_VALUES member {sig!r} not accepted by _as_time_sig")
