@@ -1,12 +1,12 @@
-"""YIN regression baseline.
+"""YIN regression baseline — exact (freq, ap) change-detector on 10 signals.
 
-Locks the current yin_pitch behaviour on 10 fixed signals so that the
-planned FFT-exact rewrite (Phase 2) can be verified bit-equivalent.
+v0.11 (2026-05-28): RECAPTURED after the parabolic-interpolation SIGN FIX in
+yin_pitch, which removed a ~+8-cent sharp bias across the mid/high range
+(A440 had read 441.99 Hz). The baselines below are the CORRECTED outputs; the
+meaningful cents-accuracy contract is enforced separately by test_yin_accuracy.
 
-The expected values were captured from the current list-comp implementation
-on 2026-05-26 on Linux/WSL2 (Python 3.12.3, NumPy 2.4.6) using the
-/tmp/yin-venv virtualenv; see /tmp/yin_compare.py for the full empirical
-comparison that justified the swap.
+(Original baselines were captured 2026-05-26 from the FFT-exact implementation
+on Linux/WSL2, Python 3.12.3, NumPy 2.4.6; the planned FFT rewrite is done.)
 
 Why (freq, ap) is sufficient to lock internal behaviour
 -------------------------------------------------------
@@ -102,44 +102,46 @@ def _noisy(f: float, sr: int, N: int, snr_db: float,
 # differs in the last ULP.
 # ---------------------------------------------------------------------------
 EXPECTED: dict[str, tuple[float, float]] = {
-    # Case 1 — 440 Hz sine, 44.1 kHz, N=2048
-    # YIN picks a slightly non-integer tau because parabolic interpolation
-    # shifts the integer lag peak.  Expected ~441.99 Hz, very low ap.
-    'sine_440_44k_2048':   (441.9872656156079, 9.831369110985517e-05),
+    # RECAPTURED 2026-05-28 after the parabolic-interpolation SIGN FIX in
+    # yin_pitch. The previous baselines encoded a ~+8-cent SHARP bias across
+    # the mid/high range (440 -> 441.99, Bb4 466.16 -> 462.26 = -14.6 ct,
+    # 1320 -> 1352.8 = +42 ct). These values now reflect the CORRECTED
+    # sub-sample lag. Cents tolerances are pinned by test_yin_accuracy; this
+    # dict is the exact ULP-level change-detector.
+    #
+    # Case 1 — 440 Hz sine, 44.1 kHz, N=2048  (now +0.07 ct)
+    'sine_440_44k_2048':   (440.01713505904496, 9.831369110901914e-05),
 
     # Case 2 — 110 Hz sine, 44.1 kHz, N=4096 (low note, long lag window)
-    'sine_110_44k_4096':   (109.94984100962685, 9.682805690366908e-07),
+    'sine_110_44k_4096':   (110.00029525232397, 9.682805696105062e-07),
 
     # Case 3 — 80 Hz sine, 44.1 kHz, N=8192 (near MIN_FREQ=27 Hz)
-    'sine_80_44k_8192':    (80.0725316032847, 3.8846496089812966e-06),
+    'sine_80_44k_8192':    (80.00009645595944, 3.884649607285126e-06),
 
-    # Case 4 — 1320 Hz sine, 44.1 kHz, N=2048 (near MAX_FREQ=1400 Hz)
-    # Short lag range → coarser parabolic interpolation → larger deviation.
-    'sine_1320_44k_2048':  (1352.8062709163137, 0.0028971424132437423),
+    # Case 4 — 1320 Hz sine, 44.1 kHz, N=2048  (now +0.41 ct; was +42 ct)
+    'sine_1320_44k_2048':  (1320.3159047828774, 0.002897142413242738),
 
     # Case 5 — sax-like 220 Hz, 44.1 kHz, N=4096
-    'sax_220_44k_4096':    (221.0012616869305, 0.0002955762973668114),
+    'sax_220_44k_4096':    (220.0010070301474, 0.000295576297365886),
 
-    # Case 6 — sax-like 466.1638 Hz (Bb4), 44.1 kHz, N=2048
-    'sax_466_44k_2048':    (462.2634450991501, 0.0010225681615313152),
+    # Case 6 — sax-like 466.1638 Hz (Bb4), 44.1 kHz, N=2048  (now +0.04 ct)
+    'sax_466_44k_2048':    (466.1740793572939, 0.001022568161530901),
 
-    # Case 7 — 440 Hz + Gaussian noise, SNR=10 dB, seed=42
-    # Known YIN noise-floor failure: returned ~434.6 Hz, not 440 Hz.
-    # Locking this wrong answer intentionally — Phase 2 must replicate it.
-    'noisy_10db_44k_4096': (434.61003532024847, 0.09081826424593649),
+    # Case 7 — 440 Hz + Gaussian noise, SNR=10 dB, seed=42: ~438.7 Hz.
+    # Noise-floor approximation (NOT the parabolic bug — a separate YIN-under-
+    # noise limitation); the fix nudged it closer to 440 but it stays off.
+    'noisy_10db_44k_4096': (438.6762243719445, 0.09081826424593484),
 
-    # Case 8 — 440 Hz + Gaussian noise, SNR=0 dB, seed=42
-    # Severe noise-floor failure: pitch detected at ~27.5 Hz (near MIN_FREQ).
-    # yin_compare.py (threshold=0.15) printed ~62.9 Hz; with the engine's
-    # actual default YIN_THRESHOLD=0.12 the CMNDF minimum falls lower.
-    # Both are wrong answers.  This test locks the engine-threshold result.
-    'noisy_0db_44k_4096':  (27.504945030387407, 0.3532710156933474),
+    # Case 8 — 440 Hz + Gaussian noise, SNR=0 dB, seed=42: ~27.5 Hz.
+    # Severe noise-floor failure (CMNDF minimum collapses to a sub-harmonic
+    # lag). Locked as-is; noise robustness would be a separate change.
+    'noisy_0db_44k_4096':  (27.51689162464746, 0.35327101569334746),
 
-    # Case 9 — 440 Hz sine at 192 kHz, N=16384 (high-rate path)
-    'sine_440_192k_16384': (440.7338902928543, 1.3536498901391386e-05),
+    # Case 9 — 440 Hz sine at 192 kHz, N=16384 (high-rate path; now +0.003 ct)
+    'sine_440_192k_16384': (440.0006650826611, 1.3536498904678472e-05),
 
     # Case 10 — sax-like 442 Hz (slightly sharp A), 44.1 kHz, N=4096
-    'sax_442_44k_4096':    (439.98887823542054, 0.0003051713223756809),
+    'sax_442_44k_4096':    (442.0157797100345, 0.00030517132237832106),
 }
 
 
