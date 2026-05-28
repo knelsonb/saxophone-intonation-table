@@ -367,6 +367,28 @@ def main() -> int:
         app.processEvents()
         win._deck_ctrl.shutdown()
 
+    # ── Theme switching (Sprint 5 live-apply lock) ───────────────────────
+    # The SETUP picker exists and _apply_theme switches the palette + re-renders
+    # the global stylesheet live without raising. Drives the real handler path
+    # (mirrors the drone duck-attach lock), not a stub.
+    import sax_theme as _TH
+    check(hasattr(win, "_theme_combo"),
+          "SETUP theme picker (_theme_combo) missing")
+    check(win._theme_combo.count() == len(_TH.THEME_ORDER),
+          f"theme combo has {win._theme_combo.count()} items, "
+          f"expected {len(_TH.THEME_ORDER)}")
+    _start_theme = _TH.active_name()
+    for _name in ("night", "light", "dark"):
+        win._apply_theme(_name)
+        app.processEvents()
+        check(_TH.active_name() == _name,
+              f"_apply_theme({_name!r}) did not set the active theme")
+        check(win._cfg.theme == _name,
+              f"_apply_theme({_name!r}) did not persist cfg.theme")
+        check(_TH.get_theme(_name).window_bg in win.styleSheet(),
+              f"theme {_name!r} window_bg not in the applied stylesheet")
+    win._apply_theme(_start_theme)
+
     win.close()
 
     if failures:
@@ -375,7 +397,8 @@ def main() -> int:
             print(f"  - {f}")
         return 1
     print("GUI SMOKE OK — nav shell, status dots, SETUP + METRO + drone/pipes "
-          "+ deck panels, device-switch bracket, deck honesty lock all sound.")
+          "+ deck panels, device-switch bracket, deck honesty lock, theme "
+          "switching all sound.")
     return 0
 
 
