@@ -138,6 +138,22 @@ class AppConfig:
     # Metronome click volume, 0.0 (silent) .. 1.0 (full). Clamped on load.
     click_volume: float = 1.0
 
+    # ---- v0.10.0 tape deck (parity Sprint 4) -----------------------------
+    # Max single-take recording length in seconds. Bounds the engine's
+    # preallocated mic-capture buffer (np.zeros(int(s*sr), f32)) so a
+    # forgotten record can't grow without limit; 300s ~= 53 MB f32 @44.1k.
+    # Clamped to [1, 600] on load. Matches Gandalf's bounded-prealloc tap.
+    deck_max_seconds: int = 300
+    # Full path of the WAV the user last EXPORTED a take to. Persisted so the
+    # export file dialog reopens at that directory/filename. Empty = no
+    # export yet (dialog opens at the platform default).
+    last_take_path: str = ""
+    # Directory for the deck's working/scratch take, if the controller spills
+    # to disk rather than holding the take in RAM. Empty = the OS temp dir.
+    # Kept distinct from last_take_path (export destination) so the scratch
+    # lifecycle and the user's chosen save location never collide.
+    deck_scratch_dir: str = ""
+
     def effective_log_path(self) -> Optional[Path]:
         if not self.persistence_enabled:
             return None
@@ -326,6 +342,9 @@ def load_config() -> AppConfig:
         last_bpm=max(30, min(300, _as_int(data.get("last_bpm"), 100))),
         last_time_sig=_as_time_sig(data.get("last_time_sig")),
         click_volume=max(0.0, min(1.0, _as_float(data.get("click_volume"), 1.0))),
+        deck_max_seconds=max(1, min(600, _as_int(data.get("deck_max_seconds"), 300))),
+        last_take_path=_as_str(data.get("last_take_path"), ""),
+        deck_scratch_dir=_as_str(data.get("deck_scratch_dir"), ""),
     )
 
 
