@@ -80,6 +80,9 @@ def test_roundtrip_preserves_all_fields(isolated_config):
         last_bpm=132,
         last_time_sig="6/8",
         click_volume=0.65,
+        deck_max_seconds=180,
+        last_take_path="/home/u/takes/last.wav",
+        deck_scratch_dir="/var/tmp/deckscratch",
     )
 
     save_config(original)
@@ -160,6 +163,10 @@ def test_partial_config_fills_new_field_defaults(isolated_config):
     assert cfg.last_bpm == 100
     assert cfg.last_time_sig == "4/4"
     assert cfg.click_volume == 1.0
+    # v0.10.0 tape-deck fields default cleanly for an old config.
+    assert cfg.deck_max_seconds == 300
+    assert cfg.last_take_path == ""
+    assert cfg.deck_scratch_dir == ""
 
 
 def test_unknown_keys_ignored(isolated_config):
@@ -348,3 +355,65 @@ def test_time_sig_values_match_allowlist():
     for sig in sax_config.TIME_SIG_VALUES:
         assert sax_config._as_time_sig(sig) == sig, (
             f"TIME_SIG_VALUES member {sig!r} not accepted by _as_time_sig")
+
+
+# ---------------------------------------------------------------------------
+# 8. v0.10.0 tape-deck fields — round-trip + clamp/coercion (parity Sprint 4).
+# deck_max_seconds bounds the engine's preallocated mic-capture buffer, so an
+# out-of-range / corrupt value must clamp into [1, 600] — never propagate a
+# 0-or-negative length (np.zeros(0) = a dead recorder) or a runaway size.
+# ---------------------------------------------------------------------------
+def test_deck_fields_roundtrip(isolated_config):
+    cfg = AppConfig(
+        deck_max_seconds=120,
+        last_take_path="/home/u/takes/solo.wav",
+        deck_scratch_dir="/var/tmp/deck",
+    )
+    save_config(cfg)
+    loaded = load_config()
+    assert loaded.deck_max_seconds == 120
+    assert loaded.last_take_path == "/home/u/takes/solo.wav"
+    assert loaded.deck_scratch_dir == "/var/tmp/deck"
+
+
+@pytest.mark.parametrize("raw,expected", [
+    pytest.param(300, 300, id="default_mid"),
+    pytest.param(1, 1, id="low_bound"),
+    pytest.param(600, 600, id="high_bound"),
+    pytest.param(0, 1, id="zero_clamps_up"),
+    pytest.param(-30, 1, id="negative_clamps_up"),
+    pytest.param(601, 600, id="above_clamps_down"),
+    pytest.param(99999, 600, id="far_above_clamps_down"),
+    pytest.param("90", 90, id="numeric_string"),
+    pytest.param("junk", 300, id="garbage_defaults_then_in_range"),
+    pytest.param(None, 300, id="missing_defaults"),
+])
+def test_deck_max_seconds_clamped_to_range(isolated_config, raw, expected):
+    import json
+    isolated_config.parent.mkdir(parents=True, exist_ok=True)
+    isolated_config.write_text(
+        json.dumps({"deck_max_seconds": raw}), encoding="utf-8")
+    cfg = load_config()
+    assert cfg.deck_max_seconds == expected, (
+        f"deck_max_seconds({raw!r}) -> {cfg.deck_max_seconds}, "
+        f"expected {expected} (clamp 1-600)")
+
+
+@pytest.mark.parametrize("field_name", ["last_take_path", "deck_scratch_dir"])
+@pytest.mark.parametrize("raw,expected", [
+    pytest.param("/some/take.wav", "/some/take.wav", id="valid_path"),
+    pytest.param("", "", id="empty_string"),
+    pytest.param(None, "", id="missing_defaults_empty"),
+])
+def test_deck_path_fields_coerce_to_str(isolated_config, field_name, raw, expected):
+    """last_take_path / deck_scratch_dir are tolerant string fields: a present
+    path round-trips, a null/missing value degrades to '' (no export yet / OS
+    temp dir)."""
+    import json
+    isolated_config.parent.mkdir(parents=True, exist_ok=True)
+    isolated_config.write_text(
+        json.dumps({field_name: raw}), encoding="utf-8")
+    cfg = load_config()
+    assert getattr(cfg, field_name) == expected, (
+        f"{field_name}({raw!r}) -> {getattr(cfg, field_name)!r}, "
+        f"expected {expected!r}")
