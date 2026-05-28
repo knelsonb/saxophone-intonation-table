@@ -50,6 +50,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          # tinysoundfont (drone synth, Sprint 3): install WITHOUT deps — its
+          # only hard dep is pyaudio (needs PortAudio headers, unused; we synth
+          # into our own mixer). See the note in requirements.txt.
+          pip install --no-deps "tinysoundfont~=0.3.7"
           # Pin Pillow >=9.1 — earlier versions silently ignored the `sizes`
           # kwarg on ICO export and produced a single-frame file. Pin
           # PyInstaller to 6.x — collect_dynamic_libs behavior is stable on
