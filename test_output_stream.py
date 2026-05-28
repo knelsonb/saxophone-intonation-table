@@ -513,3 +513,212 @@ def test_detach_duck_consumer_stops_delivery():
     for _ in range(5):
         eng.coordination_step(60)
     assert consumer.history == [], "a detached consumer must receive no duck targets"
+
+
+# ---------------------------------------------------------------------------
+# 9. Tape-deck input-recording tap (Sprint 4 — Gandalf's bounded-prealloc
+#    seam). The deck is the FIRST input-side consumer (S1-3 were output): the
+#    input hot path slice-assigns every mic frame into a bounded buffer while
+#    armed. Driven via feed_input_frames (the real _on_input body) with a fake
+#    OPEN input stream — no device, no PortAudio. Mirrors the output orphan
+#    test, input-side. Pinned to Gandalf's landed API (engine 834-933 / 1486 /
+#    1804-2011).
+# ---------------------------------------------------------------------------
+class _FakeOpenInputStream:
+    """Stands in for an open mic stream — what input_running /
+    start_input_recording gate on. The tap captures the frames we FEED, not
+    anything from this object, so it only needs the stop/close teardown
+    surface (so the orphan test can assert disposal)."""
+
+    def __init__(self):
+        self.stopped = False
+        self.closed = False
+
+    def start(self):
+        pass
+
+    def stop(self):
+        self.stopped = True
+
+    def close(self):
+        self.closed = True
+
+
+def _recording_engine(samplerate=48000):
+    """A fresh engine with a (fake) OPEN input stream so input_running is True
+    and start_input_recording can arm. The capture buffer is sized from
+    self.samplerate, so pin it to a known rate."""
+    eng = _new_engine()
+    eng.samplerate = samplerate
+    eng._stream = _FakeOpenInputStream()
+    return eng
+
+
+def test_input_running_reflects_open_stream():
+    eng = _new_engine()
+    assert eng.input_running is False, "no stream -> not running (honest probe)"
+    eng._stream = _FakeOpenInputStream()
+    assert eng.input_running is True
+
+
+def test_start_input_recording_false_when_input_not_open():
+    eng = _new_engine()            # no input stream
+    assert eng.start_input_recording(10.0) is False, "no mic -> no false 'recording'"
+    assert eng.is_input_recording() is False
+
+
+@pytest.mark.parametrize("bad", [0.0, -1.0, float("inf"), float("nan")])
+def test_start_input_recording_rejects_nonpositive_or_nonfinite(bad):
+    eng = _recording_engine()
+    assert eng.start_input_recording(bad) is False
+    assert eng.is_input_recording() is False
+
+
+def test_record_feed_stop_is_byte_exact():
+    """The core capture contract: every fed mic frame is captured UNMODIFIED
+    (no gain/resample at the tap) and returned in order — feed K blocks, stop,
+    assert the take equals their concatenation byte-for-byte."""
+    eng = _recording_engine(samplerate=48000)
+    assert eng.start_input_recording(10.0) is True
+    assert eng.is_input_recording() is True
+    rng = np.random.default_rng(0)
+    fed = [rng.standard_normal(n).astype(np.float32) * 0.5
+           for n in (480, 256, 1024, 17, 480)]
+    for block in fed:
+        eng.feed_input_frames(block)
+    take, sr, truncated = eng.stop_input_recording()
+    assert sr == 48000
+    assert truncated is False
+    assert np.array_equal(take, np.concatenate(fed)), (
+        "the take must be the fed frames concatenated, byte-for-byte unmodified")
+    assert eng.is_input_recording() is False, "stop disarms the tap"
+
+
+def test_recorded_frame_count_grows_monotonically_then_resets():
+    """recorded_frame_count is the continuous-capture observable: it grows by
+    exactly the frames fed, then resets after stop."""
+    eng = _recording_engine()
+    eng.start_input_recording(10.0)
+    assert eng.recorded_frame_count() == 0
+    eng.feed_input_frames(np.zeros(100, dtype=np.float32))
+    assert eng.recorded_frame_count() == 100
+    eng.feed_input_frames(np.zeros(50, dtype=np.float32))
+    assert eng.recorded_frame_count() == 150
+    eng.stop_input_recording()
+    assert eng.recorded_frame_count() == 0, "stop resets the counter"
+
+
+def test_capture_continues_through_emissions_pause():
+    """The tap sits BEFORE the emissions-pause gate (Sauron + Treebeard
+    ratified): an A4-remap pitch-detection pause must NOT punch a hole in the
+    take. Frames fed while paused are still captured."""
+    eng = _recording_engine()
+    eng.start_input_recording(10.0)
+    eng.feed_input_frames(np.ones(100, dtype=np.float32) * 0.2)
+    eng._emissions_paused = True                 # simulate the A4-remap pause
+    eng.feed_input_frames(np.ones(64, dtype=np.float32) * 0.3)
+    eng._emissions_paused = False
+    eng.feed_input_frames(np.ones(36, dtype=np.float32) * 0.4)
+    assert eng.recorded_frame_count() == 200, (
+        "frames fed during an emissions pause must still be captured "
+        "(the tap is before the pause gate)")
+    take, _, truncated = eng.stop_input_recording()
+    assert len(take) == 200 and truncated is False
+
+
+def test_cap_hit_truncates_and_auto_disarms():
+    """At deck_max_seconds the bounded buffer fills: the tap clamps at the cap,
+    auto-disarms (is_input_recording flips False even before stop — the deck
+    pump() reads that as 'cap hit'), and the take comes back truncated=True at
+    exactly the cap length."""
+    sr = 48000
+    eng = _recording_engine(samplerate=sr)
+    assert eng.start_input_recording(0.01) is True   # 0.01s cap -> 480 samples
+    cap = int(0.01 * sr)
+    eng.feed_input_frames(np.ones(300, dtype=np.float32) * 0.5)
+    assert eng.is_input_recording() is True, "under cap -> still armed"
+    eng.feed_input_frames(np.ones(400, dtype=np.float32) * 0.5)   # overruns cap
+    assert eng.is_input_recording() is False, "hitting the cap must auto-disarm"
+    take, _, truncated = eng.stop_input_recording()
+    assert truncated is True, "a capped take must surface truncated=True"
+    assert len(take) == cap, f"take clamps at the cap ({cap}), got {len(take)}"
+
+
+def test_abrupt_teardown_mid_record_retains_partial_flagged_truncated():
+    """The Android close-path race, locked input-side: a stream teardown while
+    recording (device switch / stop) must disarm WITHOUT orphaning the partial
+    take, close the stream, and surface truncated=True on the next stop."""
+    eng = _recording_engine()
+    eng.start_input_recording(10.0)
+    eng.feed_input_frames(np.ones(123, dtype=np.float32) * 0.3)
+    stream = eng._stream
+    eng._teardown_stream()                       # abrupt close mid-record
+    assert eng._stream is None, "teardown must drop the stream reference"
+    assert eng.input_running is False
+    assert eng.is_input_recording() is False, "teardown disarms the tap (no orphan armed flag)"
+    assert stream.stopped and stream.closed, "the orphaned input stream must be stopped + closed"
+    take, _, truncated = eng.stop_input_recording()
+    assert len(take) == 123, "the partial take is RETAINED, not orphaned"
+    assert truncated is True, "a take cut short by teardown must be flagged truncated"
+
+
+def test_stop_engine_disarms_recording():
+    """engine.stop() (the GUI close path) tears down the stream and disarms —
+    never leaves an armed tap pointed at a dead stream."""
+    eng = _recording_engine()
+    eng.start_input_recording(10.0)
+    eng.feed_input_frames(np.ones(64, dtype=np.float32) * 0.2)
+    eng.stop()
+    assert eng.is_input_recording() is False
+    assert eng.input_running is False
+
+
+def test_fresh_arm_discards_previous_take():
+    """A new start_input_recording discards any prior unfetched take (single
+    take, mic-only parity)."""
+    eng = _recording_engine()
+    eng.start_input_recording(10.0)
+    eng.feed_input_frames(np.ones(500, dtype=np.float32) * 0.3)
+    eng.start_input_recording(10.0)              # re-arm without stopping
+    assert eng.recorded_frame_count() == 0, "re-arm starts a fresh take"
+    eng.feed_input_frames(np.ones(80, dtype=np.float32) * 0.1)
+    take, _, _ = eng.stop_input_recording()
+    assert len(take) == 80, "only the new take's frames are returned"
+
+
+def test_input_tap_adds_no_scaling_alloc_when_armed():
+    """The deck tap is slice-assign only -> ZERO per-call allocation. Measured
+    as the DELTA between armed and unarmed feeds of the SAME block: the input
+    pipeline's pre-existing per-call work (ring write + YIN, the #D6 baseline)
+    is identical in both, so any retained difference is the tap itself. It must
+    not grow per call. (Isolation gate, not an absolute floor — numpy view-
+    boxing is a constant an absolute floor would flake on; same spirit as the
+    mixer/drone non-scaling gates.)"""
+    import tracemalloc
+    eng = _recording_engine()
+    block = np.ascontiguousarray(np.zeros(512, dtype=np.float32))
+    for _ in range(5):
+        eng.feed_input_frames(block)             # warm lazy allocs / caches
+    tracemalloc.start()
+    a = tracemalloc.take_snapshot()
+    for _ in range(40):
+        eng.feed_input_frames(block)             # unarmed baseline
+    b = tracemalloc.take_snapshot()
+    eng.start_input_recording(60.0)              # big cap — never truncates here
+    for _ in range(5):
+        eng.feed_input_frames(block)             # warm armed path
+    c = tracemalloc.take_snapshot()
+    for _ in range(40):
+        eng.feed_input_frames(block)             # armed: pipeline + tap
+    d = tracemalloc.take_snapshot()
+    tracemalloc.stop()
+
+    def _delta(x, y):
+        return sum(s.size_diff for s in y.compare_to(x, "filename"))
+
+    unarmed = _delta(a, b)
+    armed = _delta(c, d)
+    assert armed <= unarmed + 16384, (
+        f"the armed deck tap retains allocation beyond the unarmed pipeline "
+        f"baseline (unarmed={unarmed} armed={armed}) — capture must be "
+        f"slice-assign into the preallocated sink, never per-call growth")
