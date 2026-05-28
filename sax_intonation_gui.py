@@ -50,6 +50,7 @@ from sax_instruments import (
     register_custom,
 )
 import sax_config
+import sax_theme
 from sax_i18n import STRINGS
 from sax_session_state import SessionStateController
 from sax_export import ExportController
@@ -2214,6 +2215,10 @@ class MainWindow(QMainWindow):
         # Load user config + previously-registered custom instruments before
         # building the UI so the catalog reflects them at first paint.
         self._cfg = sax_config.load_config()
+        # Apply the saved theme before any widget is built, so the global
+        # stylesheet (in _build_ui) and the custom-painted widgets all read the
+        # right palette from first paint. Live switches go through _apply_theme.
+        sax_theme.set_active(self._cfg.theme)
         for c in sax_config.load_customs():
             register_custom(c.key, c.transp, c.name_de, c.name_en)
         _rebuild_transp_map()
@@ -2789,36 +2794,12 @@ class MainWindow(QMainWindow):
         self._restore_active_tab()
 
         # Fensterstil
-        self.setStyleSheet("""
-            QMainWindow,QWidget{background:#12121a;color:#ddd;}
-            QGroupBox{border:1px solid #333;border-radius:6px;font-size:12px;
-                      color:#aaa;margin-top:6px;padding-top:4px;}
-            QGroupBox::title{subcontrol-origin:margin;left:8px;top:-2px;}
-            QComboBox{background:#1e1e2e;border:1px solid #444;border-radius:5px;
-                      color:#ddd;padding:4px 8px;font-size:13px;min-height:28px;}
-            QComboBox:hover{background:#252535;border:1px solid #6699cc;}
-            QComboBox::drop-down{border:none;width:20px;background:#1e1e2e;}
-            QComboBox QAbstractItemView{background:#1e1e2e;color:#ddd;
-                      border:1px solid #444;outline:0;
-                      selection-background-color:#34495e;
-                      selection-color:#fff;}
-            QComboBox QAbstractItemView::item{background:#1e1e2e;color:#ddd;
-                      padding:4px 8px;border:none;}
-            QComboBox QAbstractItemView::item:selected{background:#34495e;
-                      color:#fff;}
-            QComboBox QAbstractItemView::item:hover{background:#2a2a3a;
-                      color:#fff;}
-            QSplitter::handle{background:#333;}
-            QTabWidget::pane{border:none;border-top:1px solid #333;top:-1px;}
-            QTabBar::tab{background:#161620;color:#999;font-size:12px;
-                         font-weight:bold;letter-spacing:1px;
-                         padding:8px 18px;margin-right:2px;
-                         border:1px solid #333;border-bottom:none;
-                         border-top-left-radius:6px;border-top-right-radius:6px;}
-            QTabBar::tab:hover{background:#1f1f2e;color:#ccc;}
-            QTabBar::tab:selected{background:#12121a;color:#6699cc;
-                         border-bottom:2px solid #6699cc;}
-        """)
+        # Themed via sax_theme (Sprint 5). The active palette was set from
+        # cfg.theme in __init__ before any widget was built; build_app_qss(DARK)
+        # reproduces this exact stylesheet, so dark is byte-for-byte unchanged
+        # while night/light re-render from their palettes. Live theme switches
+        # re-call setStyleSheet via _apply_theme.
+        self.setStyleSheet(sax_theme.build_app_qss(sax_theme.active()))
 
         self.setWindowTitle(self._t('window_title'))
 
