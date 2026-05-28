@@ -334,6 +334,65 @@ def test_start_is_idempotent():
     assert m.active_sources() == 1, "double start must not double-register"
 
 
+# ===========================================================================
+# 7. Device-switch chain — UNIT lock for the Option-A regression.
+#
+# An output-device reopen calls mixer.reset_clock(0), which clears the
+# scheduled-event horizon. Because the metronome's rolling horizon only
+# reschedules from a FIRED event, a reopen mid-play silently kills the beat
+# chain (Gandalf/Sauron's catch). The fix is a GUI-layer stop()/start()
+# bracket (Frodo's lane, locked by gui_smoke). These UNIT tests complement
+# that: they run on the ALWAYS-RUNNABLE suite (no PyQt6 — gui_smoke skips
+# there), locking the underlying controller/mixer mechanism the GUI fix
+# rides on, so the regression is covered on every test run, not just CI.
+# ===========================================================================
+def test_reset_clock_silently_kills_running_metronome_chain():
+    """Locks the BUG mechanism: after a reset_clock (the reopen signal), a
+    running metronome's beat chain stays dead — no event fires to reschedule
+    the next beat. This documents exactly why the device-switch reopen must be
+    bracketed with stop()/start() at the orchestrating (GUI) layer."""
+    block = 2048
+    m = Mixer(max_block=block)
+    c = MetronomeController(m, 48000, bpm=120)
+    c.start()
+    out = np.zeros(block, dtype=np.float32)
+    m.render(out, block)                      # beat 0 fires, beat 1 scheduled
+    assert m.pending_events() >= 1, "a next beat should be scheduled after the first fires"
+
+    m.reset_clock(0)                          # mimic the output-device reopen
+    assert m.pending_events() == 0, "reset_clock clears the scheduled horizon"
+    for _ in range(5):
+        m.render(out, block)
+    assert m.pending_events() == 0, (
+        "bug locked: the chain does NOT self-heal after reset_clock — it stays "
+        "dead, which is why the GUI must bracket the reopen with stop()/start()")
+    assert c.is_running() is True, (
+        "the silent-failure signature: the controller still reports running "
+        "while no beats are scheduled")
+
+
+def test_stop_start_reestablishes_chain_after_reset():
+    """Locks the Option-A FIX mechanism: bracketing the reopen with
+    stop()/start() re-anchors and reschedules, reviving the beat chain."""
+    block = 2048
+    m = Mixer(max_block=block)
+    c = MetronomeController(m, 48000, bpm=120)
+    c.start()
+    out = np.zeros(block, dtype=np.float32)
+    m.render(out, block)
+    m.reset_clock(0)
+    assert m.pending_events() == 0           # chain dead
+
+    c.stop()
+    c.start()                                # the Option-A bracket
+    assert m.pending_events() >= 1, "stop()+start() must reschedule the beat chain"
+    out2 = np.zeros(block, dtype=np.float32)
+    m.render(out2, block)
+    assert np.any(np.abs(out2) > 1e-3), "clicks resume after the stop/start bracket"
+    assert m.pending_events() >= 1, "the revived chain keeps rescheduling"
+    assert m.dropped_events == 0, "revival must not drop events"
+
+
 def test_running_metronome_produces_clicks_through_mixer():
     """Integration: a running metronome at 120bpm@48k, driven block-by-block
     through the real mixer, must actually sound clicks and never drop events."""
