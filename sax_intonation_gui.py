@@ -307,6 +307,18 @@ def yin_pitch(sig, sr=SAMPLE_RATE, fmin=MIN_FREQ, fmax=MAX_FREQ,
                           thr if thr is not None else 0.12)
 
 
+def _themed(role: str, alpha: int = 255) -> QColor:
+    """A QColor for the named role in the ACTIVE theme palette (sax_theme).
+
+    The custom-painted widgets call this each paintEvent, so a theme switch
+    repaints them in the new palette. ``alpha`` (0-255) applies translucency
+    for fills/overlays without minting per-theme rgba roles. Sprint-5 parity."""
+    c = QColor(getattr(sax_theme.active(), role))
+    if alpha != 255:
+        c.setAlpha(alpha)
+    return c
+
+
 # (legacy YIN body removed in v0.5.4 — see sax_audio_engine.yin_pitch)
 
 
@@ -403,13 +415,13 @@ class TunerWidget(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         W, H = self.width(), self.height()
-        p.fillRect(0, 0, W, H, QColor(18, 18, 24))
+        p.fillRect(0, 0, W, H, _themed('window_bg'))
         alpha = int(255 * max(0.15, self._decay))
 
         # Tonname
         if self.note:
             p.setFont(QFont('Monospace', 72, QFont.Weight.Bold))
-            p.setPen(QColor(220, 220, 255, alpha))
+            p.setPen(_themed('text_bright', alpha))
             p.drawText(QRectF(0, 8, W, H * 0.45),
                        Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
                        self.note)
@@ -417,7 +429,7 @@ class TunerWidget(QWidget):
         # Frequenz
         if self.freq > 0:
             p.setFont(QFont('Monospace', 16))
-            p.setPen(QColor(140, 140, 180, alpha))
+            p.setPen(_themed('text_dim', alpha))
             p.drawText(QRectF(0, H * 0.44, W, 30),
                        Qt.AlignmentFlag.AlignHCenter,
                        f"{self.freq:.1f} Hz")
@@ -428,23 +440,23 @@ class TunerWidget(QWidget):
         mx = 50.0
 
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor(40, 40, 55))
+        p.setBrush(_themed('grid'))
         p.drawRoundedRect(QRectF(sx, sy, sw, sh), 8, 8)
 
         zw = sw * (10.0 / mx) / 2
-        p.setBrush(QColor(30, 90, 50, 140))
+        p.setBrush(_themed('ok', 140))
         p.drawRoundedRect(QRectF(sx + sw/2 - zw, sy, zw*2, sh), 6, 6)
 
         if self.active:
             norm = max(-1.0, min(1.0, self.cents / mx))
             nx   = sx + sw/2 + norm * sw/2
-            if   abs(self.cents) <= 5:  nc = QColor(60,  220, 100, alpha)
-            elif abs(self.cents) <= 15: nc = QColor(255, 200, 40,  alpha)
-            else:                       nc = QColor(240, 70,  70,  alpha)
+            if   abs(self.cents) <= 5:  nc = _themed('ok', alpha)
+            elif abs(self.cents) <= 15: nc = _themed('warn', alpha)
+            else:                       nc = _themed('bad', alpha)
             p.setBrush(nc)
             p.drawRoundedRect(QRectF(nx - 4, sy - 6, 8, sh + 12), 4, 4)
 
-        p.setPen(QColor(90, 90, 110))
+        p.setPen(_themed('text_dim'))
         p.setFont(QFont('Monospace', 9))
         for ct in [-50, -25, 0, 25, 50]:
             nx = sx + sw/2 + (ct / mx) * sw/2
@@ -455,9 +467,9 @@ class TunerWidget(QWidget):
 
         if self.active:
             p.setFont(QFont('Monospace', 32, QFont.Weight.Bold))
-            if   abs(self.cents) <= 5:  cc = QColor(60,  220, 100, alpha)
-            elif abs(self.cents) <= 15: cc = QColor(255, 200, 40,  alpha)
-            else:                       cc = QColor(240, 70,  70,  alpha)
+            if   abs(self.cents) <= 5:  cc = _themed('ok', alpha)
+            elif abs(self.cents) <= 15: cc = _themed('warn', alpha)
+            else:                       cc = _themed('bad', alpha)
             p.setPen(cc)
             p.drawText(QRectF(0, sy + sh + 26, W, 55),
                        Qt.AlignmentFlag.AlignHCenter,
@@ -890,18 +902,18 @@ class CentBarDelegate(QStyledItemDelegate):
         # Hintergrund (Auswahl berücksichtigen)
         from PyQt6.QtWidgets import QStyle
         if option.state & QStyle.StateFlag.State_Selected:
-            painter.fillRect(r, QColor('#2d4a7a'))
+            painter.fillRect(r, _themed('accent_muted'))
         else:
             painter.fillRect(r, QColor(0, 0, 0, 0))
 
         # Farbe nach Betrag
         abw = abs(cents)
         if abw < 10:
-            bar_col = QColor('#3a9e5f')   # grün
+            bar_col = _themed('ok')    # grün
         elif abw < 20:
-            bar_col = QColor('#c8a020')   # gelb
+            bar_col = _themed('warn')  # gelb
         else:
-            bar_col = QColor('#c03030')   # rot
+            bar_col = _themed('bad')   # rot
 
         # Dimensionen
         pad_x, pad_y = 8, 5
@@ -913,12 +925,12 @@ class CentBarDelegate(QStyledItemDelegate):
         bg_h = max(4, h // 3)
         bg_y = r.top() + pad_y + (h - bg_h) // 2
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(45, 45, 60))
+        painter.setBrush(_themed('grid'))
         painter.drawRoundedRect(r.left() + pad_x, bg_y, w, bg_h, 3, 3)
 
         # Grüne Mitte-Zone (±5 ct)
         zone_w = max(2, int(w / 2 * 5.0 / self.MAX_CENT))
-        painter.setBrush(QColor(30, 80, 40, 160))
+        painter.setBrush(_themed('ok', 160))
         painter.drawRect(cx - zone_w, bg_y, zone_w * 2, bg_h)
 
         # Füllbalken
@@ -933,7 +945,7 @@ class CentBarDelegate(QStyledItemDelegate):
             painter.drawRoundedRect(cx - fill_w, bar_y, fill_w, bar_h, 2, 2)
 
         # Mittellinie
-        painter.setPen(QPen(QColor(180, 180, 200), 1))
+        painter.setPen(QPen(_themed('text'), 1))
         painter.drawLine(cx, bg_y - 2, cx, bg_y + bg_h + 2)
 
         # Cent-Wert als Text rechts — adaptive precision (v0.5.6)
@@ -1020,20 +1032,20 @@ class MatrixCellDelegate(QStyledItemDelegate):
             # cells that correspond to physically playable notes. The
             # surrounding grid structure stays so column alignment is
             # preserved.
-            painter.fillRect(r, QColor('#12121a'))
+            painter.fillRect(r, _themed('window_bg'))
             painter.restore()
             return
 
         # In-range background — active blue tint or default panel color.
         if active:
-            painter.fillRect(r, QColor('#2c5a8a'))
+            painter.fillRect(r, _themed('accent_muted'))
         else:
-            painter.fillRect(r, QColor('#1a1a24'))
+            painter.fillRect(r, _themed('base_bg'))
 
         # Subtle cell border — only on in-range cells, so the playable
         # area visually pops as a grid against the unbordered out-of-
         # range background.
-        painter.setPen(QPen(QColor(55, 55, 75), 1))
+        painter.setPen(QPen(_themed('grid'), 1))
         painter.drawRect(r.adjusted(0, 0, -1, -1))
 
         pad_x = 4
@@ -1041,14 +1053,14 @@ class MatrixCellDelegate(QStyledItemDelegate):
         top_h = 13
         top_y = r.top() + 1
         painter.setFont(QFont('Monospace', 7))
-        painter.setPen(QColor(150, 150, 175))
+        painter.setPen(_themed('text_dim'))
         if fingered:
             painter.drawText(
                 QRectF(r.left() + pad_x, top_y, r.width() / 2 - pad_x, top_h),
                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                 fingered)
         if sounding and sounding != fingered:
-            painter.setPen(QColor(120, 130, 160))
+            painter.setPen(_themed('text_dim'))
             painter.drawText(
                 QRectF(r.left() + r.width() / 2, top_y,
                        r.width() / 2 - pad_x, top_h),
@@ -1063,7 +1075,7 @@ class MatrixCellDelegate(QStyledItemDelegate):
         if mean is None or not math.isfinite(float(mean)):
             # In-range but no measurement yet — show a centered dot to
             # acknowledge the seeded slot.
-            painter.setPen(QColor(80, 80, 100))
+            painter.setPen(_themed('text_dim'))
             painter.setFont(QFont('Monospace', 10))
             painter.drawText(
                 QRectF(r.left(), r.top() + top_h, r.width(), r.height() - top_h),
@@ -1072,8 +1084,8 @@ class MatrixCellDelegate(QStyledItemDelegate):
             return
 
         # ----- Mid strip: mean (color) + ±std ------------------------
-        col = (QColor('#3a9e5f') if abs(mean) <= 5 else
-               QColor('#c8a020') if abs(mean) <= 12 else QColor('#c03030'))
+        col = (_themed('ok') if abs(mean) <= 5 else
+               _themed('warn') if abs(mean) <= 12 else _themed('bad'))
         mid_h = 18
         mid_y = r.top() + top_h
         painter.setPen(col)
@@ -1084,7 +1096,7 @@ class MatrixCellDelegate(QStyledItemDelegate):
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
             format_cents(mean, freq, sr))
         if n > 1 and std > 0:
-            painter.setPen(QColor(170, 170, 200))
+            painter.setPen(_themed('text_dim'))
             painter.setFont(QFont('Monospace', 8))
             # Strip sign from format_cents and prepend "±".
             std_txt = format_cents(std, freq, sr).lstrip('+-')
@@ -1101,12 +1113,12 @@ class MatrixCellDelegate(QStyledItemDelegate):
         scale_y = r.top() + top_h + mid_h + 3
         # Background trough.
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(45, 45, 60))
+        painter.setBrush(_themed('grid'))
         painter.drawRoundedRect(QRectF(r.left() + pad_x, scale_y,
                                         scale_w, scale_h), 2, 2)
         # ±5 ct in-tune band.
         zone_w = max(2.0, scale_w / 2 * 5.0 / self.MAX_CENT)
-        painter.setBrush(QColor(40, 110, 60, 160))
+        painter.setBrush(_themed('ok', 160))
         painter.drawRect(QRectF(cx - zone_w, scale_y, zone_w * 2, scale_h))
         # Filled bar.
         norm = max(-1.0, min(1.0, mean / self.MAX_CENT))
@@ -1118,7 +1130,7 @@ class MatrixCellDelegate(QStyledItemDelegate):
         else:
             painter.drawRoundedRect(QRectF(cx - fill_w, scale_y - 1,
                                             fill_w, scale_h + 2), 2, 2)
-        painter.setPen(QPen(QColor(200, 200, 220), 1))
+        painter.setPen(QPen(_themed('text'), 1))
         painter.drawLine(QPointF(cx, scale_y - 2),
                           QPointF(cx, scale_y + scale_h + 2))
 
@@ -1129,7 +1141,7 @@ class MatrixCellDelegate(QStyledItemDelegate):
             x_lo = cx + std_lo * scale_w / 2
             x_hi = cx + std_hi * scale_w / 2
             w_y = scale_y + scale_h + 4
-            painter.setPen(QPen(QColor(220, 220, 235, 200), 1.4))
+            painter.setPen(QPen(_themed('text_bright', 200), 1.4))
             painter.drawLine(QPointF(x_lo, w_y), QPointF(x_hi, w_y))
             painter.drawLine(QPointF(x_lo, w_y - 2),
                               QPointF(x_lo, w_y + 2))
@@ -1137,7 +1149,7 @@ class MatrixCellDelegate(QStyledItemDelegate):
                               QPointF(x_hi, w_y + 2))
 
         # N counter, bottom-right.
-        painter.setPen(QColor(140, 140, 165))
+        painter.setPen(_themed('text_dim'))
         painter.setFont(QFont('Monospace', 7))
         painter.drawText(
             QRectF(r.right() - 28, r.bottom() - 12, 26, 10),
