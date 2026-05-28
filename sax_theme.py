@@ -246,4 +246,13 @@ def build_app_qss(p: ThemePalette) -> str:
         QTabBar::tab:hover{{background:{p.tab_hover_bg};color:{p.text};}}
         QTabBar::tab:selected{{background:{p.window_bg};color:{p.accent};
                      border-bottom:2px solid {p.accent};}}
+        QTableView{{background:{p.window_bg};gridline-color:{p.panel_border};
+                   border:none;}}
+        QHeaderView::section{{background:{p.base_bg};color:{p.text_dim};
+                   border:none;padding:3px 6px;font-size:11px;}}
+        QTableCornerButton::section{{background:{p.base_bg};border:none;}}
+        QScrollBar:vertical,QScrollBar:horizontal{{background:{p.window_bg};
+                   border:none;}}
+        QScrollBar::handle{{background:{p.button_bg};border-radius:4px;}}
+        QScrollBar::add-line,QScrollBar::sub-line{{background:none;border:none;}}
     """

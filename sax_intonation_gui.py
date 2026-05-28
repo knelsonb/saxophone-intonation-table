@@ -2812,6 +2812,7 @@ class MainWindow(QMainWindow):
         # while night/light re-render from their palettes. Live theme switches
         # re-call setStyleSheet via _apply_theme.
         self.setStyleSheet(sax_theme.build_app_qss(sax_theme.active()))
+        self._sync_qpalette()
 
         self.setWindowTitle(self._t('window_title'))
 
@@ -3076,6 +3077,7 @@ class MainWindow(QMainWindow):
         value; never raises into the signal."""
         pal = sax_theme.set_active(name)
         self.setStyleSheet(sax_theme.build_app_qss(pal))
+        self._sync_qpalette()
         # The stylesheet re-polish repaints QSS-styled widgets; the QPainter-
         # based widgets (tuner, table, chart) need an explicit nudge to re-read
         # the palette.
@@ -3087,6 +3089,32 @@ class MainWindow(QMainWindow):
             sax_config.save_config(self._cfg)
         except Exception:
             pass
+
+    def _sync_qpalette(self) -> None:
+        """Set the QApplication palette from the active theme, so palette-based
+        rendering the global QSS doesn't reach — QTableView/QListView viewport
+        (Base), header sections, scrollbars, tooltips — also follows the theme.
+        Without this they default to the dark Base and read as black blocks on
+        the light theme (the matrix viewport + header row)."""
+        from PyQt6.QtGui import QPalette
+        from PyQt6.QtWidgets import QApplication
+        app = QApplication.instance()
+        if app is None:
+            return
+        p = sax_theme.active()
+        pal = QPalette()
+        pal.setColor(QPalette.ColorRole.Window, QColor(p.window_bg))
+        pal.setColor(QPalette.ColorRole.Base, QColor(p.window_bg))
+        pal.setColor(QPalette.ColorRole.AlternateBase, QColor(p.base_bg))
+        pal.setColor(QPalette.ColorRole.Text, QColor(p.text))
+        pal.setColor(QPalette.ColorRole.WindowText, QColor(p.text))
+        pal.setColor(QPalette.ColorRole.Button, QColor(p.button_bg))
+        pal.setColor(QPalette.ColorRole.ButtonText, QColor(p.text))
+        pal.setColor(QPalette.ColorRole.Highlight, QColor(p.accent))
+        pal.setColor(QPalette.ColorRole.HighlightedText, QColor(p.text_bright))
+        pal.setColor(QPalette.ColorRole.ToolTipBase, QColor(p.base_bg))
+        pal.setColor(QPalette.ColorRole.ToolTipText, QColor(p.text))
+        app.setPalette(pal)
 
     def _on_test_tone_toggled(self, on: bool) -> None:
         """Start/stop a 440 Hz test tone through the mixer. The tuner is
