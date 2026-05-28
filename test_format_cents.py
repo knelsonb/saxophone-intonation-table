@@ -49,8 +49,15 @@ import math
 
 import pytest
 
-from sax_intonation_gui import format_cents
-from sax_intonation_chart import _format_cents_label
+# ``sax_intonation_gui`` imports PyQt6 at module scope (no QApplication at
+# import time — that is guarded by ``if __name__ == '__main__'``). Importing
+# it headless therefore needs PyQt6 present. Without this guard, collection on
+# a PyQt6-less env (the always-runnable numpy/logic suite) ABORTS the whole
+# run instead of skipping just this file. Same pattern as test_vendor_prefix.py.
+pytest.importorskip('PyQt6', reason='PyQt6 not installed; skipping cents-format tests')
+
+from sax_intonation_gui import format_cents  # noqa: E402
+from sax_intonation_chart import _format_cents_label  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
