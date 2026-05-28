@@ -66,6 +66,33 @@ try:
 except Exception:
     _MetronomeController = None
 
+# Sprint 3: drone (TSF) + pitch pipes (numpy sine) live in their own modules.
+# Same inert-until-landed discipline as the metronome. The voice catalog is the
+# authoritative source when present; a 5-preset fallback keeps the TUNER preset
+# row rendering before sax_drone.py lands (reconcile to the module catalog once
+# it's in — do not let these drift from droneVoices.ts).
+try:
+    from sax_drone import (
+        DroneController as _DroneController,
+        DRONE_PRESETS as _DRONE_PRESETS,
+        DRONE_FULL_GM as _DRONE_FULL_GM,
+    )
+except Exception:
+    _DroneController = None
+    # (id, label, GM program) — ids match sax_drone.DRONE_PRESETS (the
+    # authoritative desktop catalog), not droneVoices.ts. Fallback only:
+    # used when sax_drone hasn't imported, so nothing is persisted against it.
+    _DRONE_PRESETS = [
+        ('organ', 'Organ', 19), ('strings', 'Strings', 48),
+        ('cello', 'Cello', 42), ('tenorsax', 'Tenor Sax', 66),
+        ('warmpad', 'Warm Pad', 89),
+    ]
+    _DRONE_FULL_GM = []
+try:
+    from sax_pitch_pipes import PitchPipesController as _PitchPipesController
+except Exception:
+    _PitchPipesController = None
+
 APP_NAME = 'Intonation Analyzer'
 APP_VERSION = '0.8.0'
 
@@ -2593,6 +2620,12 @@ class MainWindow(QMainWindow):
         self._status_lbl.setStyleSheet('color:#888;font-size:13px;padding:4px;')
         ll3.addWidget(self._status_lbl)
 
+        # Sprint 3: drone controls live on the TUNER tab (per the S3 lock),
+        # directly under the readout — quick access while tuning against the
+        # drone. The 128-GM voice picker lives in SETUP; the compact 5-preset
+        # row + volume + semitone are here.
+        ll3.addWidget(self._build_drone_bar())
+
         # v0.5.7: "Show spectrum analyzer & diagnostics" footer row.
         # Lives directly below the tuner so the toggle is adjacent to
         # the widgets it controls. Same handler, same persistence as
@@ -2865,6 +2898,33 @@ class MainWindow(QMainWindow):
         self._cb_prefer_duplex.toggled.connect(self._on_prefer_duplex_toggled)
         og.addRow('', self._cb_prefer_duplex)
         outer.addWidget(out_grp)
+
+        # Drone voice — the full 128-GM picker lives here (per the S3 lock); the
+        # TUNER drone bar carries the 5-preset quick row. Both drive the same
+        # voice and stay in sync via DroneController.on_state_changed.
+        voice_grp = QGroupBox(self._t('setup_drone_voice_group'))
+        vg = QFormLayout(voice_grp)
+        vg.setContentsMargins(12, 10, 12, 10)
+        self._drone_voice_combo = QComboBox()
+        self._drone_voice_combo.setMinimumWidth(260)
+        # Presets first (labelled), then the full GM catalog. Each item's data
+        # is the voice id the controller resolves.
+        seen_ids = set()
+        for v in list(_DRONE_PRESETS) + list(_DRONE_FULL_GM):
+            vid, label, program = self._drone_voice_fields(v)
+            if vid in seen_ids:
+                continue
+            seen_ids.add(vid)
+            self._drone_voice_combo.addItem(label, vid)
+        sel_id = str(getattr(self._cfg, 'drone_voice_id', 'organ') or 'organ')
+        for i in range(self._drone_voice_combo.count()):
+            if self._drone_voice_combo.itemData(i) == sel_id:
+                self._drone_voice_combo.setCurrentIndex(i)
+                break
+        self._drone_voice_combo.currentIndexChanged.connect(
+            self._on_drone_voice_changed)
+        vg.addRow(self._t('setup_drone_voice'), self._drone_voice_combo)
+        outer.addWidget(voice_grp)
 
         # Test tone — proves the output path end to end.
         tone_grp = QGroupBox(self._t('setup_testtone_group'))
@@ -3381,6 +3441,336 @@ class MainWindow(QMainWindow):
                 b.setChecked(k == ts)
                 b.blockSignals(bb)
             self._cfg.last_time_sig = ts
+
+    # ── Drone + pitch pipes (Sprint 3) ────────────────────────────────────────
+    @staticmethod
+    def _drone_voice_fields(v) -> tuple:
+        """(id, label, program) for a drone-voice entry, accepting either the
+        sax_drone DroneVoice object (.id/.label/.program) or the fallback
+        (id, label, program) tuple."""
+        if isinstance(v, tuple):
+            return v[0], v[1], v[2]
+        return v.id, v.label, v.program
+
+    @staticmethod
+    def _fmt_semitone(n: int) -> str:
+        return f'{n:+d}' if n else '0'
+
+    def _build_drone_bar(self) -> QWidget:
+        """The drone strip on the TUNER tab: on/off + 5-preset row + volume +
+        semitone steppers + a pitch-pipes launcher. Wired to DroneController
+        (sax_drone.py) once it lands; inert + guarded until then. Turning the
+        drone on requires an output stream (honesty discipline — no 'on' state
+        if nothing can sound). The 128-GM picker lives in SETUP and stays in
+        sync via the controller's on_state_changed (single source of truth)."""
+        # Seed persisted state (Treebeard's Sprint-3 config fields, defensive).
+        self._drone_voice_id = str(getattr(self._cfg, 'drone_voice_id', 'organ')
+                                   or 'organ')
+        self._drone_volume = float(getattr(self._cfg, 'drone_volume', 0.5) or 0.5)
+        self._drone_semitones = max(-12, min(12, int(
+            getattr(self._cfg, 'drone_semitones', 0) or 0)))
+        self._pipes_ctrl = None
+        self._pipes_dlg = None
+        # Construct the drone controller (None → inert panel).
+        self._drone_ctrl = None
+        if (_DroneController is not None
+                and getattr(self._engine, 'mixer', None) is not None):
+            try:
+                sr = int(getattr(self._engine, 'output_samplerate', 0)
+                         or self._engine_sample_rate() or 44100)
+                self._drone_ctrl = _DroneController(
+                    self._engine.mixer, sr,
+                    voice_id=self._drone_voice_id,
+                    volume=self._drone_volume,
+                    semitones=self._drone_semitones,
+                    a4=float(getattr(self._engine, 'a4', 440.0) or 440.0),
+                    enabled=False,
+                    engine=self._engine,   # enables D3 duck-attach on enable
+                    on_state_changed=self._on_drone_state_changed)
+            except Exception:
+                self._drone_ctrl = None
+
+        grp = QGroupBox(self._t('drone_group'))
+        g = QVBoxLayout(grp)
+        g.setContentsMargins(8, 4, 8, 6)
+        g.setSpacing(6)
+
+        # Row 1: on/off + 5-preset row.
+        row1 = QHBoxLayout()
+        self._btn_drone_on = QPushButton(self._t('drone_group'))
+        self._btn_drone_on.setCheckable(True)
+        self._btn_drone_on.setToolTip(self._t('drone_on_tip'))
+        self._btn_drone_on.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_drone_on.toggled.connect(self._on_drone_toggle)
+        self._btn_drone_on.setStyleSheet(
+            'QPushButton{background:#1a6b3a;color:#fff;border:none;'
+            'border-radius:5px;padding:6px 12px;font-size:13px;font-weight:bold;}'
+            'QPushButton:hover{background:#218a4b;}'
+            'QPushButton:checked{background:#c0392b;}')
+        row1.addWidget(self._btn_drone_on)
+        self._drone_preset_btns: dict = {}
+        for v in _DRONE_PRESETS:
+            vid, label, _program = self._drone_voice_fields(v)
+            b = QPushButton(label)
+            b.setCheckable(True)
+            b.setChecked(vid == self._drone_voice_id)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.clicked.connect(lambda _c, i=vid: self._on_drone_preset(i))
+            b.setStyleSheet(
+                'QPushButton{background:#1e1e2e;color:#ccc;border:1px solid '
+                '#444;border-radius:5px;padding:5px 10px;font-size:12px;}'
+                'QPushButton:checked{background:#2d4a7a;color:#fff;border:1px '
+                'solid #6699cc;}QPushButton:hover{border:1px solid #6699cc;}')
+            self._drone_preset_btns[vid] = b
+            row1.addWidget(b)
+        row1.addStretch()
+        g.addLayout(row1)
+
+        # Row 2: volume · semitone steppers · pitch-pipes launcher.
+        row2 = QHBoxLayout()
+        vlbl = QLabel(self._t('drone_volume'))
+        vlbl.setStyleSheet('color:#aaa;font-size:12px;')
+        row2.addWidget(vlbl)
+        self._drone_vol_slider = QSlider(Qt.Orientation.Horizontal)
+        self._drone_vol_slider.setRange(0, 100)
+        self._drone_vol_slider.setValue(max(0, min(100,
+            int(round(self._drone_volume * 100)))))
+        self._drone_vol_slider.valueChanged.connect(self._on_drone_volume)
+        row2.addWidget(self._drone_vol_slider, 1)
+        row2.addSpacing(10)
+        slbl = QLabel(self._t('drone_semitone'))
+        slbl.setStyleSheet('color:#aaa;font-size:12px;')
+        row2.addWidget(slbl)
+        btn_sd = QToolButton()
+        btn_sd.setText('−')
+        btn_sd.setToolTip(self._t('drone_semitone_down_tip'))
+        btn_sd.clicked.connect(lambda: self._drone_semitone_nudge(-1))
+        self._drone_semi_lbl = QLabel(self._fmt_semitone(self._drone_semitones))
+        self._drone_semi_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._drone_semi_lbl.setStyleSheet(
+            'color:#ddd;font-size:13px;min-width:28px;')
+        btn_su = QToolButton()
+        btn_su.setText('+')
+        btn_su.setToolTip(self._t('drone_semitone_up_tip'))
+        btn_su.clicked.connect(lambda: self._drone_semitone_nudge(1))
+        for b in (btn_sd, btn_su):
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.setStyleSheet(
+                'QToolButton{background:#1e1e2e;color:#ddd;border:1px solid '
+                '#444;border-radius:5px;padding:2px 9px;font-size:15px;}'
+                'QToolButton:hover{border:1px solid #6699cc;}')
+        row2.addWidget(btn_sd)
+        row2.addWidget(self._drone_semi_lbl)
+        row2.addWidget(btn_su)
+        row2.addSpacing(12)
+        self._btn_pipes = QPushButton(self._t('pipes_launch'))
+        self._btn_pipes.setToolTip(self._t('pipes_tip'))
+        self._btn_pipes.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_pipes.clicked.connect(self._open_pitch_pipes)
+        self._btn_pipes.setStyleSheet(
+            'QPushButton{background:#34495e;color:#eee;border:none;'
+            'border-radius:5px;padding:5px 12px;font-size:12px;}'
+            'QPushButton:hover{background:#3d566e;}')
+        row2.addWidget(self._btn_pipes)
+        g.addLayout(row2)
+
+        # Inline status — shown when an audio action can't run yet.
+        self._drone_status = QLabel('')
+        self._drone_status.setWordWrap(True)
+        self._drone_status.setStyleSheet(
+            'color:#c0392b;font-size:11px;padding:2px;')
+        self._drone_status.setVisible(False)
+        g.addWidget(self._drone_status)
+        return grp
+
+    def _on_drone_toggle(self, on: bool) -> None:
+        if self._drone_ctrl is None:
+            self._drone_revert_toggle()
+            return
+        if not on:
+            self._drone_ctrl.set_enabled(False)
+            return
+        self._drone_status.setVisible(False)
+        if not self._ensure_output_open():
+            self._drone_revert_toggle()
+            return
+        sr = int(getattr(self._engine, 'output_samplerate', 0) or 0)
+        if sr and hasattr(self._drone_ctrl, 'set_samplerate'):
+            try:
+                self._drone_ctrl.set_samplerate(sr)
+            except Exception:
+                pass
+        self._drone_ctrl.set_enabled(True)   # fires on_state_changed
+
+    def _drone_revert_toggle(self) -> None:
+        blocked = self._btn_drone_on.blockSignals(True)
+        self._btn_drone_on.setChecked(False)
+        self._btn_drone_on.blockSignals(blocked)
+        self._drone_status.setText(self._t('drone_unavailable'))
+        self._drone_status.setVisible(True)
+
+    def _on_drone_preset(self, voice_id: str) -> None:
+        self._drone_voice_id = voice_id
+        self._cfg.drone_voice_id = voice_id
+        if self._drone_ctrl is not None:
+            self._drone_ctrl.set_voice(voice_id)   # fires on_state_changed
+        else:
+            self._refresh_drone_voice_widgets()
+
+    def _on_drone_volume(self, value: int) -> None:
+        self._drone_volume = value / 100.0
+        self._cfg.drone_volume = self._drone_volume
+        if self._drone_ctrl is not None:
+            self._drone_ctrl.set_volume(self._drone_volume)
+
+    def _drone_semitone_nudge(self, delta: int) -> None:
+        n = max(-12, min(12, self._drone_semitones + delta))
+        self._drone_semitones = n
+        self._drone_semi_lbl.setText(self._fmt_semitone(n))
+        self._cfg.drone_semitones = n
+        if self._drone_ctrl is not None:
+            self._drone_ctrl.set_semitones(n)
+
+    def _refresh_drone_voice_widgets(self) -> None:
+        """Sync the TUNER preset row + the SETUP voice combo to the current
+        voice id (both drive the same drone voice)."""
+        for vid, b in self._drone_preset_btns.items():
+            blocked = b.blockSignals(True)
+            b.setChecked(vid == self._drone_voice_id)
+            b.blockSignals(blocked)
+        combo = getattr(self, '_drone_voice_combo', None)
+        if combo is not None:
+            for i in range(combo.count()):
+                if combo.itemData(i) == self._drone_voice_id:
+                    blocked = combo.blockSignals(True)
+                    combo.setCurrentIndex(i)
+                    combo.blockSignals(blocked)
+                    break
+
+    def _on_drone_state_changed(self) -> None:
+        """Zero-arg slot for DroneController.on_state_changed. The controller is
+        the single source of truth: sync the on/off button, voice selection
+        (preset row + SETUP combo), volume, and semitone from it + persist."""
+        ctrl = self._drone_ctrl
+        if ctrl is None:
+            return
+        enabled = bool(ctrl.is_enabled()) if hasattr(ctrl, 'is_enabled') \
+            else bool(getattr(ctrl, 'enabled', False))
+        blocked = self._btn_drone_on.blockSignals(True)
+        self._btn_drone_on.setChecked(enabled)
+        self._btn_drone_on.blockSignals(blocked)
+        vid = str(getattr(ctrl, 'voice_id', self._drone_voice_id))
+        if vid != self._drone_voice_id:
+            self._drone_voice_id = vid
+            self._cfg.drone_voice_id = vid
+        self._refresh_drone_voice_widgets()
+
+    def _on_drone_voice_changed(self, _idx: int) -> None:
+        """SETUP 128-GM picker handler — routes through the same path as the
+        TUNER preset row."""
+        combo = self._drone_voice_combo
+        vid = combo.currentData()
+        if vid:
+            self._on_drone_preset(str(vid))
+
+    def _open_pitch_pipes(self) -> None:
+        """Pitch-pipes modal: 12 chromatic pads (C4–B4). Pads route to
+        PitchPipesController (numpy sine); tap toggles a sustained reference
+        tone. Needs an output stream — honest status if it can't sound."""
+        if self._pipes_dlg is not None and self._pipes_dlg.isVisible():
+            self._pipes_dlg.raise_()
+            return
+        # Lazily construct the controller.
+        if (self._pipes_ctrl is None and _PitchPipesController is not None
+                and getattr(self._engine, 'mixer', None) is not None):
+            try:
+                sr = int(getattr(self._engine, 'output_samplerate', 0)
+                         or self._engine_sample_rate() or 44100)
+                self._pipes_ctrl = _PitchPipesController(
+                    self._engine.mixer, sr,
+                    a4=float(getattr(self._engine, 'a4', 440.0) or 440.0),
+                    on_state_changed=self._on_pipes_state_changed)
+            except Exception:
+                self._pipes_ctrl = None
+
+        from PyQt6.QtWidgets import QGridLayout
+        dlg = QDialog(self)
+        dlg.setWindowTitle(self._t('pipes_title'))
+        dlg.setStyleSheet('QDialog{background:#12121a;}')
+        v = QVBoxLayout(dlg)
+        tip = QLabel(self._t('pipes_tip'))
+        tip.setWordWrap(True)
+        tip.setStyleSheet('color:#aaa;font-size:12px;padding:2px 2px 6px 2px;')
+        v.addWidget(tip)
+        grid = QGridLayout()
+        grid.setSpacing(6)
+        names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+        self._pipe_btns: dict = {}
+        for i in range(12):
+            midi = 60 + i                      # C4..B4
+            b = QPushButton(names[i])
+            b.setCheckable(True)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.clicked.connect(lambda _c, m=midi: self._on_pipe_tapped(m))
+            b.setStyleSheet(
+                'QPushButton{background:#1e1e2e;color:#ddd;border:1px solid '
+                '#444;border-radius:6px;padding:14px;font-size:15px;'
+                'font-weight:bold;}QPushButton:checked{background:#2d4a7a;'
+                'color:#fff;border:1px solid #6699cc;}'
+                'QPushButton:hover{border:1px solid #6699cc;}')
+            self._pipe_btns[midi] = b
+            grid.addWidget(b, i // 4, i % 4)
+        v.addLayout(grid)
+        self._pipes_status = QLabel('')
+        self._pipes_status.setStyleSheet('color:#c0392b;font-size:11px;')
+        self._pipes_status.setVisible(False)
+        v.addWidget(self._pipes_status)
+        # Stop any sustaining pipe when the modal closes.
+        dlg.finished.connect(lambda _r: self._stop_pitch_pipes())
+        self._pipes_dlg = dlg
+        self._on_pipes_state_changed()         # reflect any active pad
+        dlg.show()
+
+    def _on_pipe_tapped(self, midi: int) -> None:
+        if self._pipes_ctrl is None:
+            self._pipes_status.setText(self._t('pipes_unavailable'))
+            self._pipes_status.setVisible(True)
+            self._sync_pipe_btns()
+            return
+        if not self._ensure_output_open():
+            self._pipes_status.setText(self._t('pipes_unavailable'))
+            self._pipes_status.setVisible(True)
+            self._sync_pipe_btns()
+            return
+        self._pipes_status.setVisible(False)
+        self._pipes_ctrl.toggle(midi)          # fires on_pipes_state_changed
+
+    def _stop_pitch_pipes(self) -> None:
+        if self._pipes_ctrl is not None:
+            try:
+                self._pipes_ctrl.release_all()
+            except Exception:
+                pass
+
+    def _sync_pipe_btns(self) -> None:
+        # Desktop pitch pipes can sustain multiple pads (controller exposes
+        # active_midis() — chord-capable reference), so highlight every active.
+        active = set()
+        if self._pipes_ctrl is not None:
+            try:
+                active = set(self._pipes_ctrl.active_midis())
+            except Exception:
+                active = set()
+        for midi, b in getattr(self, '_pipe_btns', {}).items():
+            blocked = b.blockSignals(True)
+            b.setChecked(midi in active)
+            b.blockSignals(blocked)
+
+    def _on_pipes_state_changed(self) -> None:
+        """Zero-arg slot for PitchPipesController.on_state_changed — highlight
+        the sustaining pad (if the modal is open)."""
+        if getattr(self, '_pipe_btns', None):
+            self._sync_pipe_btns()
 
     def _table_headers(self):
         return [self._t('col_fingered'), self._t('col_sounding'),
@@ -4015,6 +4405,15 @@ class MainWindow(QMainWindow):
                                 a4_hz=new_a4,
                                 label=self._nick_edit.text().strip())
         self._refresh_table()
+        # Sprint 3: keep the drone + pitch-pipe reference frequencies tuned to
+        # the new concert pitch (acceptance: pads sound correct at current A4).
+        for _c in (getattr(self, '_drone_ctrl', None),
+                   getattr(self, '_pipes_ctrl', None)):
+            if _c is not None and hasattr(_c, 'set_a4'):
+                try:
+                    _c.set_a4(new_a4)
+                except Exception:
+                    pass
 
     # ── Start / Stop ──────────────────────────────────────────────────────────
     def _on_record_toggle(self):
