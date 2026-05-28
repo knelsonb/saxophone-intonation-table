@@ -590,9 +590,9 @@ class SpectrumAnalyzerWidget(QWidget):
     def paintEvent(self, _ev):
         p = QPainter(self)
         W, H = self.width(), self.height()
-        p.fillRect(0, 0, W, H, QColor(10, 10, 16))
+        p.fillRect(0, 0, W, H, _themed('window_bg'))
         if not AUDIO_OK or self._engine is None:
-            p.setPen(QColor(140, 140, 160))
+            p.setPen(_themed('text_dim'))
             p.setFont(QFont('Monospace', 11))
             p.drawText(QRectF(0, 0, W, H),
                        Qt.AlignmentFlag.AlignCenter,
@@ -628,7 +628,7 @@ class SpectrumAnalyzerWidget(QWidget):
 
         # Vertical gridlines at powers of two, with thin labels.
         p.setFont(QFont('Monospace', 8))
-        grid_pen = QPen(QColor(40, 44, 60))
+        grid_pen = QPen(_themed('grid'))
         grid_pen.setWidth(1)
         p.setPen(grid_pen)
         for hz in self._grid_hz:
@@ -636,7 +636,7 @@ class SpectrumAnalyzerWidget(QWidget):
                 continue
             gx = x_of(hz)
             p.drawLine(QPointF(gx, y0), QPointF(gx, y1))
-        p.setPen(QColor(120, 130, 150))
+        p.setPen(_themed('text_dim'))
         for hz in self._grid_hz:
             if hz < self.F_LO or hz > self.F_HI:
                 continue
@@ -647,7 +647,7 @@ class SpectrumAnalyzerWidget(QWidget):
                        label)
 
         # Horizontal dB gridline at -40 dBFS for visual reference.
-        p.setPen(QPen(QColor(40, 44, 60), 1, Qt.PenStyle.DashLine))
+        p.setPen(QPen(_themed('grid'), 1, Qt.PenStyle.DashLine))
         y_mid = y_of(-40.0)
         p.drawLine(QPointF(x0, y_mid), QPointF(x1, y_mid))
 
@@ -659,11 +659,11 @@ class SpectrumAnalyzerWidget(QWidget):
             poly.append(QPointF(x_of(float(f)), y_of(float(self._levels[i]))))
         poly.append(QPointF(x_of(self._centers[-1]), y1))
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor(58, 156, 220, 110))
+        p.setBrush(_themed('accent', 110))
         p.drawPolygon(poly)
 
         # Bright line on top of the fill.
-        line_pen = QPen(QColor(120, 200, 255))
+        line_pen = QPen(_themed('accent'))
         line_pen.setWidth(2)
         p.setPen(line_pen)
         prev = None
@@ -674,7 +674,7 @@ class SpectrumAnalyzerWidget(QWidget):
             prev = pt
 
         # Peak-hold envelope as a thinner, paler line on top.
-        peak_pen = QPen(QColor(240, 220, 140))
+        peak_pen = QPen(_themed('warn'))
         peak_pen.setWidth(1)
         p.setPen(peak_pen)
         prev = None
