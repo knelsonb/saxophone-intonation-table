@@ -300,6 +300,35 @@ STRINGS = {
         'data_rate_negotiated':    'Ausgehandelte Rate',
         'data_block_hop':          'Block / Hop',
         'data_halfcent_floor':     '½-¢-Grenze bei A4',
+        # ── Sprint 1: Navigations-Hülle (4 Reiter) + EINSTELLUNGEN-Reiter ──
+        # Reiter-Beschriftungen. Übersetzt (wie der Rest der GUI), auch wenn
+        # die Android-App sie englisch lässt — diese App lokalisiert konsequent.
+        'nav_tab_tuner':     'STIMMGERÄT',
+        'nav_tab_metro':     'METRONOM',
+        'nav_tab_deck':      'AUFNAHME',
+        'nav_tab_setup':     'EINSTELLUNGEN',
+        'nav_tab_tuner_tip': 'Stimmgerät — die Tonhöhenanzeige und Intonationstabelle.',
+        'nav_tab_metro_tip': 'Metronom — Tempo und Taktvorgaben.',
+        'nav_tab_deck_tip':  'Aufnahme — das Mikrofonsignal aufnehmen und abspielen.',
+        'nav_tab_setup_tip': 'Einstellungen — Audioausgang, Darstellung und mehr.',
+        # Status-Punkte auf den Reitern (Barrierefreiheit/Tooltip).
+        'nav_metro_running':  'Metronom läuft',
+        'nav_deck_recording': 'Aufnahme läuft',
+        # EINSTELLUNGEN-Reiter — Audioausgang
+        'setup_title':             'Einstellungen',
+        'setup_output_group':      'Audioausgang',
+        'setup_output_device':     'Ausgabegerät',
+        'setup_output_pick':       'Ausgabegerät wählen …',
+        'setup_output_none':       'Kein Ausgabegerät gewählt',
+        'setup_output_default':    'Systemstandard',
+        'setup_prefer_duplex':     'Gemeinsames Ein-/Ausgabegerät bevorzugen (Duplex)',
+        'setup_prefer_duplex_tip': 'Aktiviert: nutzt einen gemeinsamen Vollduplex-Stream, wenn Ein- und Ausgang dasselbe Gerät sind (geringere Latenz).\nDeaktiviert (Standard): getrennter Ausgabe-Stream — robuster, wenn du auf einem anderen Gerät hörst.',
+        # EINSTELLUNGEN-Reiter — Testton (belegt den Ausgabepfad; Sprint-1-Abnahme)
+        'setup_testtone_group':    'Testton',
+        'setup_testtone_play':     'Testton abspielen',
+        'setup_testtone_stop':     'Testton stoppen',
+        'setup_testtone_tip':      'Spielt einen 440-Hz-Sinuston über den Audioausgang. Das Stimmgerät liest dabei weiter das Mikrofon mit.',
+        'setup_testtone_failed':   'Testton konnte nicht gestartet werden — wähle oben ein Ausgabegerät.',
     },
     'en': {
         'window_title': 'Intonation Analyzer',
@@ -564,6 +593,33 @@ STRINGS = {
         'data_rate_negotiated':    'Negotiated rate',
         'data_block_hop':          'Block / Hop',
         'data_halfcent_floor':     '½-¢ floor @ A4',
+        # ── Sprint 1: navigation shell (4-tab) + SETUP tab ──────────────
+        'nav_tab_tuner':     'TUNER',
+        'nav_tab_metro':     'METRO',
+        'nav_tab_deck':      'DECK',
+        'nav_tab_setup':     'SETUP',
+        'nav_tab_tuner_tip': 'Tuner — the pitch readout and intonation table.',
+        'nav_tab_metro_tip': 'Metronome — tempo and beat controls.',
+        'nav_tab_deck_tip':  'Deck — record and play back what comes through the mic.',
+        'nav_tab_setup_tip': 'Setup — audio output, display, and more.',
+        # Tab status dots (accessibility/tooltip).
+        'nav_metro_running':  'Metronome running',
+        'nav_deck_recording': 'Recording',
+        # SETUP tab — audio output
+        'setup_title':             'Setup',
+        'setup_output_group':      'Audio output',
+        'setup_output_device':     'Output device',
+        'setup_output_pick':       'Choose output device …',
+        'setup_output_none':       'No output device selected',
+        'setup_output_default':    'System default',
+        'setup_prefer_duplex':     'Prefer shared input/output device (duplex)',
+        'setup_prefer_duplex_tip': 'On: use one full-duplex stream when input and output are the same device (lower latency).\nOff (default): separate output stream — more robust when you listen on a different device.',
+        # SETUP tab — test tone (proves the output path; Sprint 1 acceptance)
+        'setup_testtone_group':    'Test tone',
+        'setup_testtone_play':     'Play test tone',
+        'setup_testtone_stop':     'Stop test tone',
+        'setup_testtone_tip':      'Plays a 440 Hz sine through the audio output. The tuner keeps reading the mic.',
+        'setup_testtone_failed':   "Couldn't start the test tone — choose an output device above.",
     },
 }
 
