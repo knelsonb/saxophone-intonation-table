@@ -145,16 +145,54 @@ def main() -> int:
     checked = [t for t, b in win._metro_ts_btns.items() if b.isChecked()]
     check(checked == ["6/8"],
           f"time-signature selection not exclusive: {checked}")
-    # Start with no controller (headless): must NOT claim running — button
-    # reverts, inline status shown, green dot stays hidden (N2 honesty).
+    # Start with no audible output (headless has no output stream): must NOT
+    # claim running — button reverts, inline status shown, green dot stays
+    # hidden (the honesty discipline holds whether the controller is absent or
+    # simply can't open an output device).
     win._btn_metro_start.setChecked(True)
     app.processEvents()
     check(not win._btn_metro_start.isChecked(),
-          "metro start button stayed checked with no controller (button lies)")
+          "metro start button stayed checked with no audible output (button lies)")
     check(win._metro_status.isVisible(),
-          "metro 'unavailable' status not shown when start had no controller")
+          "metro 'unavailable' status not shown when start could not sound")
     check(win._metro_dot.isHidden(),
           "metro green dot shown despite no running metronome")
+
+    # Option-A device-switch regression lock: a RUNNING metronome must be
+    # bracketed (stop before / start after) across an output-device reopen, so
+    # the mixer.reset_clock() inside the reopen can't silently kill its beat
+    # chain. Headless has no real output stream, so drive the GUI orchestration
+    # with a tiny fake controller + a stubbed reopen that keeps output "up".
+    class _FakeMetro:
+        def __init__(self):
+            self.calls = []
+            self._run = True
+
+        def is_running(self):
+            return self._run
+
+        def stop(self):
+            self.calls.append("stop")
+            self._run = False
+
+        def start(self):
+            self.calls.append("start")
+            self._run = True
+
+        def set_samplerate(self, sr):
+            self.calls.append(("sr", sr))
+
+    fake = _FakeMetro()
+    win._metro_ctrl = fake
+    win._engine.output_running = True
+    win._engine.output_samplerate = 48000
+    win._engine.open_output_device = lambda *a, **k: None  # stream stays up
+    win._on_output_device_changed(0)
+    check("stop" in fake.calls and "start" in fake.calls
+          and fake.calls.index("stop") < fake.calls.index("start"),
+          f"metronome not bracketed stop-before-start across device switch: {fake.calls}")
+    check(fake.is_running(),
+          "metronome did not resume after the output device switch")
 
     win.close()
 
@@ -163,7 +201,8 @@ def main() -> int:
         for f in failures:
             print(f"  - {f}")
         return 1
-    print("GUI SMOKE OK — nav shell, status dots, SETUP + METRO panels all sound.")
+    print("GUI SMOKE OK — nav shell, status dots, SETUP + METRO panels, "
+          "device-switch bracket all sound.")
     return 0
 
 

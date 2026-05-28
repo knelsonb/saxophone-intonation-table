@@ -2905,6 +2905,49 @@ class MainWindow(QMainWindow):
             samplerate=int(getattr(self._cfg, 'output_device_samplerate', 0) or 0),
         )
 
+    def _ensure_output_open(self) -> bool:
+        """Make sure an output stream is running, opening the configured device
+        only if it ISN'T already. Returns True if output is running afterward.
+        Deliberately does NOT reopen an already-running stream — a reopen runs
+        mixer.reset_clock(), which would wipe a running metronome's scheduled
+        beat (the rolling-horizon scheduler only reschedules from a fired beat).
+        New sources register on the existing stream fine."""
+        if getattr(self._engine, 'output_running', False):
+            return True
+        if hasattr(self._engine, 'open_output_device'):
+            try:
+                self._engine.open_output_device(self._current_output_selection())
+            except Exception:
+                pass
+        return bool(getattr(self._engine, 'output_running', False))
+
+    def _reopen_output_bracketed(self, sel: 'DeviceSelection') -> None:
+        """Open a (different) output device, bracketing a running metronome with
+        stop()/start() so the mixer.reset_clock() inside the reopen can't
+        silently kill its beat chain (Option A — the metronome pauses across a
+        hardware switch, then resumes on the new device). The GUI orchestrates
+        the device change, so the bracket lives here, not in the engine (stays
+        client-ignorant) or the controller (stable contract). NOTE: covers only
+        GUI-orchestrated switches; engine-internal hot-plug auto-recovery is out
+        of reach here (Option B / backlog)."""
+        ctrl = getattr(self, '_metro_ctrl', None)
+        was_running = ctrl is not None and ctrl.is_running()
+        if was_running:
+            ctrl.stop()
+        if hasattr(self._engine, 'open_output_device'):
+            try:
+                self._engine.open_output_device(sel)
+            except Exception:
+                pass
+        if was_running and getattr(self._engine, 'output_running', False):
+            sr = int(getattr(self._engine, 'output_samplerate', 0) or 0)
+            if sr and hasattr(ctrl, 'set_samplerate'):
+                try:
+                    ctrl.set_samplerate(sr)
+                except Exception:
+                    pass
+            ctrl.start()
+
     def _refresh_output_device_combo(self) -> None:
         """Fill the SETUP output combo: System default first, then the
         engine's output enumeration. hasattr-guarded so the GUI still
@@ -2947,12 +2990,9 @@ class MainWindow(QMainWindow):
             sax_config.save_config(self._cfg)
         except Exception:
             pass
-        # Re-open the output stream on the new device so it's ready to sound.
-        if hasattr(self._engine, 'open_output_device'):
-            try:
-                self._engine.open_output_device(self._current_output_selection())
-            except Exception:
-                pass
+        # Re-open on the new device. Brackets a running metronome (Option A) so
+        # the reopen's mixer.reset_clock() can't silently kill its beat chain.
+        self._reopen_output_bracketed(self._current_output_selection())
 
     def _on_prefer_duplex_toggled(self, checked: bool) -> None:
         # Persist the preference; it's consumed the next time the output
@@ -2970,13 +3010,10 @@ class MainWindow(QMainWindow):
         sounds; this is the manual proof of that path."""
         if on:
             self._test_tone_status.setVisible(False)
-            # Make sure an output stream exists before sounding.
-            if hasattr(self._engine, 'open_output_device'):
-                try:
-                    self._engine.open_output_device(
-                        self._current_output_selection())
-                except Exception:
-                    pass
+            # Make sure an output stream exists before sounding — without
+            # reopening an already-running one (that would reset the mixer
+            # clock and kill a running metronome).
+            self._ensure_output_open()
             if hasattr(self._engine, 'start_test_tone'):
                 try:
                     self._test_tone_handle = self._engine.start_test_tone(440.0)
@@ -3294,13 +3331,10 @@ class MainWindow(QMainWindow):
         self._metro_status.setVisible(False)
         # The metronome sounds through the output mixer — ensure an output
         # stream is open before claiming to run (same honesty as the test
-        # tone: don't show 'running' if nothing can be heard).
-        if hasattr(self._engine, 'open_output_device'):
-            try:
-                self._engine.open_output_device(self._current_output_selection())
-            except Exception:
-                pass
-        if not getattr(self._engine, 'output_running', False):
+        # tone: don't show 'running' if nothing can be heard). _ensure_output_open
+        # won't reopen an already-running stream, so starting the metronome
+        # while a test tone plays doesn't reset the clock.
+        if not self._ensure_output_open():
             self._metro_revert_start()
             return
         # Match the controller's clock to the (possibly re-negotiated) output
