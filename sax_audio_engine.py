@@ -299,15 +299,19 @@ def yin_pitch(sig: np.ndarray, sr: int,
         tau = tmin + int(np.argmin(cmnd[tmin:tmax]))
         mv = cmnd[tau]
     if 1 < tau < tmax - 1:
+        # Parabolic interpolation: refine the integer lag to the sub-sample
+        # vertex of the parabola through (tau-1, tau, tau+1). Vertex offset is
+        # 0.5*(s0-s2)/(s0-2*s1+s2). The denominator SIGN is critical: inverting
+        # it (the pre-v0.11 bug, d = 2*s1-s0-s2) shifts the refined lag the
+        # WRONG way and reads ~+8 cents sharp across the whole mid/high range
+        # (A440 -> 441.99 Hz). See test_yin_accuracy, which pins it.
         s0, s1, s2 = cmnd[tau - 1], cmnd[tau], cmnd[tau + 1]
-        d = 2 * s1 - s0 - s2
+        d = s0 + s2 - 2 * s1
         if d:
             tau += 0.5 * (s0 - s2) / d
-    # Clamp tau to >= 1 before the division: parabolic interpolation can
-    # in principle drag tau below 1.0 if s0 dominates and d is tiny, which
-    # would inflate sr/tau into a nonsense high frequency.  The threshold-
-    # pick loop only accepts tau >= tmin >= 1 to begin with, so a sub-1.0
-    # value is unphysical regardless of arithmetic path.
+    # Clamp tau >= 1 before the division so a degenerate near-flat peak can't
+    # inflate sr/tau into a nonsense high frequency; the threshold-pick loop
+    # only accepts tau >= tmin >= 1 to begin with anyway.
     return (sr / tau if tau >= 1.0 else 0.0), mv
 
 
