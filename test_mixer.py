@@ -32,7 +32,7 @@ import tracemalloc
 import numpy as np
 import pytest
 
-from sax_mixer import Mixer, TestToneSource
+from sax_mixer import Mixer, TestToneSource, GainGlide
 
 
 # ---------------------------------------------------------------------------
@@ -533,3 +533,104 @@ def test_testtone_steady_state_allocation_is_bounded():
         f"steady-state (frames==max_block) render peaked {peak} B — a real "
         f"per-block data temporary would be >=1 KB. The reference source must "
         f"stay allocation-light on the hot path (plan §2).")
+
+
+# ===========================================================================
+# 9. GainGlide — the D3 duck de-zipper (mechanism half of the duck split).
+#
+# Glides an applied gain toward a coarsely-set target SAMPLE-BY-SAMPLE,
+# slew-limited, so a coarse per-hop duck step (1.0 -> 0.30 in ~2 frames) is
+# smoothed to a click-free ramp. Pure numpy — runs on every suite. (Lives in
+# sax_mixer; embedded by the Sprint-3 drone source.)
+# ===========================================================================
+def _max_slew_step(samplerate, glide_ms):
+    return 1.0 / max(1.0, samplerate * glide_ms / 1000.0)
+
+
+def test_gainglide_rejects_bad_args():
+    with pytest.raises(ValueError):
+        GainGlide(0, 48000)
+    with pytest.raises(ValueError):
+        GainGlide(512, 0)
+
+
+def test_gainglide_set_target_clamps_unit_interval():
+    g = GainGlide(512, 48000)
+    g.set_target(2.0); assert g.target == 1.0
+    g.set_target(-1.0); assert g.target == 0.0
+    g.set_target(0.3); assert g.target == pytest.approx(0.3)
+
+
+def test_gainglide_downward_glide_respects_slew_cap():
+    """A coarse 1.0 -> 0.30 target jump must produce a per-sample gain whose
+    adjacent steps never exceed the slew cap (~0.004167/sample at 5ms@48k),
+    measured ACROSS block boundaries too — that's the no-zipper guarantee."""
+    sr, glide_ms, block = 48000, 5.0, 2048
+    cap = _max_slew_step(sr, glide_ms)
+    g = GainGlide(block, sr, glide_ms=glide_ms, initial=1.0)
+    g.set_target(0.30)
+    env = [1.0]   # seed with the pre-glide gain so the first step is checked
+    for _ in range(40):
+        b = np.ones(block, dtype=np.float32)   # ones -> b becomes the gain envelope
+        g.apply(b, block)
+        env.extend(b.tolist())
+        if g.gain == pytest.approx(0.30):
+            break
+    diffs = np.abs(np.diff(np.array(env, dtype=np.float64)))
+    assert diffs.max() <= cap + 1e-6, (
+        f"max per-sample gain step {diffs.max()} exceeds slew cap {cap} (zipper)")
+    assert g.gain == pytest.approx(0.30), "glide must converge exactly to target"
+
+
+def test_gainglide_upward_glide_converges():
+    sr, block = 48000, 2048
+    g = GainGlide(block, sr, glide_ms=5.0, initial=0.30)
+    g.set_target(1.0)
+    for _ in range(40):
+        b = np.ones(block, dtype=np.float32)
+        g.apply(b, block)
+        if g.gain == pytest.approx(1.0):
+            break
+    assert g.gain == pytest.approx(1.0)
+
+
+def test_gainglide_snaps_when_within_one_step():
+    """When the target is within one slew step, snap to it (no overshoot, no
+    lingering sub-step drift)."""
+    g = GainGlide(512, 48000, glide_ms=5.0, initial=0.3010)
+    g.set_target(0.30)
+    b = np.ones(512, dtype=np.float32)
+    g.apply(b, 512)
+    assert g.gain == pytest.approx(0.30)
+    assert np.allclose(b, 0.30, atol=1e-6), "within-step target fills at target"
+
+
+def test_gainglide_apply_scales_block_in_place_and_returns_gain():
+    g = GainGlide(512, 48000, initial=1.0)   # already at unity
+    b = np.full(512, 0.5, dtype=np.float32)
+    ret = g.apply(b, 512)
+    assert ret == pytest.approx(g.gain)
+    assert np.allclose(b, 0.5, atol=1e-6), "unity gain leaves the block unchanged"
+
+
+def test_gainglide_apply_has_no_frames_proportional_allocation():
+    """Steady-state apply (gain == target) must not allocate proportionally to
+    block size. Same non-scaling instrument as the mixer no-alloc gate:
+    intrinsic numpy view-boxing is constant; a real per-block temp scales."""
+    def peak(frames, mb=8192, iters=200):
+        g = GainGlide(mb, 48000, initial=0.5)
+        g.set_target(0.5)                      # already at target -> steady
+        b = np.ones(frames, dtype=np.float32)
+        for _ in range(5):
+            g.apply(b, frames)
+        tracemalloc.start()
+        base, _ = tracemalloc.get_traced_memory()
+        for _ in range(iters):
+            g.apply(b, frames)
+        _cur, pk = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        return pk - base
+    growth = peak(8192) - peak(512)
+    assert growth < 256, (
+        f"GainGlide.apply allocation scales with block size (grew {growth} B) "
+        f"— the per-sample envelope must stay in the preallocated buffer")

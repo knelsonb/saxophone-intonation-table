@@ -484,3 +484,94 @@ class TestToneSource:
         tgt += work
         # Advance and wrap the phase for block-to-block continuity.
         self._phase = (self._phase + self._dphi * n) % (2.0 * math.pi)
+
+
+# ---------------------------------------------------------------------------
+# GainGlide — per-sample slew-limited de-zipper for a source's applied gain.
+# ---------------------------------------------------------------------------
+class GainGlide:
+    """Smooths a gain that is *targeted* coarsely but must be *applied* without
+    zipper noise.
+
+    The D3 mic-coordination policy (sax_coordination) emits a duck gain once per
+    detection hop (~46 ms) — a coarse step (e.g. 1.0 -> 0.30 in ~2 frames).
+    Applying that straight to a sustained drone would step the gain by a large
+    amount in a single sample = an audible click. GainGlide is the *mechanism*
+    half of that split: it glides the ACTUAL applied gain toward the target
+    SAMPLE-BY-SAMPLE, slew-limited, so the gain is continuous regardless of how
+    coarsely ``set_target`` is called. The policy owns the macro envelope; this
+    owns audio-rate smoothing — no second duck envelope.
+
+    A source EMBEDS one of these and calls :meth:`apply` inside its ``render``
+    (the only per-sample hook the mixer exposes). ``set_target`` is called from
+    the control side (the engine's per-hop D3 wiring). Zero allocation in the
+    steady state: the per-sample gain envelope is written into a preallocated
+    buffer.
+    """
+
+    def __init__(self, max_block: int, samplerate: int, glide_ms: float = 5.0,
+                 initial: float = 1.0):
+        if max_block < 1:
+            raise ValueError(f"max_block must be >= 1, got {max_block}")
+        if samplerate <= 0:
+            raise ValueError(f"samplerate must be > 0, got {samplerate}")
+        # A full 0->1 swing completes in glide_ms; per-sample slew cap.
+        glide_samples = max(1.0, samplerate * float(glide_ms) / 1000.0)
+        self._max_step = 1.0 / glide_samples
+        self._gain = float(initial)
+        self._target = float(initial)
+        self._max_block = int(max_block)
+        # Preallocated per-sample gain envelope + an index ramp, reused each block.
+        self._g = np.zeros(self._max_block, dtype=np.float32)
+        self._ramp = np.arange(self._max_block, dtype=np.float32)
+
+    def set_target(self, target: float) -> None:
+        """Set the gain to glide toward, clamped to [0, 1]. Called per hop from
+        the control side; cheap and lock-free (a single float store)."""
+        self._target = max(0.0, min(1.0, float(target)))
+
+    @property
+    def gain(self) -> float:
+        """The current applied gain (end of the last rendered block)."""
+        return self._gain
+
+    @property
+    def target(self) -> float:
+        return self._target
+
+    def apply(self, block: np.ndarray, frames: int) -> float:
+        """Scale ``block[:frames]`` in place by the gliding gain; return the
+        gain at the block's end. Per-sample step never exceeds the slew cap, so
+        a coarse target jump becomes a smooth ramp (no zipper). Zero allocation:
+        the gain envelope is built in the preallocated ``_g`` buffer.
+        """
+        if frames <= 0:
+            return self._gain
+        if frames > self._max_block:
+            frames = self._max_block
+        g0 = self._gain
+        tgt = self._target
+        step = self._max_step
+        delta = tgt - g0
+        gview = self._g[:frames]
+        if -step <= delta <= step:
+            # Within one slew step of the target: snap + hold (no audible jump).
+            gview.fill(np.float32(tgt))
+            self._gain = tgt
+        else:
+            s = step if delta > 0 else -step
+            n_reach = int(abs(delta) / step)   # samples to reach target at slew cap
+            if n_reach >= frames:
+                # Ramp the whole block; target not reached this block.
+                np.multiply(self._ramp[:frames], np.float32(s), out=gview)
+                gview += np.float32(g0 + s)    # +1 sample: i=0 has already moved
+                self._gain = g0 + s * frames
+            else:
+                # Ramp to target over n_reach samples, then hold target.
+                head = self._g[:n_reach]
+                np.multiply(self._ramp[:n_reach], np.float32(s), out=head)
+                head += np.float32(g0 + s)
+                self._g[n_reach:frames] = np.float32(tgt)
+                self._gain = tgt
+        block[:frames] *= gview
+        return self._gain
