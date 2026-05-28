@@ -329,6 +329,17 @@ STRINGS = {
         'setup_testtone_stop':     'Testton stoppen',
         'setup_testtone_tip':      'Spielt einen 440-Hz-Sinuston über den Audioausgang. Das Stimmgerät liest dabei weiter das Mikrofon mit.',
         'setup_testtone_failed':   'Testton konnte nicht gestartet werden — wähle oben ein Ausgabegerät.',
+        # METRONOM-Reiter (Sprint 2)
+        'metro_bpm':             'BPM',
+        'metro_timesig':         'Taktart',
+        'metro_tap':             'Tippen',
+        'metro_tap_tip':         'Tempo durch gleichmäßiges Tippen vorgeben — mindestens zwei Taps.',
+        'metro_volume':          'Klick-Lautstärke',
+        'metro_start':           'Start',
+        'metro_stop':            'Stopp',
+        'metro_nudge_down_tip':  '−1 BPM',
+        'metro_nudge_up_tip':    '+1 BPM',
+        'metro_unavailable':     'Metronom-Wiedergabe ist noch nicht verfügbar.',
     },
     'en': {
         'window_title': 'Intonation Analyzer',
@@ -620,6 +631,17 @@ STRINGS = {
         'setup_testtone_stop':     'Stop test tone',
         'setup_testtone_tip':      'Plays a 440 Hz sine through the audio output. The tuner keeps reading the mic.',
         'setup_testtone_failed':   "Couldn't start the test tone — choose an output device above.",
+        # METRO tab (Sprint 2)
+        'metro_bpm':             'BPM',
+        'metro_timesig':         'Time signature',
+        'metro_tap':             'Tap',
+        'metro_tap_tip':         'Set the tempo by tapping evenly — at least two taps.',
+        'metro_volume':          'Click volume',
+        'metro_start':           'Start',
+        'metro_stop':            'Stop',
+        'metro_nudge_down_tip':  '−1 BPM',
+        'metro_nudge_up_tip':    '+1 BPM',
+        'metro_unavailable':     "Metronome playback isn't available yet.",
     },
 }
 
