@@ -76,6 +76,10 @@ class ThemePalette:
     warn: str             # near / opening / caution amber
     bad: str              # out / failed / error red
 
+    # -- painted-widget specifics (tuner / table / chart) ------------------
+    grid: str             # gridlines, dividers, axis ticks in painted views
+    accent_muted: str     # darker accent fill (needle base, selected cell)
+
     def as_dict(self) -> dict:
         return {f.name: getattr(self, f.name) for f in fields(self)}
 
@@ -103,6 +107,8 @@ DARK = ThemePalette(
     ok="#2ecc71",
     warn="#c8a020",
     bad="#c0392b",
+    grid="#282c3c",
+    accent_muted="#2d4a7a",
 )
 
 # ---------------------------------------------------------------------------
@@ -129,6 +135,8 @@ NIGHT = ThemePalette(
     ok="#8fa05a",
     warn="#c89030",
     bad="#d04030",
+    grid="#2a1c1c",
+    accent_muted="#5a2c28",
 )
 
 # ---------------------------------------------------------------------------
@@ -154,6 +162,8 @@ LIGHT = ThemePalette(
     ok="#1a8a3a",
     warn="#9a6800",
     bad="#c0291b",
+    grid="#c8ccd6",
+    accent_muted="#9bb4d6",
 )
 
 THEMES: dict[str, ThemePalette] = {p.name: p for p in (DARK, NIGHT, LIGHT)}

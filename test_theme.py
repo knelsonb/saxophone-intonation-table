@@ -100,6 +100,8 @@ def test_dark_matches_legacy_inline_colours():
     assert th.DARK.ok == "#2ecc71"
     assert th.DARK.warn == "#c8a020"
     assert th.DARK.bad == "#c0392b"
+    assert th.DARK.grid == "#282c3c"
+    assert th.DARK.accent_muted == "#2d4a7a"
 
 
 def test_build_app_qss_resolves_all_placeholders():
