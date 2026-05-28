@@ -84,6 +84,21 @@ class AppConfig:
     # the source of the GLE 0xAA busy crash on Windows.
     prefer_wdmks: bool = False
 
+    # ---- v0.6.3 audio OUTPUT device selection (parity sprint) ------------
+    # Mirror of the input-device fields above, for the new sd.OutputStream
+    # that feeds the mixer (metronome / drone / pitch pipes / test tone).
+    # Index is intentionally NOT stored — it reshuffles on every USB-hub
+    # replug, exactly as for the input device.
+    output_device_name: str = ""
+    output_device_host_api: str = ""
+    # 0 = auto-negotiate (try 44100 → device default → fallback list),
+    # mirroring audio_device_samplerate.
+    output_device_samplerate: int = 0
+    # D5: separate sd.OutputStream is the primary path; this opt-in enables
+    # a same-device full-duplex sd.Stream where input == output device and
+    # the user wants the lower-latency win. Off by default.
+    output_prefer_duplex: bool = False
+
     # ---- v0.5.5 session-state save-on-exit -------------------------------
     # QMainWindow.saveGeometry/saveState return QByteArrays; we base64-
     # encode them as plain ASCII strings so the config file round-trips
@@ -107,6 +122,11 @@ class AppConfig:
     # UI language. 'de' or 'en'. First launch picks from the system locale;
     # subsequent launches honor the user's last explicit choice.
     last_lang: str = "en"
+    # v0.6.3 (parity sprint): the nav-shell tab the user last had open,
+    # restored on the next launch. One of TAB_VALUES; anything else
+    # degrades to the TUNER centerpiece. METRO/DECK/SETUP tabs land in
+    # later sprints but the field is restored from Sprint 1 onward.
+    last_active_tab: str = "tuner"
 
     def effective_log_path(self) -> Optional[Path]:
         if not self.persistence_enabled:
@@ -182,6 +202,23 @@ def _as_samplerate_pref(v) -> str:
     return "auto"
 
 
+# Allowed nav-shell tabs. The TUNER centerpiece is the safe default any
+# stale / unknown value degrades to.
+TAB_VALUES = frozenset(("tuner", "metro", "deck", "setup"))
+
+
+def _as_active_tab(v) -> str:
+    """Coerce the saved tab id into one of TAB_VALUES. A stale or malformed
+    config silently degrades to 'tuner' so the app always opens on the
+    tuner centerpiece. Same allowlist shape as _as_samplerate_pref."""
+    if v is None:
+        return "tuner"
+    s = str(v).strip().lower()
+    if s in TAB_VALUES:
+        return s
+    return "tuner"
+
+
 def _as_str(v, default: str) -> str:
     if v is None:
         return default
@@ -226,6 +263,13 @@ def load_config() -> AppConfig:
             data.get("audio_sr_notice_shown"), False),
         show_all_host_apis=_as_bool(data.get("show_all_host_apis"), False),
         prefer_wdmks=_as_bool(data.get("prefer_wdmks"), False),
+        output_device_name=_as_str(data.get("output_device_name"), ""),
+        output_device_host_api=_as_str(
+            data.get("output_device_host_api"), ""),
+        output_device_samplerate=max(
+            0, _as_int(data.get("output_device_samplerate"), 0)),
+        output_prefer_duplex=_as_bool(
+            data.get("output_prefer_duplex"), False),
         window_geometry=_as_str(data.get("window_geometry"), ""),
         window_state=_as_str(data.get("window_state"), ""),
         splitter_sizes=_as_int_list(data.get("splitter_sizes")),
@@ -236,6 +280,7 @@ def load_config() -> AppConfig:
             data.get("last_display_mode"), "griff"),
         last_a4_hz=max(430, min(450, _as_int(data.get("last_a4_hz"), 440))),
         last_lang=_as_str(data.get("last_lang"), "en"),
+        last_active_tab=_as_active_tab(data.get("last_active_tab")),
     )
 
 
