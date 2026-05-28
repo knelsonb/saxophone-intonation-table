@@ -31,6 +31,7 @@ from PyQt6.QtWidgets import (
     QAbstractItemView, QGroupBox, QSplitter,
     QDialog, QLineEdit, QDialogButtonBox, QFormLayout,
     QStyledItemDelegate, QMenu, QCheckBox, QSpinBox, QToolButton,
+    QTabWidget, QTabBar,
 )
 from PyQt6.QtCore import (
     Qt, QTimer, pyqtSignal, QObject, QRectF, QPointF, QLocale, QByteArray,
@@ -2703,9 +2704,36 @@ class MainWindow(QMainWindow):
         splitter.addWidget(left)
         splitter.addWidget(right)
         splitter.setSizes([420, 620])
-        root.addWidget(splitter, 1)
         # Held for closeEvent persistence and restore-on-launch (v0.5.5).
         self._splitter = splitter
+
+        # ── Navigation shell (Sprint 1) ───────────────────────────────────────
+        # D4: the global toolbar (built above) stays ABOVE a QTabWidget. The
+        # TUNER tab hosts the existing tuner/table splitter VERBATIM — it's the
+        # desktop's centerpiece and is more capable than Android's tuner, so it
+        # stays untouched rather than shrinking. METRO / DECK / SETUP are homes
+        # for later sprints; METRO and DECK are placeholders now but already
+        # carry the status-dot indicator hook (green=running on METRO, pulsing
+        # red=recording on DECK, mirroring Android's TabBar) so Sprint 2/4 only
+        # flips a signal instead of rebuilding the nav. SETUP carries the
+        # audio-output device picker + test-tone control this sprint delivers.
+        self._tabs = QTabWidget()
+        self._tabs.setDocumentMode(True)
+        self._tab_keys = ['tuner', 'metro', 'deck', 'setup']
+        self._tabs.addTab(splitter, self._t('nav_tab_tuner'))
+        self._tabs.addTab(self._build_placeholder_tab('metro'),
+                          self._t('nav_tab_metro'))
+        self._tabs.addTab(self._build_placeholder_tab('deck'),
+                          self._t('nav_tab_deck'))
+        self._tabs.addTab(self._build_setup_tab(), self._t('nav_tab_setup'))
+        for i, key in enumerate(self._tab_keys):
+            self._tabs.setTabToolTip(i, self._t(f'nav_tab_{key}_tip'))
+        self._install_tab_indicators()
+        self._tabs.currentChanged.connect(self._on_tab_changed)
+        root.addWidget(self._tabs, 1)
+        # Restore the last-active tab (Treebeard's cfg.last_active_tab,
+        # allowlist-coerced upstream). Unknown / fresh-install → TUNER.
+        self._restore_active_tab()
 
         # Fensterstil
         self.setStyleSheet("""
@@ -2728,6 +2756,15 @@ class MainWindow(QMainWindow):
             QComboBox QAbstractItemView::item:hover{background:#2a2a3a;
                       color:#fff;}
             QSplitter::handle{background:#333;}
+            QTabWidget::pane{border:none;border-top:1px solid #333;top:-1px;}
+            QTabBar::tab{background:#161620;color:#999;font-size:12px;
+                         font-weight:bold;letter-spacing:1px;
+                         padding:8px 18px;margin-right:2px;
+                         border:1px solid #333;border-bottom:none;
+                         border-top-left-radius:6px;border-top-right-radius:6px;}
+            QTabBar::tab:hover{background:#1f1f2e;color:#ccc;}
+            QTabBar::tab:selected{background:#12121a;color:#6699cc;
+                         border-bottom:2px solid #6699cc;}
         """)
 
         self.setWindowTitle(self._t('window_title'))
@@ -2759,6 +2796,268 @@ class MainWindow(QMainWindow):
         # controller (their _on_* wrappers delegate here).
         self._select_family_for_instrument(self.instrument)
         self._populate_instrument_combo(select_key=self.instrument)
+
+    # ── Navigation shell helpers (Sprint 1) ──────────────────────────────────
+    def _build_placeholder_tab(self, key: str) -> QWidget:
+        """A holding body for METRO / DECK until Sprints 2 and 4 fill them.
+        The tab + its status-dot hook already exist so the nav shell is
+        stable now; the feature sprints replace this body only. The label
+        names the feature and its purpose so the tab never reads as broken."""
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title = QLabel(self._t(f'nav_tab_{key}'))
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setStyleSheet('color:#555;font-size:22px;font-weight:bold;'
+                             'letter-spacing:3px;')
+        sub = QLabel(self._t(f'nav_tab_{key}_tip'))
+        sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        sub.setWordWrap(True)
+        sub.setStyleSheet('color:#444;font-size:13px;padding-top:6px;')
+        lay.addWidget(title)
+        lay.addWidget(sub)
+        return w
+
+    def _build_setup_tab(self) -> QWidget:
+        """SETUP tab. Sprint 1 delivers the audio-OUTPUT controls: an
+        output-device picker, the duplex-preference toggle (D5), and a
+        test-tone button that proves the output path — Sprint-1 acceptance
+        is a tone playing through the mixer while the tuner keeps reading
+        the mic (D3: readout stays live). Later sprints grow this tab with
+        theme switching and the rest of SETUP parity."""
+        w = QWidget()
+        outer = QVBoxLayout(w)
+        outer.setContentsMargins(18, 16, 18, 16)
+        outer.setSpacing(14)
+
+        # Audio output device + duplex preference.
+        out_grp = QGroupBox(self._t('setup_output_group'))
+        og = QFormLayout(out_grp)
+        og.setContentsMargins(12, 10, 12, 10)
+        og.setSpacing(8)
+        self._out_device_combo = QComboBox()
+        self._out_device_combo.setMinimumWidth(320)
+        self._out_device_combo.currentIndexChanged.connect(
+            self._on_output_device_changed)
+        # Handle for the active test-tone source (None while silent).
+        self._test_tone_handle = None
+        # Cache of the output enumeration from the last combo population, so
+        # _on_output_device_changed can resolve a chosen name's host_api
+        # without re-querying the engine (N3).
+        self._output_devices_cache: list = []
+        self._refresh_output_device_combo()
+        og.addRow(self._t('setup_output_device'), self._out_device_combo)
+        self._cb_prefer_duplex = QCheckBox(self._t('setup_prefer_duplex'))
+        self._cb_prefer_duplex.setToolTip(self._t('setup_prefer_duplex_tip'))
+        self._cb_prefer_duplex.setChecked(
+            bool(getattr(self._cfg, 'output_prefer_duplex', False)))
+        self._cb_prefer_duplex.setStyleSheet(
+            'QCheckBox{color:#bbb;font-size:12px;padding:2px 4px;}'
+            'QCheckBox::indicator{width:14px;height:14px;}')
+        self._cb_prefer_duplex.toggled.connect(self._on_prefer_duplex_toggled)
+        og.addRow('', self._cb_prefer_duplex)
+        outer.addWidget(out_grp)
+
+        # Test tone — proves the output path end to end.
+        tone_grp = QGroupBox(self._t('setup_testtone_group'))
+        tg = QVBoxLayout(tone_grp)
+        tg.setContentsMargins(12, 10, 12, 10)
+        self._btn_test_tone = QPushButton(self._t('setup_testtone_play'))
+        self._btn_test_tone.setCheckable(True)
+        self._btn_test_tone.setToolTip(self._t('setup_testtone_tip'))
+        self._btn_test_tone.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_test_tone.setStyleSheet("""
+            QPushButton{background:#16a085;color:#fff;border:none;
+                         border-radius:5px;padding:8px 14px;font-size:13px;}
+            QPushButton:hover{background:#1abc9c;}
+            QPushButton:checked{background:#b7770d;}
+        """)
+        self._btn_test_tone.toggled.connect(self._on_test_tone_toggled)
+        tg.addWidget(self._btn_test_tone)
+        # Inline feedback when the tone can't start (no output device yet, or
+        # the engine output mirror isn't available). Hidden until needed so
+        # the button never silently lies about playing (N2).
+        self._test_tone_status = QLabel('')
+        self._test_tone_status.setWordWrap(True)
+        self._test_tone_status.setStyleSheet('color:#c0392b;font-size:12px;'
+                                              'padding:4px 2px 0 2px;')
+        self._test_tone_status.setVisible(False)
+        tg.addWidget(self._test_tone_status)
+        outer.addWidget(tone_grp)
+        outer.addStretch()
+        return w
+
+    def _current_output_selection(self) -> 'DeviceSelection':
+        """The persisted output device as a DeviceSelection (mirrors the
+        input path's _device_selection_from_cfg). Empty name = system
+        default; samplerate 0 = auto-negotiate."""
+        return DeviceSelection(
+            name=str(getattr(self._cfg, 'output_device_name', '') or ''),
+            host_api=str(getattr(self._cfg, 'output_device_host_api', '') or ''),
+            samplerate=int(getattr(self._cfg, 'output_device_samplerate', 0) or 0),
+        )
+
+    def _refresh_output_device_combo(self) -> None:
+        """Fill the SETUP output combo: System default first, then the
+        engine's output enumeration. hasattr-guarded so the GUI still
+        launches if the engine output mirror hasn't landed yet (the combo
+        then shows only System default)."""
+        combo = self._out_device_combo
+        was_blocked = combo.blockSignals(True)
+        combo.clear()
+        combo.addItem(self._t('setup_output_default'), '')
+        devices = []
+        if hasattr(self._engine, 'refresh_output_devices'):
+            try:
+                devices = self._engine.refresh_output_devices() or []
+            except Exception:
+                devices = []
+        self._output_devices_cache = list(devices)
+        saved_name = str(getattr(self._cfg, 'output_device_name', '') or '')
+        select_idx = 0
+        for d in devices:
+            combo.addItem(f'{d.name} · {d.host_api}', d.name)
+            if saved_name and d.name == saved_name:
+                select_idx = combo.count() - 1
+        combo.setCurrentIndex(select_idx)
+        combo.blockSignals(was_blocked)
+
+    def _on_output_device_changed(self, _idx: int) -> None:
+        name = self._out_device_combo.currentData() or ''
+        host_api = ''
+        # Resolve host_api from the cache captured at combo population (N3) —
+        # no re-query of the engine.
+        if name:
+            for d in self._output_devices_cache:
+                if d.name == name:
+                    host_api = d.host_api
+                    break
+        self._cfg.output_device_name = name
+        self._cfg.output_device_host_api = host_api
+        self._cfg.output_device_samplerate = 0   # auto-negotiate
+        try:
+            sax_config.save_config(self._cfg)
+        except Exception:
+            pass
+        # Re-open the output stream on the new device so it's ready to sound.
+        if hasattr(self._engine, 'open_output_device'):
+            try:
+                self._engine.open_output_device(self._current_output_selection())
+            except Exception:
+                pass
+
+    def _on_prefer_duplex_toggled(self, checked: bool) -> None:
+        # Persist the preference; it's consumed the next time the output
+        # device opens. We don't re-open mid-tone — that would chop a
+        # playing test tone for a setting that costs nothing to defer.
+        self._cfg.output_prefer_duplex = bool(checked)
+        try:
+            sax_config.save_config(self._cfg)
+        except Exception:
+            pass
+
+    def _on_test_tone_toggled(self, on: bool) -> None:
+        """Start/stop a 440 Hz test tone through the mixer. The tuner is
+        deliberately NOT muted — D3 says the readout stays live while output
+        sounds; this is the manual proof of that path."""
+        if on:
+            self._test_tone_status.setVisible(False)
+            # Make sure an output stream exists before sounding.
+            if hasattr(self._engine, 'open_output_device'):
+                try:
+                    self._engine.open_output_device(
+                        self._current_output_selection())
+                except Exception:
+                    pass
+            if hasattr(self._engine, 'start_test_tone'):
+                try:
+                    self._test_tone_handle = self._engine.start_test_tone(440.0)
+                except Exception:
+                    self._test_tone_handle = None
+            else:
+                self._test_tone_handle = None
+            if self._test_tone_handle is None:
+                # Nothing is sounding — don't let the button claim "Stop".
+                # Revert the toggle (blocking its signal to avoid re-entrancy)
+                # and tell the user why (N2).
+                blocked = self._btn_test_tone.blockSignals(True)
+                self._btn_test_tone.setChecked(False)
+                self._btn_test_tone.blockSignals(blocked)
+                self._btn_test_tone.setText(self._t('setup_testtone_play'))
+                self._test_tone_status.setText(self._t('setup_testtone_failed'))
+                self._test_tone_status.setVisible(True)
+                return
+            self._btn_test_tone.setText(self._t('setup_testtone_stop'))
+        else:
+            self._btn_test_tone.setText(self._t('setup_testtone_play'))
+            self._test_tone_status.setVisible(False)
+            if (self._test_tone_handle is not None
+                    and hasattr(self._engine, 'stop_test_tone')):
+                try:
+                    self._engine.stop_test_tone(self._test_tone_handle)
+                except Exception:
+                    pass
+            self._test_tone_handle = None
+
+    def _install_tab_indicators(self) -> None:
+        """Attach status-dot widgets to the METRO and DECK tabs, hidden
+        until set_metro_running / set_deck_recording flip them. Mirrors
+        Android's TabBar (TabBar.tsx): solid green when the metronome runs,
+        pulsing red while the deck records. Building the hook now (Sprint 1)
+        means Sprints 2/4 only emit a signal, not rebuild the nav."""
+        bar = self._tabs.tabBar()
+        self._metro_dot = _StatusDot()
+        self._metro_dot.set_color('#2ecc71')   # green
+        bar.setTabButton(self._tab_keys.index('metro'),
+                         QTabBar.ButtonPosition.RightSide, self._metro_dot)
+        self._deck_dot = _StatusDot()
+        self._deck_dot.set_color('#e74c3c')     # red
+        bar.setTabButton(self._tab_keys.index('deck'),
+                         QTabBar.ButtonPosition.RightSide, self._deck_dot)
+        # Hide AFTER setTabButton: setTabButton shows the button widget, so a
+        # setVisible(False) before it gets overridden — the dots would then
+        # show at launch with nothing running/recording. Hide them here.
+        self._metro_dot.setVisible(False)
+        self._deck_dot.setVisible(False)
+        # 1 Hz pulse for the DECK recording dot (Android fades at ~1 Hz).
+        # Dormant until set_deck_recording(True) starts it.
+        self._deck_pulse_bright = True
+        self._deck_pulse_timer = QTimer(self)
+        self._deck_pulse_timer.setInterval(500)
+        self._deck_pulse_timer.timeout.connect(self._pulse_deck_dot)
+
+    def _pulse_deck_dot(self) -> None:
+        self._deck_pulse_bright = not self._deck_pulse_bright
+        self._deck_dot.set_color('#e74c3c' if self._deck_pulse_bright
+                                 else '#6e2420')
+
+    def set_metro_running(self, running: bool) -> None:
+        """Public hook for the (future) MetronomeController: show a solid
+        green dot on the METRO tab while the metronome is running."""
+        self._metro_dot.setVisible(bool(running))
+
+    def set_deck_recording(self, recording: bool) -> None:
+        """Public hook for the (future) DeckController: show a pulsing red
+        dot on the DECK tab while a take is recording."""
+        if recording:
+            self._deck_pulse_bright = True
+            self._deck_dot.set_color('#e74c3c')
+            self._deck_dot.setVisible(True)
+            if not self._deck_pulse_timer.isActive():
+                self._deck_pulse_timer.start()
+        else:
+            self._deck_pulse_timer.stop()
+            self._deck_dot.setVisible(False)
+
+    def _on_tab_changed(self, idx: int) -> None:
+        # Persist the active tab live (belt); closeEvent is the suspenders.
+        if 0 <= idx < len(self._tab_keys):
+            self._cfg.last_active_tab = self._tab_keys[idx]
+
+    def _restore_active_tab(self) -> None:
+        key = str(getattr(self._cfg, 'last_active_tab', 'tuner') or 'tuner')
+        if key in self._tab_keys:
+            self._tabs.setCurrentIndex(self._tab_keys.index(key))
 
     def _table_headers(self):
         return [self._t('col_fingered'), self._t('col_sounding'),
