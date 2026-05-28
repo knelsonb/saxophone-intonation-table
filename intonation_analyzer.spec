@@ -33,10 +33,19 @@ sd_binaries = collect_dynamic_libs('sounddevice')
 sd_datas = collect_data_files('sounddevice', include_py_files=False)
 sd_hidden = collect_submodules('sounddevice')
 
+# tinysoundfont (Sprint 3 drone synth) ships its synth as a compiled extension
+# (_tinysoundfont.*.so/.pyd) inside the wheel. It is imported LAZILY (guarded
+# try/except) by sax_drone, so PyInstaller's static analysis can miss it —
+# collect the binary + submodules + hiddenimport it explicitly. The SoundFont
+# itself (assets/GeneralUser-GS.sf2) rides along in the assets/ datas below; the
+# app resolves it at runtime via sax_assets.asset_path (sys._MEIPASS-aware).
+tsf_binaries = collect_dynamic_libs('tinysoundfont')
+tsf_hidden = collect_submodules('tinysoundfont')
+
 a = Analysis(
     [str(HERE / 'sax_intonation_gui.py')],
     pathex=[str(HERE)],
-    binaries=sd_binaries,
+    binaries=sd_binaries + tsf_binaries,
     datas=[
         (str(HERE / 'assets'), 'assets'),
         *sd_datas,
@@ -48,8 +57,18 @@ a = Analysis(
         'sax_config',
         'sax_flow_layout',
         'sax_audio_engine',
+        # Sprint 1-3 audio-output modules. sax_drone / sax_pitch_pipes are
+        # guard-imported (try/except), so list them explicitly to be safe.
+        'sax_mixer',
+        'sax_coordination',
+        'sax_metronome',
+        'sax_drone',
+        'sax_pitch_pipes',
+        'sax_assets',
+        'tinysoundfont',
         '_sounddevice',
         *sd_hidden,
+        *tsf_hidden,
     ],
     hookspath=[],
     runtime_hooks=[],

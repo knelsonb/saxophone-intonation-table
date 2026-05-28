@@ -4,3 +4,14 @@ PyQt6~=6.7
 numpy~=2.0
 sounddevice~=0.5
 reportlab~=4.2
+
+# tinysoundfont (MIT) — the drone's GM SoundFont synth (Sprint 3). Deliberately
+# NOT a live entry above: its only hard dependency is `pyaudio`, which needs
+# PortAudio dev headers to build and which we do NOT use (we synthesise into our
+# own numpy mixer, not tinysoundfont's audio output). Install WITHOUT deps:
+#
+#     pip install --no-deps "tinysoundfont~=0.3.7"
+#
+# CI does exactly this in .github/workflows/release.yml after `pip install -r`.
+# A live entry here would make `pip install -r requirements.txt` pull pyaudio and
+# fail on any runner without PortAudio headers.
