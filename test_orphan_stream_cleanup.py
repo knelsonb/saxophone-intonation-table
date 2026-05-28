@@ -47,7 +47,14 @@ def test_orphan_stream_disposed_after_timeout() -> None:
 
     dev = types.SimpleNamespace(index=0, name='slow-dev', host_api='Test')
 
-    with mock.patch.object(engine_mod.sd, 'InputStream', _SlowStream):
+    # engine_mod.sd is None when PortAudio/libportaudio isn't installed, so
+    # patching sd.InputStream directly would fail at setup on a portaudio-less
+    # box (CI, fresh checkout). Inject a fake `sd` instead -- _try_open only
+    # touches sd.InputStream, so a namespace carrying just that is enough. This
+    # keeps the orphan-disposal net portaudio-independent (mirrors the fake-sd
+    # pattern in test_output_stream.py).
+    fake_sd = types.SimpleNamespace(InputStream=_SlowStream)
+    with mock.patch.object(engine_mod, 'sd', fake_sd):
         t0 = time.monotonic()
         ok, kind, msg = eng._try_open(dev, samplerate=48000)
         elapsed = time.monotonic() - t0
