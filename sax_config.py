@@ -128,6 +128,16 @@ class AppConfig:
     # later sprints but the field is restored from Sprint 1 onward.
     last_active_tab: str = "tuner"
 
+    # ---- v0.8.0 metronome (parity Sprint 2) ------------------------------
+    # Last tempo in BPM, restored on launch. Clamped to [30, 300] (the
+    # metronome's supported range); default 100 matches the Android app.
+    last_bpm: int = 100
+    # Last time signature. One of TIME_SIG_VALUES; anything else degrades
+    # to common time. Drives the accent-on-downbeat grouping.
+    last_time_sig: str = "4/4"
+    # Metronome click volume, 0.0 (silent) .. 1.0 (full). Clamped on load.
+    click_volume: float = 1.0
+
     def effective_log_path(self) -> Optional[Path]:
         if not self.persistence_enabled:
             return None
@@ -219,6 +229,38 @@ def _as_active_tab(v) -> str:
     return "tuner"
 
 
+def _as_float(v, default: float) -> float:
+    """Coerce a JSON value to float, falling back to default. Callers clamp
+    the result to the field's valid range (e.g. click_volume to [0, 1])."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return default
+    # Reject NaN/inf — a corrupt value must degrade to the default, not
+    # propagate a non-finite gain into the audio path.
+    if f != f or f in (float("inf"), float("-inf")):
+        return default
+    return f
+
+
+# Allowed metronome time signatures. Common time is the safe default any
+# stale / unknown value degrades to. Exported so the GUI's time-sig
+# selector and this coercer can never drift apart.
+TIME_SIG_VALUES = frozenset(("2/4", "3/4", "4/4", "6/8"))
+
+
+def _as_time_sig(v) -> str:
+    """Coerce the saved time signature into one of TIME_SIG_VALUES, degrading
+    to '4/4' for anything stale or malformed. Same allowlist shape as
+    _as_active_tab / _as_samplerate_pref."""
+    if v is None:
+        return "4/4"
+    s = str(v).strip()
+    if s in TIME_SIG_VALUES:
+        return s
+    return "4/4"
+
+
 def _as_str(v, default: str) -> str:
     if v is None:
         return default
@@ -281,6 +323,9 @@ def load_config() -> AppConfig:
         last_a4_hz=max(430, min(450, _as_int(data.get("last_a4_hz"), 440))),
         last_lang=_as_str(data.get("last_lang"), "en"),
         last_active_tab=_as_active_tab(data.get("last_active_tab")),
+        last_bpm=max(30, min(300, _as_int(data.get("last_bpm"), 100))),
+        last_time_sig=_as_time_sig(data.get("last_time_sig")),
+        click_volume=max(0.0, min(1.0, _as_float(data.get("click_volume"), 1.0))),
     )
 
 
