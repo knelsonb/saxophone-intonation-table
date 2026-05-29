@@ -300,4 +300,12 @@ def build_app_qss(p: ThemePalette) -> str:
                    border:1px solid {p.input_border};border-radius:5px;
                    padding:2px 9px;font-size:15px;}}
         QToolButton#stepper:hover{{border:1px solid {p.accent};}}
+        /* audio-recovery banner (was a dark inline box, ignored the theme) */
+        QWidget#audioBanner{{background:{p.base_bg};border:1px solid {p.input_border};
+                   border-left:4px solid {p.bad};border-radius:5px;}}
+        QWidget#audioBanner QLabel{{color:{p.text};font-size:12px;border:none;}}
+        QWidget#audioBanner QPushButton{{background:{p.button_bg};
+                   color:{p.text_bright};border:none;border-radius:4px;
+                   padding:5px 12px;font-size:12px;}}
+        QWidget#audioBanner QPushButton:hover{{background:{p.button_hover};}}
     """

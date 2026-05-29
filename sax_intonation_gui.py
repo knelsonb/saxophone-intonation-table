@@ -1304,13 +1304,9 @@ class AudioRecoveryBanner(QWidget):
         self._t = t_func
         self._on_retry = on_retry
         self._on_pick = on_pick
-        self.setStyleSheet("""
-            QWidget{background:#1e1e2e;border:1px solid #444;border-left:4px solid #c0392b;border-radius:5px;}
-            QLabel{color:#eee;font-size:12px;}
-            QPushButton{background:#34495e;color:#eee;border:none;border-radius:4px;
-                         padding:5px 12px;font-size:12px;}
-            QPushButton:hover{background:#3d566e;}
-        """)
+        # Themed via QWidget#audioBanner in build_app_qss (was an inline dark box
+        # that stayed dark-on-light). The red left-border keeps the error cue.
+        self.setObjectName('audioBanner')
         from PyQt6.QtWidgets import QHBoxLayout
         lay = QHBoxLayout(self)
         lay.setContentsMargins(10, 6, 10, 6)
