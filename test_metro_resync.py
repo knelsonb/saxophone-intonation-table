@@ -97,3 +97,18 @@ def test_resync_updates_samplerate():
     metro.start()
     metro.resync(44100)
     assert metro._samplerate == 44100
+
+
+def test_resync_twice_without_reset_does_not_double_schedule():
+    """ADVERSARIAL-SWEEP wave 2: resync() called twice with NO intervening
+    reset_clock must not schedule the same beat twice (which would double-fire at
+    offset 0). The production flow always reset_clocks first, but resync must be
+    robust to out-of-contract use."""
+    mixer = Mixer(max_block=MB)
+    metro = MetronomeController(mixer, SR, bpm=200)
+    metro.start()                              # schedules beat 0 -> pending == 1
+    metro.resync()                             # no reset: must NOT add a 2nd pending beat
+    metro.resync()
+    assert mixer.pending_events() == 1, (
+        f"resync without a reset must not double-schedule: pending="
+        f"{mixer.pending_events()} (each un-guarded resync would add one)")
