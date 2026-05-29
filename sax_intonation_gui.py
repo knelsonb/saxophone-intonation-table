@@ -4007,11 +4007,7 @@ class MainWindow(QMainWindow):
             b.setChecked(vid == self._drone_voice_id)
             b.setCursor(Qt.CursorShape.PointingHandCursor)
             b.clicked.connect(lambda _c, i=vid: self._on_drone_preset(i))
-            b.setStyleSheet(
-                'QPushButton{background:#1e1e2e;color:#ccc;border:1px solid '
-                '#444;border-radius:5px;padding:5px 10px;font-size:12px;}'
-                'QPushButton:checked{background:#2d4a7a;color:#fff;border:1px '
-                'solid #6699cc;}QPushButton:hover{border:1px solid #6699cc;}')
+            b.setObjectName('chip')   # themed via QPushButton#chip
             self._drone_preset_btns[vid] = b
             row1.addWidget(b)
         row1.addStretch()
@@ -4020,7 +4016,7 @@ class MainWindow(QMainWindow):
         # Row 2: volume · semitone steppers · pitch-pipes launcher.
         row2 = QHBoxLayout()
         vlbl = QLabel(self._t('drone_volume'))
-        vlbl.setStyleSheet('color:#aaa;font-size:12px;')
+        vlbl.setObjectName('dimLabel')
         row2.addWidget(vlbl)
         self._drone_vol_slider = QSlider(Qt.Orientation.Horizontal)
         self._drone_vol_slider.setRange(0, 100)
@@ -4030,7 +4026,7 @@ class MainWindow(QMainWindow):
         row2.addWidget(self._drone_vol_slider, 1)
         row2.addSpacing(10)
         slbl = QLabel(self._t('drone_semitone'))
-        slbl.setStyleSheet('color:#aaa;font-size:12px;')
+        slbl.setObjectName('dimLabel')
         row2.addWidget(slbl)
         btn_sd = QToolButton()
         btn_sd.setText('−')
@@ -4038,18 +4034,15 @@ class MainWindow(QMainWindow):
         btn_sd.clicked.connect(lambda: self._drone_semitone_nudge(-1))
         self._drone_semi_lbl = QLabel(self._fmt_semitone(self._drone_semitones))
         self._drone_semi_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._drone_semi_lbl.setStyleSheet(
-            'color:#ddd;font-size:13px;min-width:28px;')
+        # drop the colour → inherits the themed QWidget text colour; keep size.
+        self._drone_semi_lbl.setStyleSheet('font-size:13px;min-width:28px;')
         btn_su = QToolButton()
         btn_su.setText('+')
         btn_su.setToolTip(self._t('drone_semitone_up_tip'))
         btn_su.clicked.connect(lambda: self._drone_semitone_nudge(1))
         for b in (btn_sd, btn_su):
             b.setCursor(Qt.CursorShape.PointingHandCursor)
-            b.setStyleSheet(
-                'QToolButton{background:#1e1e2e;color:#ddd;border:1px solid '
-                '#444;border-radius:5px;padding:2px 9px;font-size:15px;}'
-                'QToolButton:hover{border:1px solid #6699cc;}')
+            b.setObjectName('stepper')   # themed via QToolButton#stepper
         row2.addWidget(btn_sd)
         row2.addWidget(self._drone_semi_lbl)
         row2.addWidget(btn_su)
@@ -4058,10 +4051,7 @@ class MainWindow(QMainWindow):
         self._btn_pipes.setToolTip(self._t('pipes_tip'))
         self._btn_pipes.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_pipes.clicked.connect(self._open_pitch_pipes)
-        self._btn_pipes.setStyleSheet(
-            'QPushButton{background:#34495e;color:#eee;border:none;'
-            'border-radius:5px;padding:5px 12px;font-size:12px;}'
-            'QPushButton:hover{background:#3d566e;}')
+        self._btn_pipes.setObjectName('chrome')   # themed via QPushButton#chrome
         row2.addWidget(self._btn_pipes)
         g.addLayout(row2)
 
