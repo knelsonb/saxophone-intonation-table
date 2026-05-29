@@ -1533,18 +1533,7 @@ class AudioPickerDialog(QDialog):
         # interesting devices (vendor interfaces below the system mics).
         # Open at a size where the full typical list fits unscrolled.
         self.setMinimumSize(480, 480)
-        self.setStyleSheet("""
-            QDialog{background:#1e1e2e;color:#eee;}
-            QLabel{color:#eee;font-size:12px;}
-            QListWidget{background:#15151f;border:1px solid #444;
-                         color:#eee;font-size:12px;}
-            QListWidget::item{padding:6px;}
-            QListWidget::item:selected{background:#34495e;}
-            QPushButton{background:#34495e;color:#eee;border:none;
-                         border-radius:5px;padding:6px 14px;font-size:12px;}
-            QPushButton:hover{background:#3d566e;}
-            QCheckBox{color:#bbb;font-size:11px;}
-        """)
+        self.setObjectName('pickerDlg')   # themed via QDialog#pickerDlg
         self._build()
         self._refill()
         # v0.5.7.1: explicit default size so the picker opens at a
@@ -1561,7 +1550,7 @@ class AudioPickerDialog(QDialog):
         # so the user reads the policy first and the chosen device second.
         sr_row = QHBoxLayout()
         sr_lbl = QLabel(self._t('samplerate_label') + ':')
-        sr_lbl.setStyleSheet('color:#bbb;font-size:12px;')
+        sr_lbl.setObjectName('dimLabel')
         sr_row.addWidget(sr_lbl)
         self._sr_combo = QComboBox()
         self._sr_combo.addItem(self._t('samplerate_auto'), 'auto')
@@ -1579,22 +1568,12 @@ class AudioPickerDialog(QDialog):
         # v0.5.7.2: snapshot for revert-on-failure path.
         self._sr_prev_pref = cur_pref
         self._sr_combo.currentIndexChanged.connect(self._on_sr_changed)
-        self._sr_combo.setStyleSheet(
-            'QComboBox{background:#1e1e2e;color:#ddd;border:1px solid #444;'
-            'border-radius:4px;padding:3px 8px;font-size:12px;}'
-            'QComboBox::drop-down{border:none;width:18px;background:#1e1e2e;}'
-            'QComboBox QAbstractItemView{background:#1e1e2e;color:#ddd;'
-            'border:1px solid #444;outline:0;'
-            'selection-background-color:#34495e;selection-color:#fff;}'
-            'QComboBox QAbstractItemView::item{background:#1e1e2e;color:#ddd;'
-            'padding:4px 8px;border:none;}'
-            'QComboBox QAbstractItemView::item:selected{background:#34495e;color:#fff;}')
+        # themed by the global QComboBox rule in build_app_qss (no inline).
         sr_row.addWidget(self._sr_combo, 1)
         root.addLayout(sr_row)
 
         self._sr_error_lbl = QLabel('')
-        self._sr_error_lbl.setStyleSheet(
-            'color:#e07070;font-size:11px;padding:0 2px;')
+        self._sr_error_lbl.setObjectName('errorLabel')   # themed via QLabel#errorLabel
         self._sr_error_lbl.setVisible(False)
         self._sr_error_lbl.setWordWrap(True)
         root.addWidget(self._sr_error_lbl)
