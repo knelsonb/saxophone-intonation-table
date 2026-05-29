@@ -521,3 +521,75 @@ def test_atomic_write_accepts_finite_payload(tmp_path):
     path = tmp_path / "x.json"
     assert atomic_write_json(path, {"v": 1.5, "n": 3}) is True
     assert path.exists()
+
+
+# ---------------------------------------------------------------------------
+# 9. load_customs hostile-input hardening + a load-never-crashes fuzz net
+#    (v1.1 STAB-CONFIG-FUZZ). The module contract — "a corrupt field falls back
+#    to its default, never crashes the GUI on startup" — must hold for the
+#    customs DB too. load_customs previously iterated json.load()'s result
+#    directly, so a non-list top-level (null / a number / a bool) raised an
+#    uncaught TypeError at launch; it now guards isinstance(raw, list),
+#    symmetric with load_config()'s non-dict guard.
+# ---------------------------------------------------------------------------
+@pytest.fixture()
+def isolated_customs(tmp_path, monkeypatch):
+    path = tmp_path / ".intonation_analyzer" / "custom_instruments.json"
+    monkeypatch.setattr(sax_config, "CUSTOMS_PATH", path)
+    return path
+
+
+@pytest.mark.parametrize("payload", ["null", "42", "true", "3.14", '"abc"'],
+                         ids=["null", "int", "bool", "float", "str"])
+def test_load_customs_non_list_returns_empty(isolated_customs, payload):
+    """A non-list top-level (the startup-crash class) degrades to [] — never an
+    uncaught TypeError from iterating a scalar."""
+    isolated_customs.parent.mkdir(parents=True, exist_ok=True)
+    isolated_customs.write_text(payload, encoding="utf-8")
+    assert sax_config.load_customs() == []
+
+
+def test_load_customs_valid_list_still_loads(isolated_customs):
+    """The isinstance(list) guard must not reject a valid customs DB."""
+    isolated_customs.parent.mkdir(parents=True, exist_ok=True)
+    isolated_customs.write_text(
+        '[{"key": "my_horn", "transp": -2, "name_en": "My Horn", '
+        '"name_de": "Mein Horn", "nickname": "Betsy"}]', encoding="utf-8")
+    out = sax_config.load_customs()
+    assert len(out) == 1 and out[0].key == "my_horn" and out[0].transp == -2
+
+
+def test_load_customs_corrupt_or_missing_returns_empty(isolated_customs):
+    isolated_customs.parent.mkdir(parents=True, exist_ok=True)
+    isolated_customs.write_text("{not json,,,", encoding="utf-8")
+    assert sax_config.load_customs() == []          # corrupt
+    isolated_customs.unlink()
+    assert sax_config.load_customs() == []          # missing
+
+
+# A battery of hostile JSON the loaders must SURVIVE (return the right type,
+# never raise) — the startup-robustness contract as a property, not per field.
+# Includes the bare NaN/Infinity tokens Python's json.load accepts by default.
+_HOSTILE_JSON = [
+    "null", "42", "true", "3.14", '"a string"', "[1, 2, 3]", "{}",
+    '{"mic_gain_db": "loud"}', '{"last_bpm": 1e400}', '{"click_volume": NaN}',
+    '{"mic_gain_db": Infinity}', '{"splitter_sizes": "not-a-list"}',
+    '{"matrix_extra_octaves": 1e400}', '{"theme": 123}',
+    '{"deck_max_seconds": -5}', '{"a": {"b": {"c": [1, 2, 3]}}}',
+]
+
+
+@pytest.mark.parametrize("payload", _HOSTILE_JSON)
+def test_load_config_never_raises_on_hostile_json(isolated_config, payload):
+    isolated_config.parent.mkdir(parents=True, exist_ok=True)
+    isolated_config.write_text(payload, encoding="utf-8")
+    assert isinstance(load_config(), AppConfig), \
+        "load_config must always return an AppConfig, never raise"
+
+
+@pytest.mark.parametrize("payload", _HOSTILE_JSON)
+def test_load_customs_never_raises_on_hostile_json(isolated_customs, payload):
+    isolated_customs.parent.mkdir(parents=True, exist_ok=True)
+    isolated_customs.write_text(payload, encoding="utf-8")
+    assert isinstance(sax_config.load_customs(), list), \
+        "load_customs must always return a list, never raise"

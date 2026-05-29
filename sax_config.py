@@ -387,6 +387,12 @@ def load_customs() -> list[CustomInstrument]:
     try:
         with CUSTOMS_PATH.open("r", encoding="utf-8") as f:
             raw = json.load(f)
+        # A corrupt/hand-edited file may hold a non-list top-level (null, a
+        # number, a bool); json.load returns it fine, but iterating it would
+        # raise an uncaught TypeError on startup. Guard symmetrically with
+        # load_config() (non-dict -> defaults) and _load_overrides().
+        if not isinstance(raw, list):
+            return []
         out: list[CustomInstrument] = []
         for entry in raw:
             try:
