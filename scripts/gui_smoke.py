@@ -118,6 +118,11 @@ def main() -> int:
     check(win._cfg.last_active_tab == "setup",
           f"tab switch did not persist last_active_tab: {win._cfg.last_active_tab}")
 
+    # SETUP parity: the instrument range-editor link is reachable from SETUP
+    # (also on the toolbar gear) and enabled/wired to the range editor.
+    check(hasattr(win, "_btn_setup_range") and win._btn_setup_range.isEnabled(),
+          "SETUP instrument range-editor button missing or disabled")
+
     # Test tone with no engine mirror (headless): must NOT claim to be playing.
     # The button reverts to unchecked and surfaces a failure status (N2).
     win._btn_test_tone.setChecked(True)
