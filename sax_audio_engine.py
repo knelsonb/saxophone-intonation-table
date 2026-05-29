@@ -98,7 +98,17 @@ MIN_FREQ = 27.0
 # MIDI 108 = 4186 Hz) aren't silently rejected by the post-YIN gate. The
 # YIN search range expands correspondingly (tmin = sr / fmax shrinks),
 # which is benign for clean signals — see test_yin_baseline.py.
-MAX_FREQ = 4200.0
+#
+# v0.6.x: raised again 4200 -> 4500. 4200 cleared C8 (MIDI 108) only at A4=440
+# (4186 Hz) by 14 Hz, so at the top of the allowed A4 range (450 Hz -> C8 =
+# 4281 Hz) or for a C8 played sharp the post-YIN freq gate rejected a note the
+# MIDI-range gate (midi_max = 108) still accepts — the two gates disagreed and
+# the table's top note silently vanished. 4500 covers C8 + ~50 cents at A4=450
+# (the C8/C#8 rounding boundary is ~4409 Hz, and YIN can overshoot ~8 cents at
+# this ~10-sample period) with margin; the PRECISE upper bound stays the
+# MIDI-range gate (freq -> nearest MIDI must be <= midi_max). Still far below
+# Nyquist (22.05 kHz at 44.1 k).
+MAX_FREQ = 4500.0
 YIN_THRESHOLD = 0.12
 A4_DEFAULT = 440.0
 
