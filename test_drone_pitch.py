@@ -93,3 +93,45 @@ def test_drone_shutdown_nulls_source_then_reenable_rebuilds():
     assert c._source is not None, "re-enable must build a fresh source"
     assert c._source.samplerate == 44100
     c.shutdown()
+
+
+class _FakeEngine:
+    """Minimal engine surface: D3 duck wiring + the output_running probe."""
+
+    def __init__(self, output_running):
+        self.output_running = output_running
+
+    def attach_duck_consumer(self, src):
+        pass
+
+    def detach_duck_consumer(self, src):
+        pass
+
+
+def test_drone_disable_clears_active_midi_when_output_stopped():
+    """Disabling the drone while the output stream is stopped must clear
+    active_midi at once: no render runs to drain the tail, so otherwise the
+    sounding MIDI sticks and the D3 coordinator vote-excludes it forever."""
+    c = D.DroneController(_FakeMixer(44100), 44100, voice_id="strings",
+                          a4=440.0, reference_midi=69, semitones=0,
+                          engine=_FakeEngine(output_running=False))
+    c.set_enabled(True)
+    assert c._source.active_midi == 69
+    c.set_enabled(False)
+    assert c._source.active_midi is None, (
+        "output stopped -> disable must force-silence (no stuck vote-exclude)")
+    c.shutdown()
+
+
+def test_drone_disable_preserves_tail_when_output_running():
+    """With output running, disable does NOT force-silence — render drains the
+    tail naturally, so active_midi is still reported right after disable (the
+    tail is audible and correctly vote-excluded for ~50ms)."""
+    c = D.DroneController(_FakeMixer(44100), 44100, voice_id="strings",
+                          a4=440.0, reference_midi=69, semitones=0,
+                          engine=_FakeEngine(output_running=True))
+    c.set_enabled(True)
+    c.set_enabled(False)
+    assert c._source.active_midi == 69, (
+        "output running -> tail preserved (render drains it), not force-silenced")
+    c.shutdown()
