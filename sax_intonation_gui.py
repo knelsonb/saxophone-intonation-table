@@ -1958,18 +1958,18 @@ class RangeEditorDialog(QDialog):
                         if self._display == 'klingend'
                         else 'range_mode_note_griff')
         self._mode_lbl = QLabel(self._t(mode_note_key))
-        self._mode_lbl.setStyleSheet('color:#888;font-size:11px;'
-                                     'font-style:italic;')
+        # colour inherits QDialog#rangeDlg QLabel (text_dim); keep font only.
+        self._mode_lbl.setStyleSheet('font-size:11px;font-style:italic;')
         self._mode_lbl.setWordWrap(True)
         layout.addWidget(self._mode_lbl)
 
         self._preview_lbl = QLabel('')
-        self._preview_lbl.setStyleSheet('color:#bbb;font-size:12px;')
+        self._preview_lbl.setStyleSheet('font-size:12px;')
         self._preview_lbl.setWordWrap(True)
         layout.addWidget(self._preview_lbl)
 
         self._error_lbl = QLabel('')
-        self._error_lbl.setStyleSheet('color:#e07070;font-size:12px;')
+        self._error_lbl.setObjectName('errorLabel')   # red, overrides dialog rule
         self._error_lbl.setWordWrap(True)
         self._error_lbl.setVisible(False)
         layout.addWidget(self._error_lbl)
@@ -2609,7 +2609,7 @@ class MainWindow(QMainWindow):
         rl = QVBoxLayout(right)
         rl.setContentsMargins(6, 0, 0, 0)
         self._table_lbl = QLabel(self._t('table_empty_hint'))
-        self._table_lbl.setStyleSheet('font-size:14px;font-weight:bold;color:#ccc;padding:2px 0 6px 0;')
+        self._table_lbl.setStyleSheet('font-size:14px;font-weight:bold;padding:2px 0 6px 0;')
         self._table_lbl.setWordWrap(True)
         rl.addWidget(self._table_lbl)
 
@@ -2928,8 +2928,7 @@ class MainWindow(QMainWindow):
         self._setup_mic_gain_status = QLabel('')
         self._setup_mic_gain_status.setObjectName('setupMicGainStatus')
         self._setup_mic_gain_status.setWordWrap(True)
-        self._setup_mic_gain_status.setStyleSheet('color:#8a8;font-size:11px;'
-                                                  'padding:2px 2px 0 2px;')
+        self._setup_mic_gain_status.setObjectName('dimLabel')   # themed dim hint
         self._update_mic_gain_status()
         mg.addWidget(self._setup_mic_gain_status)
         outer.addWidget(mic_grp)
@@ -3560,8 +3559,7 @@ class MainWindow(QMainWindow):
 
         title = QLabel(self._t('deck_group'))
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setStyleSheet('color:#888;font-size:18px;font-weight:bold;'
-                            'letter-spacing:3px;')
+        title.setStyleSheet('font-size:18px;font-weight:bold;letter-spacing:3px;')
         outer.addWidget(title)
 
         # Big state readout: empty / recording / take ready / playing.
@@ -4066,7 +4064,7 @@ class MainWindow(QMainWindow):
         v = QVBoxLayout(dlg)
         tip = QLabel(self._t('pipes_tip'))
         tip.setWordWrap(True)
-        tip.setStyleSheet('color:#aaa;font-size:12px;padding:2px 2px 6px 2px;')
+        tip.setObjectName('dimLabel')   # themed via QLabel#dimLabel
         v.addWidget(tip)
         grid = QGridLayout()
         grid.setSpacing(6)
@@ -4791,7 +4789,7 @@ class MainWindow(QMainWindow):
         cb.setChecked(False)
         default_path = sax_config.CONFIG_DIR / sax_config.DEFAULT_LOG_FILENAME
         path_lbl = QLabel(self._t('welcome_path', path=str(default_path)))
-        path_lbl.setStyleSheet('color: #888; font-size: 11px;')
+        path_lbl.setObjectName('dimLabel')   # themed via QLabel#dimLabel
         path_lbl.setWordWrap(True)
         btns = QDialogButtonBox()
         btn_go = btns.addButton(self._t('welcome_continue'),
