@@ -314,11 +314,13 @@ def main() -> int:
     check(win._metro_dot.isHidden(),
           "metro green dot shown despite no running metronome")
 
-    # Option-A device-switch regression lock: a RUNNING metronome must be
-    # bracketed (stop before / start after) across an output-device reopen, so
-    # the mixer.reset_clock() inside the reopen can't silently kill its beat
-    # chain. Headless has no real output stream, so drive the GUI orchestration
-    # with a tiny fake controller + a stubbed reopen that keeps output "up".
+    # Option-B device-switch regression lock: a RUNNING metronome must resume
+    # PHASE-CORRECT across an output-device reopen via resync() — NOT a
+    # stop()/start() bracket (which would reset to beat 0 and truncate the
+    # click). open_output_device() calls mixer.reset_clock(); resync() re-anchors
+    # the beat chain onto it, continuing the beat index. Headless has no real
+    # output stream, so drive the GUI orchestration with a tiny fake controller
+    # + a stubbed reopen that keeps output "up".
     class _FakeMetro:
         def __init__(self):
             self.calls = []
@@ -335,8 +337,8 @@ def main() -> int:
             self.calls.append("start")
             self._run = True
 
-        def set_samplerate(self, sr):
-            self.calls.append(("sr", sr))
+        def resync(self, sr=None):
+            self.calls.append(("resync", sr))
 
     fake = _FakeMetro()
     win._metro_ctrl = fake
@@ -344,11 +346,13 @@ def main() -> int:
     win._engine.output_samplerate = 48000
     win._engine.open_output_device = lambda *a, **k: None  # stream stays up
     win._on_output_device_changed(0)
-    check("stop" in fake.calls and "start" in fake.calls
-          and fake.calls.index("stop") < fake.calls.index("start"),
-          f"metronome not bracketed stop-before-start across device switch: {fake.calls}")
+    check(any(isinstance(c, tuple) and c[0] == "resync" for c in fake.calls),
+          f"metronome not resync()'d (Option B) across device switch: {fake.calls}")
+    check("stop" not in fake.calls and "start" not in fake.calls,
+          f"Option B must resync seamlessly, not stop/start-reset, across a "
+          f"switch: {fake.calls}")
     check(fake.is_running(),
-          "metronome did not resume after the output device switch")
+          "metronome did not stay running across the output device switch")
 
     # Drone bar + pitch pipes (Sprint 3). The controllers may or may not be
     # present (sax_drone / sax_pitch_pipes land in CI's venv). Either way,

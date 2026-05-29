@@ -2996,31 +2996,45 @@ class MainWindow(QMainWindow):
         return bool(getattr(self._engine, 'output_running', False))
 
     def _reopen_output_bracketed(self, sel: 'DeviceSelection') -> None:
-        """Open a (different) output device, bracketing a running metronome with
-        stop()/start() so the mixer.reset_clock() inside the reopen can't
-        silently kill its beat chain (Option A — the metronome pauses across a
-        hardware switch, then resumes on the new device). The GUI orchestrates
-        the device change, so the bracket lives here, not in the engine (stays
-        client-ignorant) or the controller (stable contract). NOTE: covers only
-        GUI-orchestrated switches; engine-internal hot-plug auto-recovery is out
-        of reach here (Option B / backlog)."""
+        """Open a (different) output device, keeping a running metronome PHASE-
+        CORRECT across the switch (Option B). open_output_device() calls
+        mixer.reset_clock() (which clears the schedule), so afterwards we call
+        ctrl.resync(new_sr): it re-anchors the beat chain onto the reset clock
+        and resumes on the NEXT beat index — the accent pattern continues with
+        no spurious downbeat and no click truncation (the click is never
+        request_stopped). On a failed reopen we stop the metronome cleanly
+        rather than leave it running-but-silent. The GUI orchestrates the device
+        change, so this lives here, not in the engine (stays client-ignorant) or
+        the controller (stable contract). Covers GUI-orchestrated switches;
+        engine-internal hot-plug auto-recovery is still out of reach here."""
         ctrl = getattr(self, '_metro_ctrl', None)
         was_running = ctrl is not None and ctrl.is_running()
-        if was_running:
-            ctrl.stop()
         if hasattr(self._engine, 'open_output_device'):
             try:
-                self._engine.open_output_device(sel)
+                self._engine.open_output_device(sel)   # calls mixer.reset_clock()
             except Exception:
                 pass
-        if was_running and getattr(self._engine, 'output_running', False):
-            sr = int(getattr(self._engine, 'output_samplerate', 0) or 0)
-            if sr and hasattr(ctrl, 'set_samplerate'):
+        if not was_running:
+            return
+        sr = int(getattr(self._engine, 'output_samplerate', 0) or 0)
+        if getattr(self._engine, 'output_running', False):
+            if hasattr(ctrl, 'resync'):
                 try:
-                    ctrl.set_samplerate(sr)
+                    ctrl.resync(sr if sr else None)    # Option B: seamless resume
                 except Exception:
                     pass
-            ctrl.start()
+            else:                                       # older controller: Option A
+                if sr and hasattr(ctrl, 'set_samplerate'):
+                    try:
+                        ctrl.set_samplerate(sr)
+                    except Exception:
+                        pass
+                ctrl.start()
+        else:
+            try:
+                ctrl.stop()                             # reopen failed: stop cleanly
+            except Exception:
+                pass
 
     def _refresh_output_device_combo(self) -> None:
         """Fill the SETUP output combo: System default first, then the
