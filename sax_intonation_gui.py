@@ -2463,13 +2463,7 @@ class MainWindow(QMainWindow):
         self._btn_range.setText('⚙')   # U+2699 GEAR
         self._btn_range.setToolTip(self._t('gear_tip'))
         self._btn_range.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._btn_range.setStyleSheet("""
-            QToolButton{background:#1e1e2e;color:#ddd;border:1px solid #444;
-                         border-radius:5px;padding:2px 6px;font-size:15px;
-                         min-height:28px;min-width:28px;}
-            QToolButton:hover{background:#2a2a3a;border:1px solid #6699cc;}
-            QToolButton:pressed{background:#16161e;}
-        """)
+        self._btn_range.setObjectName('gear')   # themed via QToolButton#gear
         self._btn_range.clicked.connect(self._open_range_editor)
         il.addWidget(self._btn_range)
 
@@ -2477,12 +2471,7 @@ class MainWindow(QMainWindow):
         self._btn_custom.setToolTip(self._t('custom_dlg_title'))
         self._btn_custom.setMaximumWidth(110)
         self._btn_custom.clicked.connect(self._on_add_custom)
-        self._btn_custom.setStyleSheet("""
-            QPushButton{background:#34495e;color:#eee;border:none;
-                         border-radius:5px;padding:6px 10px;font-size:12px;}
-            QPushButton:hover{background:#3d566e;}
-            QPushButton:pressed{background:#2c3e50;}
-        """)
+        self._btn_custom.setObjectName('chrome')   # themed via QPushButton#chrome
         il.addWidget(self._btn_custom)
 
         self._nick_edit = QLineEdit()

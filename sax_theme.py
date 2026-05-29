@@ -262,4 +262,15 @@ def build_app_qss(p: ThemePalette) -> str:
         QLineEdit#nickEdit{{background:{p.base_bg};border:1px solid {p.input_border};
                    border-radius:5px;color:{p.text};padding:4px 8px;font-size:12px;}}
         QLineEdit#nickEdit:focus{{border:1px solid {p.accent};}}
+        /* gear (range-editor) tool button — input-style chrome */
+        QToolButton#gear{{background:{p.base_bg};color:{p.text};
+                   border:1px solid {p.input_border};border-radius:5px;
+                   padding:2px 6px;font-size:15px;min-height:28px;min-width:28px;}}
+        QToolButton#gear:hover{{background:{p.alt_bg};border:1px solid {p.accent};}}
+        QToolButton#gear:pressed{{background:{p.tab_bg};}}
+        /* slate "chrome" fill buttons (Custom, drone presets, pitch pipes, …) */
+        QPushButton#chrome{{background:{p.button_bg};color:{p.text_bright};border:none;
+                   border-radius:5px;padding:6px 10px;font-size:12px;}}
+        QPushButton#chrome:hover{{background:{p.button_hover};}}
+        QPushButton#chrome:pressed{{background:{p.button_pressed};}}
     """
