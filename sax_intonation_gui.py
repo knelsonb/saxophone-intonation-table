@@ -3655,8 +3655,7 @@ class MainWindow(QMainWindow):
         # Big state readout: empty / recording / take ready / playing.
         self._deck_state_lbl = QLabel('')
         self._deck_state_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._deck_state_lbl.setStyleSheet('color:#6699cc;font-size:20px;'
-                                           'font-weight:bold;padding:8px;')
+        self._deck_state_lbl.setObjectName('deckState')   # themed accent readout
         outer.addWidget(self._deck_state_lbl)
 
         # Transport: Record (toggle, green→red) · Stop · Play/Replay · Export.
@@ -3666,12 +3665,7 @@ class MainWindow(QMainWindow):
         self._btn_deck_record.setToolTip(self._t('deck_record_tip'))
         self._btn_deck_record.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_deck_record.toggled.connect(self._on_deck_record_toggle)
-        self._btn_deck_record.setStyleSheet(
-            'QPushButton{background:#1a6b3a;color:#fff;border:none;border-radius:'
-            '6px;padding:12px 18px;font-size:15px;font-weight:bold;}'
-            'QPushButton:hover{background:#218a4b;}'
-            'QPushButton:checked{background:#c0392b;}'
-            'QPushButton:disabled{background:#222;color:#666;}')
+        self._btn_deck_record.setObjectName('transportRec')   # green/red + themed disabled
         self._btn_deck_stop = QPushButton(self._t('deck_stop'))
         self._btn_deck_play = QPushButton(self._t('deck_play'))
         self._btn_deck_play.setToolTip(self._t('deck_play_tip'))
@@ -3683,11 +3677,7 @@ class MainWindow(QMainWindow):
         for b in (self._btn_deck_stop, self._btn_deck_play,
                   self._btn_deck_export):
             b.setCursor(Qt.CursorShape.PointingHandCursor)
-            b.setStyleSheet(
-                'QPushButton{background:#34495e;color:#eee;border:none;'
-                'border-radius:6px;padding:12px 18px;font-size:15px;}'
-                'QPushButton:hover{background:#3d566e;}'
-                'QPushButton:disabled{background:#222;color:#666;}')
+            b.setObjectName('transport')   # themed via QPushButton#transport
         row.addWidget(self._btn_deck_record)
         row.addWidget(self._btn_deck_stop)
         row.addWidget(self._btn_deck_play)
@@ -3698,7 +3688,7 @@ class MainWindow(QMainWindow):
         hint = QLabel(self._t('deck_hint'))
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         hint.setWordWrap(True)
-        hint.setStyleSheet('color:#666;font-size:11px;padding-top:2px;')
+        hint.setObjectName('dimLabel')
         outer.addWidget(hint)
 
         # Inline status — shown only when an action can't run / fails or to
