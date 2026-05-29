@@ -316,4 +316,17 @@ def build_app_qss(p: ThemePalette) -> str:
                    border:1px solid {p.input_border};border-radius:5px;
                    padding:4px 12px;font-size:18px;min-width:30px;}}
         QToolButton#stepperLg:hover{{border:1px solid {p.accent};}}
+        /* deck transport: chrome fill + THEMED disabled (was a dark #222 that
+           stayed dark on light); record keeps its semantic green/red but its
+           disabled state themes too */
+        QLabel#deckState{{color:{p.accent};font-size:20px;font-weight:bold;padding:8px;}}
+        QPushButton#transport{{background:{p.button_bg};color:{p.text_bright};
+                   border:none;border-radius:6px;padding:12px 18px;font-size:15px;}}
+        QPushButton#transport:hover{{background:{p.button_hover};}}
+        QPushButton#transport:disabled{{background:{p.alt_bg};color:{p.text_dim};}}
+        QPushButton#transportRec{{background:#1a6b3a;color:#ffffff;border:none;
+                   border-radius:6px;padding:12px 18px;font-size:15px;font-weight:bold;}}
+        QPushButton#transportRec:hover{{background:#218a4b;}}
+        QPushButton#transportRec:checked{{background:#c0392b;}}
+        QPushButton#transportRec:disabled{{background:{p.alt_bg};color:{p.text_dim};}}
     """
