@@ -490,6 +490,7 @@ class DroneController:
             self._source.note_off()
             self._mixer.unregister(self._source)
             self._source.close()
+            self._source = None   # don't resurrect a closed synth on re-enable
         self.enabled = False
         self._emit()
 
@@ -522,4 +523,43 @@ class DroneController:
         self._a4 = float(a4)
         if self._source is not None:
             self._source.set_a4(self._a4)
+        self._emit()
+
+    def set_samplerate(self, samplerate: int) -> None:
+        """Rebuild the synth for a new output rate (call on a device switch).
+        TinySoundFont binds its rate at construction, so the DroneSource is
+        recreated (voice / volume / a4 / playing-note preserved). Without this,
+        a rate change leaves the drone generating at the OLD rate while the DAC
+        plays at the new one -- the tuning reference goes sharp/flat by
+        12*log2(new/old) semitones (e.g. +2547 cents on a 44.1k -> 192k switch).
+        Mirrors MetronomeController.set_samplerate; called from
+        _reopen_output_bracketed alongside the metronome re-rate."""
+        sr = int(samplerate)
+        if sr <= 0 or sr == self._samplerate:
+            return
+        self._samplerate = sr
+        if self._source is None:
+            return  # next _ensure_source() builds at the new rate
+        was_enabled = self.enabled
+        eng = self._engine
+        if eng is not None and hasattr(eng, "detach_duck_consumer"):
+            try:
+                eng.detach_duck_consumer(self._source)
+            except Exception:
+                pass
+        try:
+            self._mixer.unregister(self._source)
+        except Exception:
+            pass
+        try:
+            self._source.close()
+        except Exception:
+            pass
+        self._source = None
+        if was_enabled:
+            src = self._ensure_source()
+            self._mixer.register(src)
+            src.note_on(self._played_midi())
+            if eng is not None and hasattr(eng, "attach_duck_consumer"):
+                eng.attach_duck_consumer(src)
         self._emit()
