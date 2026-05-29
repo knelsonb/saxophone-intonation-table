@@ -515,13 +515,27 @@ class TestToneSource:
         """
         if self._done:
             return
-        if frames <= 0 or self._gain == 0.0:
-            # Still advance phase so a later un-duck stays phase-continuous.
-            self._phase = (self._phase + self._dphi * frames) % (2.0 * math.pi)
+        if frames <= 0:
             return
+        # Retire a released-and-fully-faded enveloped tone (the Mixer reaps it).
+        # Checked BEFORE the gain==0 short-circuit so a tone ducked to silence
+        # while releasing still gets retired rather than lingering forever.
         if self._enveloped and self._env == 0.0 and self._env_target == 0.0:
-            # Released and fully faded: retire (the Mixer reaps on finished).
             self._done = True
+            return
+        if self._gain == 0.0:
+            # Muted (e.g. ducked to 0): emit no audio, but STILL advance the
+            # time-based envelope toward its target — otherwise a release would
+            # freeze mid-fade, never reach zero, and the source would never
+            # finish (it would linger registered forever). Advance the phase
+            # too, so a later un-duck stays phase-continuous.
+            if self._enveloped and self._env != self._env_target:
+                step = (self._atk_step if self._env_target > self._env
+                        else -self._rel_step)
+                self._env += step * frames
+                self._env = (min(self._env, self._env_target) if step > 0
+                             else max(self._env, self._env_target))
+            self._phase = (self._phase + self._dphi * frames) % (2.0 * math.pi)
             return
         # Use the working buffers WHOLE when the block fills them (the steady
         # state); slicing self._work[:n] would allocate a view object every

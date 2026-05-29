@@ -450,6 +450,28 @@ def test_mixer_reaps_finished_sources():
     assert keep in m._sources, "the steady (unfinished) source must survive"
 
 
+def test_testtone_released_then_muted_still_finishes():
+    """A released enveloped tone DUCKED to gain 0 mid-fade must still complete
+    its fade and finish. The envelope is time-based, so it must advance even
+    while muted — otherwise the release freezes, never reaches zero, finished
+    never goes True, and the Mixer never reaps the source (it lingers forever).
+    Regression for the gain==0 early-return skipping the envelope (uruk-hai)."""
+    sr, mb = 48000, 256
+    src = TestToneSource(freq=440.0, samplerate=sr, max_block=mb, gain=0.5,
+                         attack_ms=8.0, release_ms=40.0)
+    out = np.zeros(mb, dtype=np.float32)
+    for _ in range(8):                       # reach steady full gain
+        out[:] = 0.0
+        src.render(out, mb, t0=0)
+    src.release()                            # begin the release fade ...
+    src.set_gain(0.0)                        # ... then duck to silence mid-fade
+    for _ in range(40):                      # render past the 40 ms release
+        out[:] = 0.0
+        src.render(out, mb, t0=0)
+    assert src.finished is True, (
+        "a released tone muted mid-fade must still finish, not freeze forever")
+
+
 # ---------------------------------------------------------------------------
 # 7. Constructor validation
 # ---------------------------------------------------------------------------
