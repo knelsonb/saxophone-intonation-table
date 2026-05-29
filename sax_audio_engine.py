@@ -1540,6 +1540,11 @@ class AudioEngine:
         with self._lock:
             stream = self._out_stream
             self._out_stream = None
+            # Clear liveness atomically with the stream (mirror of the install in
+            # _try_open_output) so output_running can never be observed True with
+            # _out_stream already None. The callers' later output_running=False
+            # (stop_output / _set_output_failed) is now a redundant no-op.
+            self.output_running = False
         if stream is None:
             return
         try:

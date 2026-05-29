@@ -430,7 +430,12 @@ class MetronomeController:
         self._anchor = int(self._mixer.clock)
         self._anchor_beat = next_beat
         self._anchor_bpm = float(self.bpm)
-        self._schedule_beat(next_beat)
+        # Schedule only if the reopen actually cleared the queue (the contract is
+        # open_output_device -> mixer.reset_clock -> resync). If a beat is still
+        # pending (resync called twice with no intervening reset), do NOT
+        # re-schedule the same beat — that would double-fire it at offset 0.
+        if self._mixer.pending_events() == 0:
+            self._schedule_beat(next_beat)
 
     # -- scheduler (render thread, except the initial start) ----------------
     def _onset(self, beat_index: int) -> int:
