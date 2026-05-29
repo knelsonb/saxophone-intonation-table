@@ -123,6 +123,37 @@ def main() -> int:
     check(hasattr(win, "_btn_setup_range") and win._btn_setup_range.isEnabled(),
           "SETUP instrument range-editor button missing or disabled")
 
+    # SETUP parity: the Response (Fast/Normal/Slow) combo is reachable from SETUP
+    # and stays in TWO-WAY sync with the toolbar Response combo through the
+    # shared _apply_filter_mode — signals blocked on the mirrored side so neither
+    # change double-routes into the engine. Drive the real handler path (not a
+    # stub) in both directions and confirm cfg persists.
+    check(hasattr(win, "_setup_filter_combo")
+          and win._setup_filter_combo.isEnabled(),
+          "SETUP Response (filter-mode) combo missing or disabled")
+    if hasattr(win, "_setup_filter_combo"):
+        _saved = win._filter_combo.currentData()
+        _t1 = "slow" if _saved != "slow" else "fast"
+        _t2 = "fast" if _t1 != "fast" else "normal"
+        # SETUP combo drives → toolbar combo + cfg follow.
+        win._setup_filter_combo.setCurrentIndex(
+            win._setup_filter_combo.findData(_t1))
+        app.processEvents()
+        check(win._filter_combo.currentData() == _t1,
+              "SETUP Response change did not mirror into the toolbar combo")
+        check(win._cfg.filter_mode == _t1,
+              "SETUP Response change did not persist cfg.filter_mode")
+        # Toolbar combo drives → SETUP combo follows (other direction).
+        win._filter_combo.setCurrentIndex(win._filter_combo.findData(_t2))
+        app.processEvents()
+        check(win._setup_filter_combo.currentData() == _t2,
+              "toolbar Response change did not mirror into the SETUP combo")
+        # Restore so later assertions see the original state.
+        _ri = win._filter_combo.findData(_saved)
+        if _ri >= 0:
+            win._filter_combo.setCurrentIndex(_ri)
+        app.processEvents()
+
     # Test tone with no engine mirror (headless): must NOT claim to be playing.
     # The button reverts to unchecked and surfaces a failure status (N2).
     win._btn_test_tone.setChecked(True)
