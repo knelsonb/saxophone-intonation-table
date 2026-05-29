@@ -1946,9 +1946,8 @@ class RangeEditorDialog(QDialog):
         # but the hit-rect collapses. Reserving 18px of right padding +
         # positioning the two sub-controls top/bottom right restores
         # clickability and keeps the dark theme.
-        spin_css = self._spin_css_ok()
-        self._lo_spin.setStyleSheet(spin_css)
-        self._hi_spin.setStyleSheet(spin_css)
+        self._lo_spin.setObjectName('rangeSpin')   # themed via QSpinBox#rangeSpin
+        self._hi_spin.setObjectName('rangeSpin')
         # v0.6 Phase-4 (Item 4): primary input is the note-name QLineEdit;
         # the MIDI spinbox is kept visible for power users. Wire-up:
         # the name edit drives the spin (parses on editingFinished), and
@@ -1957,12 +1956,8 @@ class RangeEditorDialog(QDialog):
         self._suppress_sync = False
         self._lo_name = QLineEdit()
         self._hi_name = QLineEdit()
-        name_css_ok = (
-            'QLineEdit{background:#1e1e2e;color:#ddd;border:1px solid #444;'
-            'border-radius:5px;padding:3px 6px;font-size:13px;min-width:80px;}'
-        )
-        self._lo_name.setStyleSheet(name_css_ok)
-        self._hi_name.setStyleSheet(name_css_ok)
+        self._lo_name.setObjectName('rangeName')   # themed via QLineEdit#rangeName
+        self._hi_name.setObjectName('rangeName')
         self._lo_name.setText(midi_note_name(int(current_lo) + self._transp))
         self._hi_name.setText(midi_note_name(int(current_hi) + self._transp))
         self._lo_name.setPlaceholderText(self._t('range_note_name_hint'))
@@ -2030,15 +2025,8 @@ class RangeEditorDialog(QDialog):
         self._btn_cancel.clicked.connect(self.reject)
         self._btn_save = QPushButton(self._t('range_save'))
         self._btn_save.clicked.connect(self._on_save)
-        btn_css = (
-            'QPushButton{background:#34495e;color:#eee;border:none;'
-            'border-radius:5px;padding:6px 12px;font-size:12px;}'
-            'QPushButton:hover{background:#3d566e;}'
-            'QPushButton:disabled{background:#2a2a3a;color:#666;}'
-        )
-        self._btn_restore.setStyleSheet(btn_css)
-        self._btn_cancel.setStyleSheet(btn_css)
-        self._btn_save.setStyleSheet(btn_css)
+        for _b in (self._btn_restore, self._btn_cancel, self._btn_save):
+            _b.setObjectName('chrome')   # themed via QPushButton#chrome (+disabled)
         btn_row.addWidget(self._btn_restore)
         btn_row.addStretch()
         btn_row.addWidget(self._btn_cancel)
@@ -2054,9 +2042,17 @@ class RangeEditorDialog(QDialog):
             lambda: self._on_name_edited(self._hi_name, self._hi_spin))
         self._update_preview()
 
-        # Dark theme to match the rest of the app.
-        self.setStyleSheet('QDialog{background:#12121a;color:#ddd;} '
-                           'QLabel{color:#ccc;}')
+        # Themed via QDialog#rangeDlg in build_app_qss (re-themes per palette;
+        # was a hardcoded dark modal).
+        self.setObjectName('rangeDlg')
+
+    def _set_invalid(self, w, bad: bool) -> None:
+        """Toggle the [invalid] QSS property + repolish so the themed warn style
+        (QSS [invalid="true"]) applies — replaces the old runtime setStyleSheet
+        ok/bad swap so validation styling re-themes with the palette."""
+        w.setProperty('invalid', bool(bad))
+        w.style().unpolish(w)
+        w.style().polish(w)
 
     def _on_spin_changed(self) -> None:
         # Spin changed → sync the matching note-name edit, then refresh
@@ -2067,13 +2063,9 @@ class RangeEditorDialog(QDialog):
             try:
                 self._lo_name.setText(midi_note_name(self._lo_spin.value()))
                 self._hi_name.setText(midi_note_name(self._hi_spin.value()))
-                # Clear red border if the user previously typed a bad name.
-                ok_css = (
-                    'QLineEdit{background:#1e1e2e;color:#ddd;border:1px solid #444;'
-                    'border-radius:5px;padding:3px 6px;font-size:13px;min-width:80px;}'
-                )
-                self._lo_name.setStyleSheet(ok_css)
-                self._hi_name.setStyleSheet(ok_css)
+                # Clear any invalid mark if the user previously typed a bad name.
+                self._set_invalid(self._lo_name, False)
+                self._set_invalid(self._hi_name, False)
             finally:
                 self._suppress_sync = False
         self._update_preview()
@@ -2088,69 +2080,24 @@ class RangeEditorDialog(QDialog):
         text = edit.text()
         midi = note_name_to_midi(text)
         if midi is None:
-            bad_css = (
-                'QLineEdit{background:#3a1e1e;color:#fdd;border:1px solid #c0392b;'
-                'border-radius:5px;padding:3px 6px;font-size:13px;min-width:80px;}'
-            )
-            edit.setStyleSheet(bad_css)
+            self._set_invalid(edit, True)
             self._error_lbl.setText(self._t('range_note_name_invalid'))
             self._error_lbl.setVisible(True)
             return
-        # Valid name → clear red border, push to spin (which re-formats
+        # Valid name → clear the invalid mark, push to spin (which re-formats
         # the edit canonically via _on_spin_changed).
-        ok_css = (
-            'QLineEdit{background:#1e1e2e;color:#ddd;border:1px solid #444;'
-            'border-radius:5px;padding:3px 6px;font-size:13px;min-width:80px;}'
-        )
-        edit.setStyleSheet(ok_css)
+        self._set_invalid(edit, False)
         spin.setValue(midi)
-
-    # v0.6.2: spin-button sub-controls. Same styling re-used at
-    # construction and on every _update_preview repaint so the up/down
-    # buttons remain clickable in both the ok and bad-range states.
-    _SPIN_SUBCONTROLS = (
-        'QSpinBox::up-button{subcontrol-origin:border;'
-        'subcontrol-position:top right;width:16px;'
-        'background:#2a2a3a;border:none;'
-        'border-top-right-radius:5px;border-left:1px solid #444;}'
-        'QSpinBox::up-button:hover{background:#3d566e;}'
-        'QSpinBox::up-button:pressed{background:#16161e;}'
-        'QSpinBox::down-button{subcontrol-origin:border;'
-        'subcontrol-position:bottom right;width:16px;'
-        'background:#2a2a3a;border:none;'
-        'border-bottom-right-radius:5px;border-left:1px solid #444;'
-        'border-top:1px solid #444;}'
-        'QSpinBox::down-button:hover{background:#3d566e;}'
-        'QSpinBox::down-button:pressed{background:#16161e;}'
-    )
-
-    def _spin_css_ok(self) -> str:
-        # Right-padding reserves 22px for the two stacked sub-controls
-        # (16px button + 1px border + 5px breathing room).
-        return (
-            'QSpinBox{background:#1e1e2e;color:#ddd;border:1px solid #444;'
-            'border-radius:5px;padding:3px 22px 3px 6px;font-size:13px;'
-            'min-width:80px;}'
-            + self._SPIN_SUBCONTROLS
-        )
-
-    def _spin_css_bad(self) -> str:
-        return (
-            'QSpinBox{background:#3a1e1e;color:#fdd;border:1px solid #c0392b;'
-            'border-radius:5px;padding:3px 22px 3px 6px;font-size:13px;'
-            'min-width:80px;}'
-            + self._SPIN_SUBCONTROLS
-        )
 
     def _update_preview(self) -> None:
         lo = self._lo_spin.value()
         hi = self._hi_spin.value()
         invalid = lo > hi
-        # Visual cue on the offending field.
-        bad_css = self._spin_css_bad()
-        ok_css = self._spin_css_ok()
-        self._lo_spin.setStyleSheet(bad_css if invalid else ok_css)
-        self._hi_spin.setStyleSheet(bad_css if invalid else ok_css)
+        # Visual cue on the offending field — themed warn via the [invalid]
+        # property (QSpinBox#rangeSpin[invalid="true"] in build_app_qss; the
+        # spin sub-controls are themed there too, keeping them clickable).
+        self._set_invalid(self._lo_spin, invalid)
+        self._set_invalid(self._hi_spin, invalid)
         if invalid:
             self._error_lbl.setText(self._t('range_invalid'))
             self._error_lbl.setVisible(True)

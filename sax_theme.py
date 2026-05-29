@@ -79,6 +79,7 @@ class ThemePalette:
     # -- painted-widget specifics (tuner / table / chart) ------------------
     grid: str             # gridlines, dividers, axis ticks in painted views
     accent_muted: str     # darker accent fill (needle base, selected cell)
+    bad_surface: str      # error-tinted input background (invalid field fill)
 
     def as_dict(self) -> dict:
         return {f.name: getattr(self, f.name) for f in fields(self)}
@@ -109,6 +110,7 @@ DARK = ThemePalette(
     bad="#c0392b",
     grid="#282c3c",
     accent_muted="#2d4a7a",
+    bad_surface="#3a1e1e",
 )
 
 # ---------------------------------------------------------------------------
@@ -137,6 +139,7 @@ NIGHT = ThemePalette(
     bad="#d04030",
     grid="#2a1c1c",
     accent_muted="#5a2c28",
+    bad_surface="#3a1818",
 )
 
 # ---------------------------------------------------------------------------
@@ -164,6 +167,7 @@ LIGHT = ThemePalette(
     bad="#c0291b",
     grid="#c8ccd6",
     accent_muted="#9bb4d6",
+    bad_surface="#fbe4e4",
 )
 
 THEMES: dict[str, ThemePalette] = {p.name: p for p in (DARK, NIGHT, LIGHT)}
@@ -273,6 +277,7 @@ def build_app_qss(p: ThemePalette) -> str:
                    border-radius:5px;padding:6px 10px;font-size:12px;}}
         QPushButton#chrome:hover{{background:{p.button_hover};}}
         QPushButton#chrome:pressed{{background:{p.button_pressed};}}
+        QPushButton#chrome:disabled{{background:{p.alt_bg};color:{p.text_dim};}}
         /* intonation matrix table — was an inline dark sheet that ignored the
            theme (its empty viewport stayed black in light mode) */
         QTableWidget#matrix{{background:{p.base_bg};color:{p.text};
@@ -329,4 +334,31 @@ def build_app_qss(p: ThemePalette) -> str:
         QPushButton#transportRec:hover{{background:#218a4b;}}
         QPushButton#transportRec:checked{{background:#c0392b;}}
         QPushButton#transportRec:disabled{{background:{p.alt_bg};color:{p.text_dim};}}
+        /* range-editor dialog: themed inputs with [invalid="true"] warn states
+           (was a runtime setStyleSheet ok/bad swap on a dark modal) */
+        QDialog#rangeDlg{{background:{p.window_bg};color:{p.text};}}
+        QDialog#rangeDlg QLabel{{color:{p.text_dim};}}
+        QLineEdit#rangeName{{background:{p.base_bg};color:{p.text};
+                   border:1px solid {p.input_border};border-radius:5px;
+                   padding:3px 6px;font-size:13px;min-width:80px;}}
+        QLineEdit#rangeName[invalid="true"]{{background:{p.bad_surface};
+                   color:{p.text};border:1px solid {p.bad};}}
+        QSpinBox#rangeSpin{{background:{p.base_bg};color:{p.text};
+                   border:1px solid {p.input_border};border-radius:5px;
+                   padding:3px 22px 3px 6px;font-size:13px;min-width:80px;}}
+        QSpinBox#rangeSpin[invalid="true"]{{background:{p.bad_surface};
+                   color:{p.text};border:1px solid {p.bad};}}
+        QSpinBox#rangeSpin::up-button{{subcontrol-origin:border;
+                   subcontrol-position:top right;width:16px;background:{p.alt_bg};
+                   border:none;border-top-right-radius:5px;
+                   border-left:1px solid {p.input_border};}}
+        QSpinBox#rangeSpin::up-button:hover{{background:{p.button_hover};}}
+        QSpinBox#rangeSpin::up-button:pressed{{background:{p.tab_bg};}}
+        QSpinBox#rangeSpin::down-button{{subcontrol-origin:border;
+                   subcontrol-position:bottom right;width:16px;background:{p.alt_bg};
+                   border:none;border-bottom-right-radius:5px;
+                   border-left:1px solid {p.input_border};
+                   border-top:1px solid {p.input_border};}}
+        QSpinBox#rangeSpin::down-button:hover{{background:{p.button_hover};}}
+        QSpinBox#rangeSpin::down-button:pressed{{background:{p.tab_bg};}}
     """
