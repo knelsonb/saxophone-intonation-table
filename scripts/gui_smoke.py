@@ -223,6 +223,57 @@ def main() -> int:
         win._setup_mic_gain_combo.setCurrentIndex(_mg_saved)
         app.processEvents()
 
+    # Restore-mirror parity (Ent W3a): the post-restore sync must propagate the
+    # canonical toolbar A4 + nickname into the SETUP twins. Drive the extracted
+    # sync directly with non-default toolbar values (no full restore side-effects).
+    if hasattr(win, "_sync_setup_twins_from_toolbar"):
+        win._nick_edit.setText("MarkVI")
+        win._a4_combo.blockSignals(True)
+        win._a4_combo.setCurrentIndex(win._a4_combo.findData(443))
+        win._a4_combo.blockSignals(False)
+        win._sync_setup_twins_from_toolbar()
+        app.processEvents()
+        check(win._setup_nick_edit.text() == "MarkVI",
+              "restore mirror did not propagate nickname to the SETUP twin")
+        check(win._setup_a4_combo.currentData() == 443,
+              "restore mirror did not propagate A4 to the SETUP twin")
+        win._nick_edit.setText("")           # don't let close-save persist it
+        win._sync_setup_twins_from_toolbar()
+        win._a4_combo.setCurrentIndex(win._a4_combo.findData(440))
+        app.processEvents()
+
+    # _apply_a4 must fire EXACTLY once per change — the sibling combo's mirrored
+    # index update is blockSignals'd, so no second recalc (Ent W3b).
+    if hasattr(win, "_apply_a4"):
+        _a4_calls = [0]
+        _orig_apply = win._apply_a4
+        win._apply_a4 = lambda hz: (_a4_calls.__setitem__(0, _a4_calls[0] + 1),
+                                    _orig_apply(hz))[1]
+        win._setup_a4_combo.setCurrentIndex(win._setup_a4_combo.findData(438))
+        app.processEvents()
+        check(_a4_calls[0] == 1,
+              f"_apply_a4 fired {_a4_calls[0]}x for one change (expected 1 — double recalc)")
+        del win._apply_a4                    # revert to the bound method
+        win._a4_combo.setCurrentIndex(win._a4_combo.findData(440))
+        app.processEvents()
+
+    # Autotune A4 setter must sync BOTH combos + engine, and its bounds guard
+    # must no-op an out-of-range hz without crashing or corrupting the combo
+    # (Ent W3c / Uruk-hai W5).
+    if hasattr(win, "_instr_set_a4"):
+        win._instr_set_a4(445.0)
+        app.processEvents()
+        check(win._a4_combo.currentData() == 445
+              and win._setup_a4_combo.currentData() == 445
+              and int(win._engine.a4) == 445,
+              "autotune A4 setter did not sync both combos + engine")
+        win._instr_set_a4(9999.0)            # out of 430..450 → guard skips combos
+        app.processEvents()
+        check(win._a4_combo.currentData() == 445,
+              "out-of-range _instr_set_a4 corrupted the A4 combo (missing bounds guard)")
+        win._a4_combo.setCurrentIndex(win._a4_combo.findData(440))
+        app.processEvents()
+
     # Test tone with no engine mirror (headless): must NOT claim to be playing.
     # The button reverts to unchecked and surfaces a failure status (N2).
     win._btn_test_tone.setChecked(True)

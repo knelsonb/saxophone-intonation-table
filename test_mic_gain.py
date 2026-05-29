@@ -92,3 +92,38 @@ def test_mic_gain_scales_level_meter_by_exactly_the_gain():
     db2 = _feed_full_ring(2.0, amp).last_rms_db
     # A 2x linear gain is +6.02 dB on the meter.
     assert abs((db2 - db1) - 20.0 * math.log10(2.0)) < 0.05
+
+
+def _feed_full_ring_mode(mode: str, gain: float, amp: float,
+                         freq: float = 440.0) -> AudioEngine:
+    """Like _feed_full_ring but on a chosen response mode (each mode has its
+    own rms_floor: fast 8e-5 / normal 1.5e-4 / slow 3e-4)."""
+    eng = AudioEngine()
+    eng.set_filter_mode(mode)
+    eng.set_mic_gain(gain)
+    total = _sine(freq, _N * 10, amp)
+    for i in range(10):
+        eng.feed_input_frames(total[i * _N:(i + 1) * _N])
+    return eng
+
+
+@pytest.mark.parametrize("mode", ["fast", "normal", "slow"])
+def test_mic_gain_floor_respects_response_mode(mode):
+    # The gate must use the ACTIVE mode's rms_floor: a tone at 50% of THIS
+    # mode's floor is gated at unity gain and cleared by a +12 dB boost — for
+    # every mode, not just 'normal'. (A regression that hard-coded the 'normal'
+    # floor would fail here for 'fast'/'slow'.)
+    floor = FILTER_PRESETS[mode]['rms_floor']
+    amp = (floor * 0.5) * math.sqrt(2.0)
+    assert _feed_full_ring_mode(mode, 1.0, amp).last_freq == 0.0
+    assert _feed_full_ring_mode(mode, 3.981, amp).last_freq != 0.0
+
+
+def test_negative_mic_gain_raises_effective_floor():
+    # The other direction: a gain < 1 attenuates the gate decision, so a tone
+    # that clears the floor at unity gets REJECTED once cut — the documented
+    # "reject more room noise" behaviour.
+    floor = FILTER_PRESETS['normal']['rms_floor']
+    amp = (floor * 1.2) * math.sqrt(2.0)        # RMS = 1.2 * floor
+    assert _feed_full_ring(1.0, amp).last_freq != 0.0   # cleared at unity
+    assert _feed_full_ring(0.5, amp).last_freq == 0.0   # -6 dB: 0.6*floor → gated

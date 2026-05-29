@@ -299,6 +299,30 @@ def test_last_bpm_clamped_to_range(isolated_config, raw, expected):
         f"last_bpm({raw!r}) -> {cfg.last_bpm}, expected {expected} (clamp 30-300)")
 
 
+@pytest.mark.parametrize("raw,expected", [
+    pytest.param(0, 0.0, id="default_zero"),
+    pytest.param(12, 12.0, id="positive"),
+    pytest.param(-6, -6.0, id="negative"),
+    pytest.param(-24, -24.0, id="low_bound"),
+    pytest.param(24, 24.0, id="high_bound"),
+    pytest.param(-30, -24.0, id="below_clamps_up"),
+    pytest.param(99, 24.0, id="above_clamps_down"),
+    pytest.param("12", 12.0, id="numeric_string"),
+    pytest.param("loud", 0.0, id="garbage_defaults"),
+    pytest.param(None, 0.0, id="missing_defaults"),
+    pytest.param(float("nan"), 0.0, id="nan_rejected"),
+    pytest.param(float("inf"), 0.0, id="inf_rejected"),
+])
+def test_mic_gain_db_clamped_to_range(isolated_config, raw, expected):
+    import json
+    isolated_config.parent.mkdir(parents=True, exist_ok=True)
+    isolated_config.write_text(json.dumps({"mic_gain_db": raw}), encoding="utf-8")
+    cfg = load_config()
+    assert cfg.mic_gain_db == expected, (
+        f"mic_gain_db({raw!r}) -> {cfg.mic_gain_db}, "
+        f"expected {expected} (clamp -24..24, reject NaN/inf/garbage)")
+
+
 # ---------------------------------------------------------------------------
 # v0.11.0 theme field (Sprint 5) -- coerced via sax_theme.coerce_theme_name.
 # ---------------------------------------------------------------------------
