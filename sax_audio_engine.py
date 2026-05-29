@@ -467,6 +467,11 @@ class AudioEngine:
         self.samplerate = DEFAULT_SAMPLE_RATE
         self.block_size = DEFAULT_BLOCK_SIZE
         self.hop_size = DEFAULT_HOP_SIZE
+        # Last successfully-opened INPUT device. Intentionally persisted across
+        # stop_output/teardown AND a failed reopen (deliberately NOT cleared
+        # there) — it seeds hot-plug recovery and the GUI's device display.
+        # LIVENESS is the separate honest signal `state` / `input_running`
+        # (_stream is not None), NOT this field being non-None.
         self.active_device: Optional[DeviceInfo] = None
 
         # Diagnostic scalars. Read snapshot via get_diagnostics().
@@ -513,6 +518,10 @@ class AudioEngine:
         self._out_transitioning = False
         self.output_samplerate = DEFAULT_SAMPLE_RATE
         self.output_block_size = DEFAULT_OUT_BLOCK
+        # Last successfully-opened OUTPUT device. Like active_device: persisted
+        # across stop/teardown and a failed reopen (seeds hot-plug recovery +
+        # GUI display); LIVENESS is `output_running` (_out_stream is not None),
+        # not this field being non-None.
         self.active_output_device: Optional[DeviceInfo] = None
         self._last_output_snapshot: tuple = ()
         # Output status — kept separate from the input state machine (which
