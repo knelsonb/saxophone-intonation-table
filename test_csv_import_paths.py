@@ -525,3 +525,50 @@ def test_row_count_at_cap_is_accepted(tmp_path, monkeypatch):
     assert runs_added == 1
     assert meas_added == 5
     assert skipped == 0
+
+
+# ---------------------------------------------------------------------------
+# Numeric-range hardening: a corrupt/crafted CSV must not poison the log.
+# float() parses 'inf' / 'nan' / '1e400'; int() any magnitude. Out-of-range or
+# non-finite numeric rows are DROPPED (the DROP-ROW policy), so a NaN cents
+# never reaches the aggregators and an out-of-range MIDI never breaks note
+# naming / table-cell indexing.
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("field,value", [
+    pytest.param("cents", "nan", id="cents_nan"),
+    pytest.param("cents", "inf", id="cents_inf"),
+    pytest.param("cents", "1e400", id="cents_overflow_to_inf"),
+    pytest.param("freq_hz", "inf", id="freq_inf"),
+    pytest.param("freq_hz", "0", id="freq_zero"),
+    pytest.param("freq_hz", "-292.0", id="freq_negative"),
+    pytest.param("a4_hz", "nan", id="a4_nan"),
+    pytest.param("a4_hz", "0", id="a4_zero"),
+    pytest.param("midi_sounding", "128", id="midi_sounding_above_127"),
+    pytest.param("midi_sounding", "-1", id="midi_sounding_negative"),
+    pytest.param("midi_fingered", "999", id="midi_fingered_out_of_range"),
+    pytest.param("midi_sounding", "1000000", id="midi_sounding_huge"),
+])
+def test_out_of_range_or_non_finite_row_is_skipped(tmp_path, field, value):
+    log = _fresh_log()
+    p = tmp_path / "in.csv"
+    _write_csv(p, HEADER, [_current_row(**{field: value})])
+    runs_added, meas_added, skipped = log.import_raw_csv(p)
+    assert meas_added == 0, f"{field}={value!r} must not be imported"
+    assert skipped == 1, f"{field}={value!r} must be counted as skipped"
+    assert runs_added == 0, "a run with no valid rows must not be added"
+
+
+def test_non_finite_row_skipped_but_valid_rows_kept(tmp_path):
+    """A poisoned row is dropped while the run's valid rows still import — the
+    log / stats stay clean (no NaN cents, no out-of-range MIDI)."""
+    log = _fresh_log()
+    p = tmp_path / "in.csv"
+    _write_csv(p, HEADER, [
+        _current_row(run_id="r", cents="-5.0"),
+        _current_row(run_id="r", cents="nan"),       # poison -> dropped
+        _current_row(run_id="r", cents="3.5"),
+    ])
+    runs_added, meas_added, skipped = log.import_raw_csv(p)
+    assert meas_added == 2, "the two finite rows must import"
+    assert skipped == 1, "the NaN-cents row must be skipped"
+    assert runs_added == 1

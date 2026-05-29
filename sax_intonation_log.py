@@ -384,6 +384,25 @@ class MeasurementLog:
                     skipped += 1
                     continue
 
+                # Validate numeric ranges. float() happily parses 'inf' / 'nan'
+                # / '1e400', and int() any magnitude, so a corrupt or crafted
+                # CSV could poison the log: a non-finite cents makes the run's
+                # mean/sigma NaN, and an out-of-range MIDI breaks note naming +
+                # table-cell indexing. Each range test also rejects NaN/inf (all
+                # comparisons against them are False), so it's a single guard.
+                if not (1.0 <= a4_hz <= 20000.0):          # plausible concert A4
+                    skipped += 1
+                    continue
+                if not (1.0 <= freq_hz <= 20000.0):        # audible, finite
+                    skipped += 1
+                    continue
+                if not (-100000.0 <= cents <= 100000.0):   # finite deviation
+                    skipped += 1
+                    continue
+                if not (0 <= midi_sounding <= 127 and 0 <= midi_fingered <= 127):
+                    skipped += 1
+                    continue
+
                 if run_id not in new_runs:
                     new_runs[run_id] = RunMeta(
                         run_id=run_id,
