@@ -2928,6 +2928,20 @@ class MainWindow(QMainWindow):
         ag.addRow(self._t('setup_theme'), self._theme_combo)
         outer.addWidget(appear_grp)
 
+        # Instrument — range-editor link (SETUP parity; also reachable via the
+        # toolbar gear). No inline stylesheet: it rides the global themed
+        # QPushButton QSS so it re-themes on a theme switch (avoids adding to
+        # the inline-style tail, task #31).
+        instr_grp = QGroupBox(self._t('setup_instrument_group'))
+        ig = QVBoxLayout(instr_grp)
+        ig.setContentsMargins(12, 10, 12, 10)
+        self._btn_setup_range = QPushButton(self._t('setup_range_edit'))
+        self._btn_setup_range.setObjectName('setupRangeEdit')
+        self._btn_setup_range.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_setup_range.clicked.connect(self._open_range_editor)
+        ig.addWidget(self._btn_setup_range)
+        outer.addWidget(instr_grp)
+
         # Test tone — proves the output path end to end.
         tone_grp = QGroupBox(self._t('setup_testtone_group'))
         tg = QVBoxLayout(tone_grp)
