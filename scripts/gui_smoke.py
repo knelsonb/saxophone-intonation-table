@@ -494,6 +494,33 @@ def main() -> int:
               f"theme {_name!r} window_bg not in the applied stylesheet")
     win._apply_theme(_start_theme)
 
+    # ── SETUP live re-translation (Frodo W2) + mic-gain status (Frodo W1) ─────
+    # The SETUP tab is built once; switching language must re-label its group
+    # titles + the mic-gain status line, not leave them stale until restart.
+    check(hasattr(win, "_setup_mic_gain_status")
+          and win._setup_mic_gain_status.text().strip() != "",
+          "mic-gain status label missing or empty (no visible gain feedback)")
+    _lang_before = win.lang
+    _title_before = win._setup_i18n_groups[0][0].title()
+    _other = "en" if _lang_before == "de" else "de"
+    for _i in range(win._lang_combo.count()):
+        if win._lang_combo.itemData(_i) == _other:
+            win._lang_combo.setCurrentIndex(_i)
+            break
+    app.processEvents()
+    _title_after = win._setup_i18n_groups[0][0].title()
+    check(_title_after != _title_before,
+          f"SETUP group title did not re-translate on language switch "
+          f"({_title_before!r} == {_title_after!r})")
+    check(win._setup_mic_gain_status.text().strip() != "",
+          "mic-gain status went blank after language switch")
+    # Restore original language.
+    for _i in range(win._lang_combo.count()):
+        if win._lang_combo.itemData(_i) == _lang_before:
+            win._lang_combo.setCurrentIndex(_i)
+            break
+    app.processEvents()
+
     # ── A11Y: accessible names on the parity-sprint controls (A11Y-LABELS) ────
     # Screen readers derive a button/checkbox name from its visible text, so
     # text-bearing controls only need non-empty text; text-LESS controls

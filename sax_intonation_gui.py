@@ -2868,7 +2868,8 @@ class MainWindow(QMainWindow):
         # without re-querying the engine (N3).
         self._output_devices_cache: list = []
         self._refresh_output_device_combo()
-        og.addRow(self._t('setup_output_device'), self._out_device_combo)
+        self._lbl_out_device = QLabel(self._t('setup_output_device'))
+        og.addRow(self._lbl_out_device, self._out_device_combo)
         self._cb_prefer_duplex = QCheckBox(self._t('setup_prefer_duplex'))
         self._cb_prefer_duplex.setToolTip(self._t('setup_prefer_duplex_tip'))
         self._cb_prefer_duplex.setChecked(
@@ -2905,7 +2906,8 @@ class MainWindow(QMainWindow):
                 break
         self._drone_voice_combo.currentIndexChanged.connect(
             self._on_drone_voice_changed)
-        vg.addRow(self._t('setup_drone_voice'), self._drone_voice_combo)
+        self._lbl_drone_voice = QLabel(self._t('setup_drone_voice'))
+        vg.addRow(self._lbl_drone_voice, self._drone_voice_combo)
         outer.addWidget(voice_grp)
 
         # Appearance — theme switching (Sprint 5 parity: dark / night / light).
@@ -2922,7 +2924,8 @@ class MainWindow(QMainWindow):
                 self._theme_combo.setCurrentIndex(i)
                 break
         self._theme_combo.currentIndexChanged.connect(self._on_theme_changed)
-        ag.addRow(self._t('setup_theme'), self._theme_combo)
+        self._lbl_theme = QLabel(self._t('setup_theme'))
+        ag.addRow(self._lbl_theme, self._theme_combo)
         outer.addWidget(appear_grp)
 
         # Instrument — range-editor link (SETUP parity; also reachable via the
@@ -2938,7 +2941,8 @@ class MainWindow(QMainWindow):
         # controller + session-state read it) and both sync via _apply_nickname.
         # No inline style — rides the themed QLineEdit QSS (off the #31 tail).
         nick_row = QHBoxLayout()
-        nick_row.addWidget(QLabel(self._t('grp_nickname')))
+        self._setup_nick_lbl = QLabel(self._t('grp_nickname'))
+        nick_row.addWidget(self._setup_nick_lbl)
         self._setup_nick_edit = QLineEdit()
         self._setup_nick_edit.setObjectName('setupNickname')
         self._setup_nick_edit.setPlaceholderText(self._t('nickname_tip'))
@@ -3020,6 +3024,17 @@ class MainWindow(QMainWindow):
         self._setup_mic_gain_combo.currentIndexChanged.connect(
             self._on_mic_gain_changed)
         mg.addWidget(self._setup_mic_gain_combo)
+        # Live plain-language confirmation of what the current gain does — so the
+        # control gives a VISIBLE result even though the cents readout is, by
+        # design, unaffected by gain (Frodo W1). Updated on every change + on a
+        # language switch.
+        self._setup_mic_gain_status = QLabel('')
+        self._setup_mic_gain_status.setObjectName('setupMicGainStatus')
+        self._setup_mic_gain_status.setWordWrap(True)
+        self._setup_mic_gain_status.setStyleSheet('color:#8a8;font-size:11px;'
+                                                  'padding:2px 2px 0 2px;')
+        self._update_mic_gain_status()
+        mg.addWidget(self._setup_mic_gain_status)
         outer.addWidget(mic_grp)
 
         # Test tone — proves the output path end to end.
@@ -3049,6 +3064,25 @@ class MainWindow(QMainWindow):
         tg.addWidget(self._test_tone_status)
         outer.addWidget(tone_grp)
         outer.addStretch()
+        # Register every translatable SETUP widget so _retranslate can re-label
+        # the whole tab on a LIVE language switch — previously the SETUP titles
+        # went stale until restart (Frodo W2). Group boxes + form-row labels.
+        self._setup_i18n_groups = [
+            (out_grp, 'setup_output_group'),
+            (voice_grp, 'setup_drone_voice_group'),
+            (appear_grp, 'setup_appearance_group'),
+            (instr_grp, 'setup_instrument_group'),
+            (a4_grp, 'grp_a4'),
+            (resp_grp, 'grp_filter'),
+            (mic_grp, 'setup_mic_gain'),
+            (tone_grp, 'setup_testtone_group'),
+        ]
+        self._setup_i18n_labels = [
+            (self._lbl_out_device, 'setup_output_device'),
+            (self._lbl_drone_voice, 'setup_drone_voice'),
+            (self._lbl_theme, 'setup_theme'),
+            (self._setup_nick_lbl, 'grp_nickname'),
+        ]
         return w
 
     def _current_output_selection(self) -> 'DeviceSelection':
@@ -4359,6 +4393,10 @@ class MainWindow(QMainWindow):
         if hasattr(self, '_info_banner'):
             self._info_banner.retranslate(self._t)
 
+        # SETUP tab is built once, not rebuilt — re-label its titles/labels here
+        # so a live language switch doesn't leave it half-translated (Frodo W2).
+        self._retranslate_setup()
+
         self._refresh_table()
 
     # ── Audio-Callback ────────────────────────────────────────────────────────
@@ -4568,12 +4606,13 @@ class MainWindow(QMainWindow):
         stats reset + refresh via on_a4_changed), set the index, set the
         engine A4."""
         hz_int = int(hz)
+        _target = hz_int - 430
         for _combo in (getattr(self, '_a4_combo', None),
                        getattr(self, '_setup_a4_combo', None)):
-            if _combo is None:
+            if _combo is None or not (0 <= _target < _combo.count()):
                 continue
             _combo.blockSignals(True)
-            _combo.setCurrentIndex(hz_int - 430)
+            _combo.setCurrentIndex(_target)
             _combo.blockSignals(False)
         self._engine.a4 = float(hz_int)
 
@@ -4734,6 +4773,45 @@ class MainWindow(QMainWindow):
         self._cfg.mic_gain_db = db
         sax_config.save_config(self._cfg)
         self._engine.set_mic_gain(10.0 ** (db / 20.0))
+        self._update_mic_gain_status()
+
+    def _update_mic_gain_status(self) -> None:
+        """Refresh the plain-language mic-gain effect label, so the control
+        gives a visible result even though the cents readout is (by design)
+        unaffected by gain. Safe before the label exists (returns early)."""
+        lbl = getattr(self, '_setup_mic_gain_status', None)
+        if lbl is None:
+            return
+        db = int(round(float(getattr(self._cfg, 'mic_gain_db', 0.0))))
+        if db == 0:
+            lbl.setText(self._t('setup_mic_gain_off'))
+        elif db > 0:
+            lbl.setText(self._t('setup_mic_gain_boost', db=db))
+        else:
+            lbl.setText(self._t('setup_mic_gain_cut', db=db))
+
+    def _retranslate_setup(self) -> None:
+        """Re-label every translatable SETUP-tab widget on a language switch.
+        The tab is built once (never rebuilt), so without this its titles and
+        labels stay in the build-time language until restart (Frodo W2)."""
+        for grp, key in getattr(self, '_setup_i18n_groups', []):
+            grp.setTitle(self._t(key))
+        for lbl, key in getattr(self, '_setup_i18n_labels', []):
+            lbl.setText(self._t(key))
+        if hasattr(self, '_cb_prefer_duplex'):
+            self._cb_prefer_duplex.setText(self._t('setup_prefer_duplex'))
+            self._cb_prefer_duplex.setToolTip(self._t('setup_prefer_duplex_tip'))
+        if hasattr(self, '_btn_setup_range'):
+            self._btn_setup_range.setText(self._t('setup_range_edit'))
+        if hasattr(self, '_btn_test_tone'):
+            self._btn_test_tone.setToolTip(self._t('setup_testtone_tip'))
+            if not self._btn_test_tone.isChecked():
+                self._btn_test_tone.setText(self._t('setup_testtone_play'))
+        if hasattr(self, '_setup_nick_edit'):
+            self._setup_nick_edit.setPlaceholderText(self._t('nickname_tip'))
+        if hasattr(self, '_setup_mic_gain_combo'):
+            self._setup_mic_gain_combo.setToolTip(self._t('setup_mic_gain_tip'))
+        self._update_mic_gain_status()
 
     def _on_min_n_changed(self, value: int) -> None:
         """User adjusted the min-N filter. Persist + redraw the table.
