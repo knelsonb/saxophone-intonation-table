@@ -23,11 +23,17 @@ def atomic_write_json(path: Path, payload: Any, *, indent: int = 2,
         fd, tmp_path = tempfile.mkstemp(
             prefix=tmp_prefix, suffix=".tmp", dir=str(path.parent))
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(payload, f, indent=indent)
+            # allow_nan=False: never persist NaN/Infinity. They are non-standard
+            # JSON (external tools choke) and would round-trip back as a
+            # non-finite float. A non-finite slipping into the payload raises
+            # ValueError here -> caught below -> the save fails safely (the old
+            # file is left intact by the atomic replace) rather than writing
+            # garbage or crashing the caller.
+            json.dump(payload, f, indent=indent, allow_nan=False)
         os.replace(tmp_path, path)
         tmp_path = None
         return True
-    except OSError:
+    except (OSError, ValueError, TypeError):
         return False
     finally:
         if tmp_path is not None:

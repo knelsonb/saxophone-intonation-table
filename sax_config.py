@@ -200,7 +200,10 @@ def _as_bool(v, default: bool) -> bool:
 def _as_int(v, default: int) -> int:
     try:
         return int(v)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
+        # OverflowError: int(float('inf')) — Python's json.load accepts the
+        # non-standard Infinity / NaN tokens by default, so a hand-edited or
+        # corrupt config can hand us a non-finite float here. Degrade, don't crash.
         return default
 
 
@@ -214,7 +217,9 @@ def _as_int_list(v) -> list[int]:
     for entry in v:
         try:
             out.append(int(entry))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
+            # OverflowError guards int(float('inf')); a single bad entry
+            # degrades the whole list to empty (GUI uses its default sizes).
             return []
     return out
 

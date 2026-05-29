@@ -446,3 +446,53 @@ def test_deck_path_fields_coerce_to_str(isolated_config, field_name, raw, expect
     assert getattr(cfg, field_name) == expected, (
         f"{field_name}({raw!r}) -> {getattr(cfg, field_name)!r}, "
         f"expected {expected!r}")
+
+
+# ---------------------------------------------------------------------------
+# Non-finite hardening: a corrupt/hand-edited config can carry the non-standard
+# Infinity / NaN tokens (Python's json.load accepts them by default). The
+# coercers must DEGRADE to defaults (never crash on startup — int(float('inf'))
+# raises OverflowError), and atomic_write_json must never PERSIST a non-finite.
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("bad", [float("inf"), float("-inf"), float("nan")],
+                         ids=["inf", "-inf", "nan"])
+def test_as_int_degrades_on_non_finite(bad):
+    # int(float('inf')) raises OverflowError; int(nan) raises ValueError. Both
+    # must be caught and fall back to the default, not propagate up the load.
+    assert sax_config._as_int(bad, 7) == 7
+
+
+@pytest.mark.parametrize("bad", [float("inf"), float("-inf"), float("nan")],
+                         ids=["inf", "-inf", "nan"])
+def test_as_int_list_degrades_on_non_finite(bad):
+    assert sax_config._as_int_list([10, bad, 30]) == []
+
+
+def test_load_config_with_infinity_tokens_returns_defaults(isolated_config):
+    """A config.json carrying Infinity / NaN (json.load accepts these tokens)
+    must load to safe defaults, not crash the GUI on startup."""
+    isolated_config.parent.mkdir(parents=True, exist_ok=True)
+    isolated_config.write_text(
+        '{"last_bpm": Infinity, "splitter_sizes": [1, NaN, 3], '
+        '"last_a4_hz": -Infinity}', encoding="utf-8")
+    cfg = load_config()                       # the bug was: this raised
+    defaults = AppConfig()
+    assert cfg.last_bpm == defaults.last_bpm, "last_bpm must degrade to default"
+    assert cfg.last_a4_hz == defaults.last_a4_hz, "last_a4_hz must degrade"
+    assert isinstance(cfg.splitter_sizes, list), "splitter_sizes must not crash"
+
+
+def test_atomic_write_rejects_non_finite_payload(tmp_path):
+    """allow_nan=False: a non-finite slipping into a payload fails the write
+    safely (returns False, leaves no file) rather than persisting garbage."""
+    from sax_atomic import atomic_write_json
+    path = tmp_path / "x.json"
+    assert atomic_write_json(path, {"v": float("inf")}) is False
+    assert not path.exists(), "no garbage file may be left behind"
+
+
+def test_atomic_write_accepts_finite_payload(tmp_path):
+    from sax_atomic import atomic_write_json
+    path = tmp_path / "x.json"
+    assert atomic_write_json(path, {"v": 1.5, "n": 3}) is True
+    assert path.exists()
