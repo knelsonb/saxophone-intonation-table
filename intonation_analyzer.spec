@@ -57,13 +57,15 @@ a = Analysis(
         'sax_config',
         'sax_flow_layout',
         'sax_audio_engine',
-        # Sprint 1-3 audio-output modules. sax_drone / sax_pitch_pipes are
-        # guard-imported (try/except), so list them explicitly to be safe.
+        # Sprint 1-4 audio modules. sax_drone / sax_pitch_pipes / sax_deck are
+        # guard-imported (try/except), so PyInstaller's static analysis can miss
+        # them — list them explicitly or the frozen build ships those tabs inert.
         'sax_mixer',
         'sax_coordination',
         'sax_metronome',
         'sax_drone',
         'sax_pitch_pipes',
+        'sax_deck',
         'sax_assets',
         'tinysoundfont',
         '_sounddevice',
