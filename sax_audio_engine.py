@@ -482,10 +482,17 @@ class AudioEngine:
         # _buf_ring: underlying circular storage, allocated once per
         # sample-rate negotiation; _buf_head: next-write index into the ring.
         # _buf: contiguous chronological snapshot, rebuilt each callback.
+        # _buf_unwrap: preallocated scratch the ring is unrolled INTO each
+        # callback (two slice-copies) so the hot path allocates nothing — see
+        # the unwrap site in _on_input. Safe to reuse: callbacks run serially
+        # (PortAudio), and get_buf_snapshot copies _buf under the lock, so no
+        # reader ever sees the scratch mid-rewrite.
         self._buf_ring: np.ndarray = np.zeros(DEFAULT_BLOCK_SIZE,
                                               dtype=np.float32)
         self._buf_head: int = 0
         self._buf: np.ndarray = np.zeros(DEFAULT_BLOCK_SIZE, dtype=np.float32)
+        self._buf_unwrap: np.ndarray = np.zeros(DEFAULT_BLOCK_SIZE,
+                                                dtype=np.float32)
         self._stream = None
         self._emissions_paused = False
         self._transitioning = False
@@ -1931,13 +1938,26 @@ class AudioEngine:
                     engine._buf_ring[engine._buf_head:] = mono[:first]
                     engine._buf_ring[:n - first] = mono[first:]
                 engine._buf_head = (engine._buf_head + n) % engine._buf_ring.size
-                # Materialise a contiguous chronological view for YIN and
-                # for get_buf_snapshot() readers outside the lock.
+                # Materialise a contiguous chronological view for YIN and for
+                # get_buf_snapshot() readers. Unroll the ring INTO a
+                # preallocated scratch (two slice-copies) rather than
+                # np.concatenate, which allocated a fresh ring-sized array
+                # (~64 KB) on EVERY callback — real-time-thread GC churn.
+                # Reuse is safe: PortAudio invokes this callback serially, and
+                # get_buf_snapshot copies _buf under this same lock, so no
+                # reader ever sees a half-written scratch. Resized only when the
+                # ring is (a rare device rebind).
                 h = engine._buf_head
-                buf_local = np.concatenate(
-                    (engine._buf_ring[h:], engine._buf_ring[:h]))
-                engine._buf = buf_local
-                buf = buf_local
+                ring = engine._buf_ring
+                unwrap = engine._buf_unwrap
+                if unwrap is None or unwrap.size != ring.size:
+                    unwrap = np.empty(ring.size, dtype=np.float32)
+                    engine._buf_unwrap = unwrap
+                tail = ring.size - h
+                unwrap[:tail] = ring[h:]
+                unwrap[tail:] = ring[:h]
+                engine._buf = unwrap
+                buf = unwrap
                 mode = engine.filter_mode
                 a4 = engine.a4
             params = FILTER_PRESETS.get(mode, FILTER_PRESETS['normal'])
