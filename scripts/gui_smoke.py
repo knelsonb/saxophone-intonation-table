@@ -202,6 +202,27 @@ def main() -> int:
         win._a4_combo.setCurrentIndex(_a4_saved)
         app.processEvents()
 
+    # SETUP parity: mic-gain combo wires to cfg.mic_gain_db + the engine
+    # (set_mic_gain, dB->linear). Default 0 dB = unity gain. Drive the real
+    # handler and confirm both the persisted dB and the engine's linear gain.
+    check(hasattr(win, "_setup_mic_gain_combo"), "SETUP mic-gain combo missing")
+    if hasattr(win, "_setup_mic_gain_combo"):
+        _mg_saved = win._setup_mic_gain_combo.currentIndex()
+        win._setup_mic_gain_combo.setCurrentIndex(
+            win._setup_mic_gain_combo.findData(12))
+        app.processEvents()
+        check(win._cfg.mic_gain_db == 12,
+              "SETUP mic-gain change did not persist cfg.mic_gain_db")
+        check(abs(win._engine.mic_gain - 10.0 ** (12 / 20.0)) < 1e-6,
+              "SETUP mic-gain change did not reach the engine (dB->linear)")
+        win._setup_mic_gain_combo.setCurrentIndex(
+            win._setup_mic_gain_combo.findData(0))
+        app.processEvents()
+        check(abs(win._engine.mic_gain - 1.0) < 1e-9,
+              "0 dB mic-gain did not restore unity engine gain")
+        win._setup_mic_gain_combo.setCurrentIndex(_mg_saved)
+        app.processEvents()
+
     # Test tone with no engine mirror (headless): must NOT claim to be playing.
     # The button reverts to unchecked and surfaces a failure status (N2).
     win._btn_test_tone.setChecked(True)

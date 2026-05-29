@@ -55,6 +55,7 @@ def test_roundtrip_preserves_all_fields(isolated_config):
         matrix_extra_octaves=2,
         layout_mode_preference="matrix",
         filter_mode="slow",
+        mic_gain_db=12.0,
         min_n_visible=12,
         show_diagnostics=True,
         audio_device_name="FIIO DSP Audio",
