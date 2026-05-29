@@ -474,6 +474,12 @@ class AudioEngine:
         # (_stream is not None), NOT this field being non-None.
         self.active_device: Optional[DeviceInfo] = None
 
+        # Mic input gain (linear; 1.0 = no-op). Scales ONLY the silence-gate
+        # decision + the level meter in the input callback — never the signal
+        # buffer — so pitch detection stays scale-invariant and the deck tap
+        # records the raw mic. Set from cfg.mic_gain_db via set_mic_gain().
+        self.mic_gain: float = 1.0
+
         # Diagnostic scalars. Read snapshot via get_diagnostics().
         self.last_rms_db: float = -120.0
         self.last_ap: float = 1.0
@@ -625,6 +631,20 @@ class AudioEngine:
     def set_a4(self, hz: float) -> None:
         with self._lock:
             self.a4 = float(hz)
+
+    def set_mic_gain(self, linear: float) -> None:
+        """Set the mic input gain (linear multiplier). Applied to the
+        silence-gate + level meter only (see the input callback) — the signal
+        buffer is never scaled, so the cents readout is unchanged. Clamped to
+        roughly +/-24 dB; non-finite / non-numeric input is ignored. Default
+        1.0 is a no-op (byte-identical to the pre-feature behaviour)."""
+        try:
+            g = float(linear)
+        except (TypeError, ValueError):
+            return
+        if not math.isfinite(g):
+            return
+        self.mic_gain = max(0.05, min(16.0, g))
 
     def set_prefer_wdmks(self, flag: bool) -> None:
         self.prefer_wdmks = bool(flag)
@@ -1983,9 +2003,15 @@ class AudioEngine:
             # lock here would cost a frame-rate acquire just to write
             # three floats; the diagnostic readout tolerates one-frame
             # staleness.
-            engine.last_rms_db = 20.0 * math.log10(max(rms, 1e-9))
+            # Mic gain (linear; default 1.0 = no-op). Scales the silence-gate
+            # decision + the level meter ONLY — `buf` is never mutated, so the
+            # YIN normalization (sig = buf/rms below) stays scale-invariant and
+            # the tape-deck input tap records the raw mic. A >1 gain lets a
+            # quiet mic clear the rms_floor; <1 rejects more room noise.
+            rms_eff = rms * engine.mic_gain
+            engine.last_rms_db = 20.0 * math.log10(max(rms_eff, 1e-9))
 
-            if rms < params['rms_floor']:
+            if rms_eff < params['rms_floor']:
                 engine.last_ap = 1.0
                 engine.last_freq = 0.0
                 with engine._lock:

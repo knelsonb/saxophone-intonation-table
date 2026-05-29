@@ -2254,6 +2254,8 @@ class MainWindow(QMainWindow):
         self._engine = AudioEngine()
         self._engine.set_filter_mode(
             getattr(self._cfg, 'filter_mode', FILTER_MODE_DEFAULT))
+        self._engine.set_mic_gain(
+            10.0 ** (float(getattr(self._cfg, 'mic_gain_db', 0.0)) / 20.0))
         self._engine.set_prefer_wdmks(
             bool(getattr(self._cfg, 'prefer_wdmks', False)))
         # Persistence comes from config (welcome dialog), with the env var
@@ -2988,6 +2990,34 @@ class MainWindow(QMainWindow):
             self._on_setup_filter_mode_changed)
         rg.addWidget(self._setup_filter_combo)
         outer.addWidget(resp_grp)
+
+        # Mic gain — boost a quiet mic (in dB) so it clears the detection
+        # floor; default 0 dB is a no-op. Drives engine.set_mic_gain, which
+        # scales ONLY the silence gate + level meter (not the signal), so the
+        # cents readout is unchanged. Persisted as cfg.mic_gain_db. dB labels
+        # are language-independent → no retranslate. No inline style (#31 tail).
+        mic_grp = QGroupBox(self._t('setup_mic_gain'))
+        mg = QVBoxLayout(mic_grp)
+        mg.setContentsMargins(12, 10, 12, 10)
+        self._setup_mic_gain_combo = QComboBox()
+        self._setup_mic_gain_combo.setObjectName('setupMicGain')
+        self._setup_mic_gain_combo.setMinimumWidth(160)
+        self._setup_mic_gain_combo.setAccessibleName(self._t('setup_mic_gain'))
+        self._setup_mic_gain_combo.setToolTip(self._t('setup_mic_gain_tip'))
+        for _db in (-12, -6, 0, 6, 12, 18, 24):
+            self._setup_mic_gain_combo.addItem(
+                '0 dB' if _db == 0 else f'{_db:+d} dB', _db)
+        # Snap the display to the nearest offered step (the engine already uses
+        # the exact persisted dB; the user can only pick a discrete step).
+        _cur_db = float(getattr(self._cfg, 'mic_gain_db', 0.0))
+        _best_i = min(range(self._setup_mic_gain_combo.count()),
+                      key=lambda i: abs(self._setup_mic_gain_combo.itemData(i)
+                                        - _cur_db))
+        self._setup_mic_gain_combo.setCurrentIndex(_best_i)
+        self._setup_mic_gain_combo.currentIndexChanged.connect(
+            self._on_mic_gain_changed)
+        mg.addWidget(self._setup_mic_gain_combo)
+        outer.addWidget(mic_grp)
 
         # Test tone — proves the output path end to end.
         tone_grp = QGroupBox(self._t('setup_testtone_group'))
@@ -4688,6 +4718,18 @@ class MainWindow(QMainWindow):
         sax_config.save_config(self._cfg)
         if AUDIO_OK:
             self._engine.set_filter_mode(mode)
+
+    def _on_mic_gain_changed(self, _idx: int = 0) -> None:
+        """SETUP mic-gain combo changed. Persist the dB and push the linear
+        gain to the engine (which scales only the silence gate + level meter,
+        never the signal). 0 dB = no-op."""
+        db = self._setup_mic_gain_combo.currentData()
+        if db is None:
+            return
+        db = float(db)
+        self._cfg.mic_gain_db = db
+        sax_config.save_config(self._cfg)
+        self._engine.set_mic_gain(10.0 ** (db / 20.0))
 
     def _on_min_n_changed(self, value: int) -> None:
         """User adjusted the min-N filter. Persist + redraw the table.

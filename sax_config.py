@@ -54,6 +54,11 @@ class AppConfig:
     # ideal for long tones / tuning analysis. See FILTER_PRESETS in
     # sax_audio_engine.py for the parameter values.
     filter_mode: str = 'normal'
+    # Mic input gain in dB (default 0 = no change). Applied to the
+    # silence-gate decision + level meter only (NOT the signal), so a quiet
+    # mic can clear the detection floor without changing the cents readout.
+    # See AudioEngine.set_mic_gain / the input callback in sax_audio_engine.py.
+    mic_gain_db: float = 0.0
     # Minimum measurement count for a note to appear in the table.
     # Hides notes you only blipped accidentally so the analysis only
     # shows notes you actually held. Defaults to 5 to match the
@@ -322,6 +327,7 @@ def load_config() -> AppConfig:
         layout_mode_preference=_as_str(
             data.get("layout_mode_preference"), "auto"),
         filter_mode=_as_str(data.get("filter_mode"), "normal"),
+        mic_gain_db=max(-24.0, min(24.0, _as_float(data.get("mic_gain_db"), 0.0))),
         min_n_visible=max(0, _as_int(data.get("min_n_visible"), 5)),
         show_diagnostics=_as_bool(data.get("show_diagnostics"), False),
         audio_device_name=_as_str(data.get("audio_device_name"), ""),

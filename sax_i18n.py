@@ -352,6 +352,12 @@ STRINGS = {
         'setup_drone_voice':      'Stimme',
         'setup_instrument_group': 'Instrument',
         'setup_range_edit':       'Tonumfang bearbeiten …',
+        'setup_mic_gain':         'Mikrofon-Verstärkung',
+        'setup_mic_gain_tip':     'Hebt ein leises Mikrofon an, damit es die '
+                                  'Erkennungsschwelle überschreitet. Wirkt nur '
+                                  'auf die Stille-Erkennung und die Pegelanzeige '
+                                  '— die Cent-Anzeige bleibt unverändert. '
+                                  '0 dB = aus.',
         'setup_appearance_group': 'Darstellung',
         'setup_theme':            'Farbschema',
         'theme_dark':             'Dunkel',
@@ -696,6 +702,11 @@ STRINGS = {
         'setup_drone_voice':      'Voice',
         'setup_instrument_group': 'Instrument',
         'setup_range_edit':       'Edit instrument range …',
+        'setup_mic_gain':         'Mic gain',
+        'setup_mic_gain_tip':     'Boosts a quiet mic so it clears the '
+                                  'detection floor. Affects only the silence '
+                                  'gate and the level meter — the cents readout '
+                                  'is unchanged. 0 dB = off.',
         'setup_appearance_group': 'Appearance',
         'setup_theme':            'Theme',
         'theme_dark':             'Dark',
