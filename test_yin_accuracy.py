@@ -135,3 +135,33 @@ def test_c8_detected_and_passes_freq_gate(a4: float) -> None:
     # Reads as ~C8 within the coarse top-of-range integer-lag limit (~10-sample
     # period at 44.1 k, so a few cents is expected and acceptable for an extreme).
     assert abs(_cents(det, c8)) < 15.0, f'C8 at A4={a4} -> {_cents(det, c8):+.1f} ct'
+
+
+# ---------------------------------------------------------------------------
+# Degenerate-input robustness — the detector must never crash and must return
+# finite, non-negative (freq, aperiodicity) on garbage-but-finite input.
+# (Non-finite NaN/inf input is guarded UPSTREAM by the engine's rms finiteness
+# check in _on_input before yin_pitch is ever called, so it's not exercised
+# here — feeding NaN to yin_pitch directly only trips numpy fft warnings.)
+# ---------------------------------------------------------------------------
+def _degenerate_cases():
+    n = np.arange(DEFAULT_BLOCK_SIZE, dtype=np.float64)
+    tone = np.sin(2.0 * math.pi * 440.0 * n / 44100.0)
+    return [
+        ('silence', np.zeros(DEFAULT_BLOCK_SIZE, dtype=np.float32)),
+        ('dc_offset', np.full(DEFAULT_BLOCK_SIZE, 0.5, dtype=np.float32)),
+        ('empty', np.zeros(0, dtype=np.float32)),
+        ('tiny', np.array([0.0, 1.0, 0.0, -1.0], dtype=np.float32)),
+        ('single_sample', np.array([0.5], dtype=np.float32)),
+        ('huge_amplitude', (1000.0 * tone).astype(np.float32)),
+        ('near_zero_amplitude', (1e-20 * tone).astype(np.float32)),
+        ('hard_clipped_square', np.sign(tone).astype(np.float32)),
+    ]
+
+
+@pytest.mark.parametrize('name,buf', _degenerate_cases(),
+                         ids=[c[0] for c in _degenerate_cases()])
+def test_yin_pitch_robust_to_degenerate_input(name: str, buf: np.ndarray) -> None:
+    det, ap = yin_pitch(buf, 44100)
+    assert math.isfinite(det) and det >= 0.0, f'{name}: freq {det}'
+    assert math.isfinite(ap) and ap >= 0.0, f'{name}: aperiodicity {ap}'
