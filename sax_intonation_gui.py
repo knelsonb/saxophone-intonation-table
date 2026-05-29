@@ -2635,7 +2635,7 @@ class MainWindow(QMainWindow):
         ll3.addWidget(self._tuner)
         self._status_lbl = QLabel(self._t('no_signal'))
         self._status_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._status_lbl.setStyleSheet('color:#888;font-size:13px;padding:4px;')
+        self._status_lbl.setObjectName('dimLabel')   # themed via QLabel#dimLabel
         ll3.addWidget(self._status_lbl)
 
         # Sprint 3: drone controls live on the TUNER tab (per the S3 lock),
@@ -3042,8 +3042,7 @@ class MainWindow(QMainWindow):
         # the button never silently lies about playing (N2).
         self._test_tone_status = QLabel('')
         self._test_tone_status.setWordWrap(True)
-        self._test_tone_status.setStyleSheet('color:#c0392b;font-size:12px;'
-                                              'padding:4px 2px 0 2px;')
+        self._test_tone_status.setObjectName('errorLabel')   # QLabel#errorLabel
         self._test_tone_status.setVisible(False)
         tg.addWidget(self._test_tone_status)
         outer.addWidget(tone_grp)
@@ -4032,8 +4031,7 @@ class MainWindow(QMainWindow):
         # Inline status — shown when an audio action can't run yet.
         self._drone_status = QLabel('')
         self._drone_status.setWordWrap(True)
-        self._drone_status.setStyleSheet(
-            'color:#c0392b;font-size:11px;padding:2px;')
+        self._drone_status.setObjectName('errorLabel')   # QLabel#errorLabel
         self._drone_status.setVisible(False)
         g.addWidget(self._drone_status)
         return grp
@@ -4177,7 +4175,7 @@ class MainWindow(QMainWindow):
             grid.addWidget(b, i // 4, i % 4)
         v.addLayout(grid)
         self._pipes_status = QLabel('')
-        self._pipes_status.setStyleSheet('color:#c0392b;font-size:11px;')
+        self._pipes_status.setObjectName('errorLabel')   # QLabel#errorLabel
         self._pipes_status.setVisible(False)
         v.addWidget(self._pipes_status)
         # Stop any sustaining pipe when the modal closes.
