@@ -313,6 +313,14 @@ def build_app_qss(p: ThemePalette) -> str:
                    color:{p.text_bright};border:none;border-radius:4px;
                    padding:5px 12px;font-size:12px;}}
         QWidget#audioBanner QPushButton:hover{{background:{p.button_hover};}}
+        /* info/hot-plug toast banner — accent (blue) left-border = info cue */
+        QWidget#infoBanner{{background:{p.base_bg};border:1px solid {p.input_border};
+                   border-left:4px solid {p.accent};border-radius:5px;}}
+        QWidget#infoBanner QLabel{{color:{p.text};font-size:12px;border:none;}}
+        QWidget#infoBanner QPushButton{{background:{p.button_bg};
+                   color:{p.text_bright};border:none;border-radius:4px;
+                   padding:5px 12px;font-size:12px;}}
+        QWidget#infoBanner QPushButton:hover{{background:{p.button_hover};}}
         /* metro readout + larger steppers + reusable error-status label */
         QLabel#bpmReadout{{color:{p.accent};font-size:64px;font-weight:bold;}}
         QLabel#bpmUnit{{color:{p.text_dim};font-size:14px;letter-spacing:3px;}}
@@ -373,4 +381,12 @@ def build_app_qss(p: ThemePalette) -> str:
                    border:none;border-radius:5px;padding:6px 14px;font-size:12px;}}
         QDialog#pickerDlg QPushButton:hover{{background:{p.button_hover};}}
         QDialog#pickerDlg QCheckBox{{color:{p.text_dim};font-size:11px;}}
+        /* AUDIO-IN status chip (toolbar) — slate button + transparent labels
+           (the transparent bg is load-bearing: else the labels paint bands) */
+        QPushButton#audioChip{{background:{p.button_bg};color:{p.text_bright};
+                   border:none;border-radius:5px;padding:4px 10px;font-size:12px;
+                   text-align:left;}}
+        QPushButton#audioChip:hover{{background:{p.button_hover};}}
+        QPushButton#audioChip:pressed{{background:{p.button_pressed};}}
+        QPushButton#audioChip QLabel{{background:transparent;color:{p.text_bright};}}
     """
