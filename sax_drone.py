@@ -310,6 +310,26 @@ class DroneSource:
             self._note = None
         # _sounding stays set until the release tail fades (audible-tail rule).
 
+    def silence(self) -> None:
+        """Force the audible-tail state to silent immediately (note off + kill
+        any ringing tail), WITHOUT releasing the synth so the drone can be
+        re-enabled. Used when the drone is disabled while no render will run to
+        drain the tail (output stopped): otherwise active_midi (== _sounding)
+        would stick non-None and the D3 coordinator would vote-exclude that MIDI
+        forever."""
+        if self._note is not None:
+            try:
+                self._syn.noteoff(0, self._note)
+            except Exception:
+                pass
+            self._note = None
+        try:
+            self._syn.sounds_off()
+        except Exception:
+            pass
+        self._sounding = None
+        self._silent_blocks = 0
+
     def _retrigger(self) -> None:
         note = self._note
         if note is not None:
@@ -479,6 +499,15 @@ class DroneController:
                 eng = self._engine
                 if eng is not None and hasattr(eng, "detach_duck_consumer"):
                     eng.detach_duck_consumer(self._source)
+                # If an engine's output stream is NOT running, render() never
+                # runs to drain the audible tail, so _sounding (active_midi)
+                # would stick and the D3 coordinator would vote-exclude that
+                # MIDI forever. Force silence now. (When output IS running the
+                # tail fades naturally over ~50ms, correctly vote-excluded while
+                # audible; with no engine there's no D3 coordinator to get stuck,
+                # so the audible-tail rule is left intact.)
+                if eng is not None and not getattr(eng, "output_running", False):
+                    self._source.silence()
         self._emit()
 
     def toggle(self) -> None:
