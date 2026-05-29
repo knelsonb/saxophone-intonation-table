@@ -255,4 +255,11 @@ def build_app_qss(p: ThemePalette) -> str:
                    border:none;}}
         QScrollBar::handle{{background:{p.button_bg};border-radius:4px;}}
         QScrollBar::add-line,QScrollBar::sub-line{{background:none;border:none;}}
+        /* De-inlined widgets (THEME-INLINE): objectName-scoped so ONLY the
+           widget that carried this exact inline style is restyled — never a
+           previously-unstyled sibling — keeping DARK byte-identical while
+           light/night re-theme. */
+        QLineEdit#nickEdit{{background:{p.base_bg};border:1px solid {p.input_border};
+                   border-radius:5px;color:{p.text};padding:4px 8px;font-size:12px;}}
+        QLineEdit#nickEdit:focus{{border:1px solid {p.accent};}}
     """

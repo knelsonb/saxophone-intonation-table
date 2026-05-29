@@ -2493,11 +2493,10 @@ class MainWindow(QMainWindow):
         self._nick_edit.setMinimumWidth(280)
         self._nick_edit.setMaximumWidth(320)
         self._nick_edit.editingFinished.connect(self._on_nickname_changed)
-        self._nick_edit.setStyleSheet("""
-            QLineEdit{background:#1e1e2e;border:1px solid #444;
-                       border-radius:5px;color:#ddd;padding:4px 8px;font-size:12px;}
-            QLineEdit:focus{border:1px solid #6699cc;}
-        """)
+        # De-inlined (THEME-INLINE): styled via QLineEdit#nickEdit in
+        # build_app_qss so it re-themes on a theme switch. DARK is byte-identical
+        # (the rule's roles equal the old inline hardcodes).
+        self._nick_edit.setObjectName('nickEdit')
         il.addWidget(self._nick_edit)
 
         # v0.5.7: the "Filter to instrument range" checkbox lives
