@@ -746,3 +746,23 @@ def test_input_tap_adds_no_scaling_alloc_when_armed():
         f"the armed deck tap retains allocation beyond the unarmed pipeline "
         f"baseline (unarmed={unarmed} armed={armed}) — capture must be "
         f"slice-assign into the preallocated sink, never per-call growth")
+
+
+def test_input_unwrap_reuses_scratch_and_is_chronological():
+    """The ring -> contiguous unwrap reuses a preallocated scratch instead of
+    np.concatenate (which allocated a fresh ~64 KB array every callback), and
+    get_buf_snapshot still returns samples in chronological order across the
+    ring's wrap boundary."""
+    eng = _recording_engine(samplerate=48000)
+    b1 = np.full(512, 0.10, dtype=np.float32)
+    b2 = np.full(512, 0.20, dtype=np.float32)
+    eng.feed_input_frames(b1)
+    buf_obj_1 = eng._buf
+    eng.feed_input_frames(b2)
+    buf_obj_2 = eng._buf
+    assert buf_obj_1 is buf_obj_2, (
+        "the unwrap must reuse ONE preallocated scratch, not reallocate")
+    snap = eng.get_buf_snapshot()
+    # Chronological: the newest block sits at the tail, the prior block before it.
+    assert np.allclose(snap[-512:], 0.20), "latest block must be at the tail"
+    assert np.allclose(snap[-1024:-512], 0.10), "the prior block must precede it"
