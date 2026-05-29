@@ -2567,10 +2567,6 @@ class MainWindow(QMainWindow):
         self._cb_diag.setChecked(
             bool(getattr(self._cfg, 'show_diagnostics', False)))
         self._cb_diag.setToolTip(self._t('show_diagnostics_tip'))
-        self._cb_diag.setStyleSheet("""
-            QCheckBox { color: #bbb; font-size: 12px; padding: 2px 4px; }
-            QCheckBox::indicator { width: 14px; height: 14px; }
-        """)
         self._cb_diag.toggled.connect(self._on_diagnostics_toggled)
         diag_footer.addWidget(self._cb_diag)
         diag_footer.addStretch()
@@ -2654,10 +2650,6 @@ class MainWindow(QMainWindow):
         self._cb_oor = QCheckBox(self._t('allow_oor'))
         self._cb_oor.setChecked(not self._cfg.allow_out_of_range)
         self._cb_oor.setToolTip(self._t('allow_oor_tip'))
-        self._cb_oor.setStyleSheet("""
-            QCheckBox { color: #bbb; font-size: 12px; padding: 2px 4px; }
-            QCheckBox::indicator { width: 14px; height: 14px; }
-        """)
         self._cb_oor.toggled.connect(self._on_oor_toggled)
         min_n_row.addSpacing(16)
         min_n_row.addWidget(self._cb_oor)
@@ -2771,9 +2763,6 @@ class MainWindow(QMainWindow):
         self._cb_prefer_duplex.setToolTip(self._t('setup_prefer_duplex_tip'))
         self._cb_prefer_duplex.setChecked(
             bool(getattr(self._cfg, 'output_prefer_duplex', False)))
-        self._cb_prefer_duplex.setStyleSheet(
-            'QCheckBox{color:#bbb;font-size:12px;padding:2px 4px;}'
-            'QCheckBox::indicator{width:14px;height:14px;}')
         self._cb_prefer_duplex.toggled.connect(self._on_prefer_duplex_toggled)
         og.addRow('', self._cb_prefer_duplex)
         outer.addWidget(out_grp)

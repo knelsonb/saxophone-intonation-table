@@ -389,4 +389,7 @@ def build_app_qss(p: ThemePalette) -> str:
         QPushButton#audioChip:hover{{background:{p.button_hover};}}
         QPushButton#audioChip:pressed{{background:{p.button_pressed};}}
         QPushButton#audioChip QLabel{{background:transparent;color:{p.text_bright};}}
+        /* checkboxes (were per-widget inline #bbb) */
+        QCheckBox{{color:{p.text_dim};font-size:12px;padding:2px 4px;}}
+        QCheckBox::indicator{{width:14px;height:14px;}}
     """
