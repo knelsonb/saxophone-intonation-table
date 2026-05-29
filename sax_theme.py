@@ -273,4 +273,20 @@ def build_app_qss(p: ThemePalette) -> str:
                    border-radius:5px;padding:6px 10px;font-size:12px;}}
         QPushButton#chrome:hover{{background:{p.button_hover};}}
         QPushButton#chrome:pressed{{background:{p.button_pressed};}}
+        /* intonation matrix table — was an inline dark sheet that ignored the
+           theme (its empty viewport stayed black in light mode) */
+        QTableWidget#matrix{{background:{p.base_bg};color:{p.text};
+                   gridline-color:{p.panel_border};font-size:14px;border:none;}}
+        QTableWidget#matrix::item{{padding:5px 8px;}}
+        QTableWidget#matrix::item:alternate{{background:{p.tab_hover_bg};}}
+        QTableWidget#matrix::item:selected{{background:{p.accent_muted};
+                   color:{p.text_bright};}}
+        QTableWidget#matrix QHeaderView::section{{background:{p.alt_bg};
+                   color:{p.text_dim};font-size:12px;padding:6px;border:none;
+                   border-bottom:1px solid {p.input_border};}}
+        /* min-N spinbox (input chrome) + dim 12px labels */
+        QSpinBox#minNspin{{background:{p.base_bg};color:{p.text};
+                   border:1px solid {p.input_border};border-radius:5px;
+                   padding:2px 6px;font-size:12px;}}
+        QLabel#dimLabel{{color:{p.text_dim};font-size:12px;}}
     """
