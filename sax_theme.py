@@ -289,4 +289,15 @@ def build_app_qss(p: ThemePalette) -> str:
                    border:1px solid {p.input_border};border-radius:5px;
                    padding:2px 6px;font-size:12px;}}
         QLabel#dimLabel{{color:{p.text_dim};font-size:12px;}}
+        /* toggle "chip" buttons (drone presets) + stepper tool buttons */
+        QPushButton#chip{{background:{p.base_bg};color:{p.text};
+                   border:1px solid {p.input_border};border-radius:5px;
+                   padding:5px 10px;font-size:12px;}}
+        QPushButton#chip:checked{{background:{p.accent_muted};color:{p.text_bright};
+                   border:1px solid {p.accent};}}
+        QPushButton#chip:hover{{border:1px solid {p.accent};}}
+        QToolButton#stepper{{background:{p.base_bg};color:{p.text};
+                   border:1px solid {p.input_border};border-radius:5px;
+                   padding:2px 9px;font-size:15px;}}
+        QToolButton#stepper:hover{{border:1px solid {p.accent};}}
     """
