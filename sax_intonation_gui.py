@@ -2711,15 +2711,7 @@ class MainWindow(QMainWindow):
         self._table.verticalHeader().setVisible(False)
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._table.setAlternatingRowColors(True)
-        self._table.setStyleSheet("""
-            QTableWidget{background:#1a1a24;color:#ddd;gridline-color:#333;
-                         font-size:14px;border:none;}
-            QTableWidget::item{padding:5px 8px;}
-            QTableWidget::item:alternate{background:#1f1f2e;}
-            QTableWidget::item:selected{background:#2d4a7a;color:#fff;}
-            QHeaderView::section{background:#252535;color:#aaa;font-size:12px;
-                                  padding:6px;border:none;border-bottom:1px solid #444;}
-        """)
+        self._table.setObjectName('matrix')   # themed via QTableWidget#matrix
         rl.addWidget(self._table)
         self._bar_delegate = CentBarDelegate(
             self._table, sample_rate_getter=self._engine_sample_rate)
@@ -2734,15 +2726,13 @@ class MainWindow(QMainWindow):
         min_n_row = QHBoxLayout()
         min_n_row.setContentsMargins(0, 6, 0, 0)
         self._min_n_lbl = QLabel(self._t('min_n_label'))
-        self._min_n_lbl.setStyleSheet('color:#aaa;font-size:12px;')
+        self._min_n_lbl.setObjectName('dimLabel')      # themed via QLabel#dimLabel
         self._min_n_spin = QSpinBox()
         self._min_n_spin.setRange(0, 999)
         self._min_n_spin.setValue(int(getattr(self._cfg, 'min_n_visible', 5)))
         self._min_n_spin.setToolTip(self._t('min_n_tip'))
         self._min_n_spin.setMinimumWidth(70)
-        self._min_n_spin.setStyleSheet(
-            'QSpinBox{background:#1e1e2e;color:#ddd;border:1px solid #444;'
-            'border-radius:5px;padding:2px 6px;font-size:12px;}')
+        self._min_n_spin.setObjectName('minNspin')     # themed via QSpinBox#minNspin
         self._min_n_spin.valueChanged.connect(self._on_min_n_changed)
         min_n_row.addWidget(self._min_n_lbl)
         min_n_row.addWidget(self._min_n_spin)
