@@ -327,6 +327,26 @@ def test_playback_source_resamples_when_rates_differ():
     assert src.finished is True, "2 capture samples/output -> 1000-sample take done in one block"
 
 
+@pytest.mark.parametrize("cap,out_sr", [
+    (48000, 44100), (44100, 48000), (96000, 44100), (44100, 96000),
+], ids=["48->44.1k", "44.1->48k", "96->44.1k", "44.1->96k"])
+def test_playback_resample_preserves_pitch(cap, out_sr):
+    """The PURPOSE of the resample: a take captured at one rate and played
+    through a DIFFERENT output rate must keep its pitch, not pitch-shift by the
+    rate ratio. The naive no-resample bug would be 440*cap/out_sr -> +-147 to
+    +-1347 cents on these pairs; the linear interp is pitch-exact (sub-cent).
+    Complements test_playback_source_resamples_when_rates_differ (which only
+    pins bounded+finishes, leaving impl freedom) with the pitch contract."""
+    import sim_harness as H
+    F = 440.0
+    take = H.sine(F, cap, cap, amp=0.6)                       # 1 s of 440 Hz @ cap
+    src = sax_deck.DeckPlaybackSource(take, cap, out_sr, 2048, gain=1.0)
+    buf = H.render_stream(src, out_sr // 2, block=2048, warmup=2)  # 0.5 s, within take
+    err = H.cents(H.fft_peak_hz(buf, out_sr), F)
+    assert abs(err) < 5.0, (
+        f"resample {cap}->{out_sr} shifted pitch {err:+.2f} cents (rate-ratio bug?)")
+
+
 def test_playback_source_render_is_non_scaling_alloc():
     """The resample path preallocates all scratch in __init__; a render must
     add NO per-frame allocation. Non-scaling gate (frames-delta), same shape
