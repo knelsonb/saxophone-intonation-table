@@ -154,6 +154,27 @@ def main() -> int:
             win._filter_combo.setCurrentIndex(_ri)
         app.processEvents()
 
+    # SETUP parity: horn nickname editor mirrors the toolbar nickname field
+    # (both edit cfg.last_nickname; the toolbar field stays canonical). The
+    # editingFinished signal can't be driven headless, so call the REAL
+    # handlers after setText and confirm the mirror both directions.
+    check(hasattr(win, "_setup_nick_edit"), "SETUP nickname editor missing")
+    if hasattr(win, "_setup_nick_edit"):
+        win._setup_nick_edit.setText("Tenor SmokeTest")
+        win._on_setup_nickname_changed()
+        app.processEvents()
+        check(win._nick_edit.text() == "Tenor SmokeTest",
+              "SETUP nickname did not mirror into the toolbar field")
+        win._nick_edit.setText("Alto SmokeTest")
+        win._on_nickname_changed()
+        app.processEvents()
+        check(win._setup_nick_edit.text() == "Alto SmokeTest",
+              "toolbar nickname did not mirror into the SETUP field")
+        # Blank both so save-on-close can't persist a smoke value.
+        win._setup_nick_edit.setText("")
+        win._on_setup_nickname_changed()
+        app.processEvents()
+
     # Test tone with no engine mirror (headless): must NOT claim to be playing.
     # The button reverts to unchecked and surfaces a failure status (N2).
     win._btn_test_tone.setChecked(True)
