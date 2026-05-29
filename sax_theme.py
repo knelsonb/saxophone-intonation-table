@@ -308,4 +308,12 @@ def build_app_qss(p: ThemePalette) -> str:
                    color:{p.text_bright};border:none;border-radius:4px;
                    padding:5px 12px;font-size:12px;}}
         QWidget#audioBanner QPushButton:hover{{background:{p.button_hover};}}
+        /* metro readout + larger steppers + reusable error-status label */
+        QLabel#bpmReadout{{color:{p.accent};font-size:64px;font-weight:bold;}}
+        QLabel#bpmUnit{{color:{p.text_dim};font-size:14px;letter-spacing:3px;}}
+        QLabel#errorLabel{{color:{p.bad};font-size:12px;}}
+        QToolButton#stepperLg{{background:{p.base_bg};color:{p.text};
+                   border:1px solid {p.input_border};border-radius:5px;
+                   padding:4px 12px;font-size:18px;min-width:30px;}}
+        QToolButton#stepperLg:hover{{border:1px solid {p.accent};}}
     """

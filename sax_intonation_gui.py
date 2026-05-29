@@ -3386,12 +3386,11 @@ class MainWindow(QMainWindow):
         # Big BPM readout.
         self._metro_bpm_lbl = QLabel(str(self._metro_bpm))
         self._metro_bpm_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._metro_bpm_lbl.setStyleSheet(
-            'color:#6699cc;font-size:64px;font-weight:bold;')
+        self._metro_bpm_lbl.setObjectName('bpmReadout')   # themed accent number
         outer.addWidget(self._metro_bpm_lbl)
         unit = QLabel(self._t('metro_bpm'))
         unit.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        unit.setStyleSheet('color:#888;font-size:14px;letter-spacing:3px;')
+        unit.setObjectName('bpmUnit')
         outer.addWidget(unit)
 
         # BPM controls: −  [slider 30..300]  +   |  Tap.
@@ -3406,10 +3405,7 @@ class MainWindow(QMainWindow):
         btn_up.clicked.connect(lambda: self._metro_nudge(1))
         for b in (btn_down, btn_up):
             b.setCursor(Qt.CursorShape.PointingHandCursor)
-            b.setStyleSheet(
-                'QToolButton{background:#1e1e2e;color:#ddd;border:1px solid '
-                '#444;border-radius:5px;padding:4px 12px;font-size:18px;'
-                'min-width:30px;}QToolButton:hover{border:1px solid #6699cc;}')
+            b.setObjectName('stepperLg')   # themed via QToolButton#stepperLg
         self._metro_slider = QSlider(Qt.Orientation.Horizontal)
         self._metro_slider.setAccessibleName(self._t('metro_bpm'))
         self._metro_slider.setRange(self.METRO_BPM_MIN, self.METRO_BPM_MAX)
@@ -3419,10 +3415,7 @@ class MainWindow(QMainWindow):
         self._btn_metro_tap.setToolTip(self._t('metro_tap_tip'))
         self._btn_metro_tap.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_metro_tap.clicked.connect(self._on_metro_tap)
-        self._btn_metro_tap.setStyleSheet(
-            'QPushButton{background:#34495e;color:#eee;border:none;'
-            'border-radius:5px;padding:6px 16px;font-size:13px;}'
-            'QPushButton:hover{background:#3d566e;}')
+        self._btn_metro_tap.setObjectName('chrome')   # themed via QPushButton#chrome
         bpm_row.addWidget(btn_down)
         bpm_row.addWidget(self._metro_slider, 1)
         bpm_row.addWidget(btn_up)
@@ -3441,11 +3434,7 @@ class MainWindow(QMainWindow):
             b.setChecked(ts == self._metro_time_sig)
             b.setCursor(Qt.CursorShape.PointingHandCursor)
             b.clicked.connect(lambda _checked, t=ts: self._on_metro_timesig(t))
-            b.setStyleSheet(
-                'QPushButton{background:#1e1e2e;color:#ccc;border:1px solid '
-                '#444;border-radius:5px;padding:6px 14px;font-size:14px;}'
-                'QPushButton:checked{background:#2d4a7a;color:#fff;border:1px '
-                'solid #6699cc;}QPushButton:hover{border:1px solid #6699cc;}')
+            b.setObjectName('chip')   # themed via QPushButton#chip
             self._metro_ts_btns[ts] = b
             ts_l.addWidget(b)
         outer.addWidget(ts_grp)
@@ -3460,8 +3449,8 @@ class MainWindow(QMainWindow):
         self._metro_vol_slider.setValue(max(0, min(100, vol0)))
         self._metro_vol_slider.valueChanged.connect(self._on_metro_volume)
         self._metro_vol_lbl = QLabel(f'{self._metro_vol_slider.value()}%')
-        self._metro_vol_lbl.setStyleSheet(
-            'color:#aaa;font-size:12px;min-width:44px;')
+        self._metro_vol_lbl.setObjectName('dimLabel')
+        self._metro_vol_lbl.setMinimumWidth(44)
         vol_l.addWidget(self._metro_vol_slider, 1)
         vol_l.addWidget(self._metro_vol_lbl)
         outer.addWidget(vol_grp)
@@ -3483,8 +3472,7 @@ class MainWindow(QMainWindow):
         self._metro_status = QLabel('')
         self._metro_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._metro_status.setWordWrap(True)
-        self._metro_status.setStyleSheet(
-            'color:#c0392b;font-size:12px;padding-top:4px;')
+        self._metro_status.setObjectName('errorLabel')   # themed via QLabel#errorLabel
         self._metro_status.setVisible(False)
         outer.addWidget(self._metro_status)
         outer.addStretch()
