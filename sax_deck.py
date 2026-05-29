@@ -146,6 +146,9 @@ def read_wav(path: str) -> Tuple[np.ndarray, int]:
 # ---------------------------------------------------------------------------
 # DeckPlaybackSource — a MixerSource that replays a captured take.
 # ---------------------------------------------------------------------------
+EDGE_FADE_MS = 5.0  # play-start/end ramp length — click-free deck playback.
+
+
 class DeckPlaybackSource:
     """Plays a captured mono take back through the mixer, once.
 
@@ -193,6 +196,15 @@ class DeckPlaybackSource:
         self._pos = 0.0          # absolute fractional read position, in take samples (f64)
         self._finished = (self._n == 0)
 
+        # Click-free edge fade (BACKLOG-DECK-FADE -> click-free): ramp the first
+        # and last EDGE_FADE_MS of the take from / to silence so play-start and
+        # play-end don't hard-edge into a click. Length is in TAKE samples,
+        # clamped so the two ramps never overlap (a very short take just fades
+        # the whole thing). The exported WAV writes the RAW take, so export
+        # stays bit-faithful — only live mixer playback is ramped.
+        self._fade = min(int(round(EDGE_FADE_MS / 1000.0 * self.capture_samplerate)),
+                         self._n // 2)
+
         # Fast-path scratch: one work buffer for (segment * gain).
         self._work = np.zeros(self._max_block, dtype=np.float32)
         # Resample scratch — allocated only when needed.
@@ -217,6 +229,19 @@ class DeckPlaybackSource:
         thread by :meth:`DeckController.pump` to retire the source."""
         return self._finished
 
+    def _fade_block(self, work: np.ndarray, positions: np.ndarray) -> None:
+        """Multiply ``work`` (one f32 block) by the linear edge-fade envelope for
+        the given absolute take ``positions`` (f64): gain ramps 0->1 over the
+        first ``_fade`` take-samples and 1->0 over the last ``_fade``. Called
+        ONLY on blocks that touch a fade zone, so the steady-state body path
+        does no allocation (the non-scaling-alloc gate stays green)."""
+        F = float(self._fade)
+        rise = (positions + 1.0) / F
+        fall = (self._n - 1.0 - positions) / F
+        g = np.minimum(rise, fall)
+        np.clip(g, 0.0, 1.0, out=g)
+        work *= g.astype(np.float32)
+
     def render(self, out: np.ndarray, frames: int, t0: int) -> None:
         if self._finished or frames <= 0:
             return
@@ -237,6 +262,11 @@ class DeckPlaybackSource:
             n = self._max_block
         work = self._work[:n]
         np.multiply(self._take[pos_i:pos_i + n], self._gain32, out=work)
+        # Edge-fade only when this block touches the first/last _fade samples;
+        # body blocks skip it entirely (no alloc).
+        if self._fade and (pos_i < self._fade
+                           or pos_i + n - 1 > self._n - 1 - self._fade):
+            self._fade_block(work, np.arange(pos_i, pos_i + n, dtype=np.float64))
         tgt = out if (out.ndim == 1 and out.shape[0] == n) else out[:n]
         tgt += work
         self._pos = float(pos_i + n)
@@ -287,6 +317,11 @@ class DeckPlaybackSource:
         work *= frac
         work += g0
         work *= self._gain32
+        # Edge-fade (pos_buf already holds this block's absolute take positions);
+        # skip on body blocks so the resample hot path stays allocation-free.
+        if self._fade and (pos_buf[0] < self._fade
+                           or pos_buf[n - 1] > self._n - 1 - self._fade):
+            self._fade_block(work, pos_buf)
         tgt = out if (out.ndim == 1 and out.shape[0] == n) else out[:n]
         tgt += work
 

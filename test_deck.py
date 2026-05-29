@@ -288,13 +288,28 @@ def test_playback_source_active_midi_is_none():
     assert src.active_midi is None
 
 
-def test_playback_source_direct_path_reproduces_take():
-    """Matched capture/output rate -> a faithful additive copy (gain 1.0)."""
-    take = np.linspace(-0.9, 0.9, 256).astype(np.float32)
-    src = sax_deck.DeckPlaybackSource(take, 48000, 48000, 2048)
-    out = np.zeros(256, dtype=np.float32)
-    src.render(out, 256, 0)
-    assert np.allclose(out, take, atol=1e-6), "matched-rate playback is a faithful copy"
+def test_playback_source_direct_path_body_is_faithful_with_edge_fades():
+    """Matched capture/output rate -> the BODY is a faithful additive copy; only
+    the first/last EDGE_FADE_MS are ramped from/to silence (BACKLOG-DECK-FADE ->
+    click-free playback). The exported WAV is unaffected (it writes the raw
+    take) — this fade is live-playback only."""
+    sr = 48000
+    n = 4096
+    # cos so the edges are NON-zero (cos(0)=1): proves the fade actually
+    # attenuates them, not that the signal was already ~0 there.
+    take = (np.cos(2 * np.pi * np.arange(n) / 64.0) * 0.7).astype(np.float32)
+    src = sax_deck.DeckPlaybackSource(take, sr, sr, 8192)
+    out = np.zeros(n, dtype=np.float32)
+    src.render(out, n, 0)
+    fade = int(round(sax_deck.EDGE_FADE_MS / 1000.0 * sr))  # 240 samples
+    # Body (between the two ramps) is a bit-faithful copy.
+    assert np.allclose(out[fade:n - fade], take[fade:n - fade], atol=1e-6), \
+        "playback body is a faithful copy"
+    # Edges ramp from / to ~silence (click-free): far below the 0.7 source edge.
+    assert abs(out[0]) < 0.05 < abs(take[0]), "fade-in starts near zero"
+    assert abs(out[-1]) < 0.05, "fade-out ends near zero"
+    # The fade only attenuates — never amplifies past the source peak.
+    assert np.max(np.abs(out)) <= np.max(np.abs(take)) + 1e-6, "fade never amplifies"
 
 
 def test_playback_source_renders_audio_then_finishes():
