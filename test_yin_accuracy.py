@@ -104,3 +104,34 @@ def test_no_systematic_sharp_bias() -> None:
     mean_err = sum(errs) / len(errs)
     assert abs(mean_err) < 0.7, (
         f'mean signed error {mean_err:+.2f} ct across the range — systematic bias')
+
+
+# ---------------------------------------------------------------------------
+# C8 (MIDI 108) reachability — the table's top note must not be silently
+# dropped by the post-YIN freq gate where the MIDI-range gate accepts it.
+# Before the v0.6.x fix MAX_FREQ=4200 cleared C8 only at A4=440 (4186 Hz);
+# at A4 >= ~441 (or a sharp-played C8) the freq gate rejected it.
+# ---------------------------------------------------------------------------
+def test_max_freq_covers_top_note_at_max_a4() -> None:
+    from sax_audio_engine import MAX_FREQ
+    # C8 + 50 cents (the C8/C#8 rounding boundary) at the top of the allowed
+    # A4 range (450 Hz). The freq gate must clear this so it never pre-rejects
+    # a note the MIDI-range gate (midi_max=108) would accept.
+    c8_plus_50c_at_450 = 450.0 * 2.0 ** ((108.5 - 69) / 12.0)   # ~4409 Hz
+    assert MAX_FREQ >= c8_plus_50c_at_450, (
+        f'MAX_FREQ {MAX_FREQ} < C8+50c@A4=450 ({c8_plus_50c_at_450:.0f} Hz)')
+
+
+@pytest.mark.parametrize('a4', [430.0, 440.0, 445.0, 450.0])
+def test_c8_detected_and_passes_freq_gate(a4: float) -> None:
+    """C8 (MIDI 108) is detected across the whole allowed A4 range AND the
+    detected pitch is below MAX_FREQ (so the engine's freq gate accepts it)."""
+    from sax_audio_engine import MAX_FREQ
+    c8 = a4 * 2.0 ** ((108 - 69) / 12.0)
+    det, _ap = yin_pitch(_sine(c8, 44100, DEFAULT_BLOCK_SIZE), 44100)
+    assert det > 0, f'C8 at A4={a4} not detected'
+    assert det < MAX_FREQ, (
+        f'C8 at A4={a4} -> {det:.1f} Hz >= MAX_FREQ {MAX_FREQ}; freq gate drops it')
+    # Reads as ~C8 within the coarse top-of-range integer-lag limit (~10-sample
+    # period at 44.1 k, so a few cents is expected and acceptable for an extreme).
+    assert abs(_cents(det, c8)) < 15.0, f'C8 at A4={a4} -> {_cents(det, c8):+.1f} ct'
