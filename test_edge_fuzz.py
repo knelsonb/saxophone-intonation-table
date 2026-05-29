@@ -26,7 +26,7 @@ import numpy as np
 import pytest
 
 import sim_harness as H
-from sax_audio_engine import AudioEngine
+from sax_audio_engine import AudioEngine, freq_to_midi
 from sax_mixer import Mixer
 import sax_deck
 from sax_deck import DeckController, DeckState, write_wav
@@ -119,3 +119,30 @@ def test_engine_recovers_after_nonfinite_frames():
 def test_engine_tolerates_degenerate_block_sizes(frames):
     """A zero-length or single-sample callback buffer must not crash the tap."""
     _fresh_engine().feed_input_frames(frames)
+
+
+# ---------------------------------------------------------------------------
+# 3. Engine setter bad-input guards (ADVERSARIAL-SWEEP wave 3).
+# ---------------------------------------------------------------------------
+def test_set_a4_rejects_nonpositive_and_nonfinite():
+    """set_a4 must ignore a4 <= 0 / non-finite: a 0 Hz reference would make
+    freq_to_midi's log2(f/a4) divide by zero on the detection hot path."""
+    eng = _fresh_engine()                       # helper sets a4 = 440.0
+    for bad in (0.0, -5.0, float("inf"), float("nan")):
+        eng.set_a4(bad)
+        assert eng.a4 == 440.0, f"set_a4({bad}) must be ignored; a4 became {eng.a4}"
+    assert np.isfinite(freq_to_midi(440.0, eng.a4)), "guarded a4 keeps freq_to_midi finite"
+    eng.set_a4(442.0)                           # a valid change still applies
+    assert eng.a4 == 442.0
+
+
+def test_start_input_recording_rejects_overflowing_max_seconds():
+    """A finite-but-huge max_seconds overflows secs*sr (int(inf)); the tap must
+    return False per its contract, not raise OverflowError."""
+    eng = _fresh_engine()
+    eng.samplerate = 48000
+    eng._stream = object()                       # bypass the no-stream guard to reach the cap calc
+    try:
+        assert eng.start_input_recording(1e308) is False
+    finally:
+        eng._stream = None

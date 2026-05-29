@@ -632,8 +632,18 @@ class AudioEngine:
             self._reset_filter_state()
 
     def set_a4(self, hz: float) -> None:
+        """Set the A4 tuning reference (Hz). Ignores non-finite or non-positive
+        input: a tuner reference must be a positive frequency, and a4 <= 0 would
+        make freq_to_midi()'s log2(f/a4) divide by zero on the detection hot
+        path. (Mirrors the isfinite guards on set_mic_gain / input recording.)"""
+        try:
+            hz = float(hz)
+        except (TypeError, ValueError):
+            return
+        if not math.isfinite(hz) or hz <= 0.0:
+            return
         with self._lock:
-            self.a4 = float(hz)
+            self.a4 = hz
 
     def set_mic_gain(self, linear: float) -> None:
         """Set the mic input gain (linear multiplier). Applied to the
@@ -930,8 +940,15 @@ class AudioEngine:
             sr = int(self.samplerate)
         # Allocate OUTSIDE the lock — a multi-MB np.zeros must not stall the
         # audio callback. Arm (pointer swap + flags) under the lock briefly.
-        cap = max(1, int(secs * sr))
-        sink = np.zeros(cap, dtype=np.float32)
+        # secs is finite + positive (guarded above), but a finite-yet-huge value
+        # can overflow secs*sr to inf (int(inf) -> OverflowError) or demand an
+        # impossible buffer — reject rather than crash, per the documented
+        # "returns False on bad max_seconds" contract.
+        try:
+            cap = max(1, int(secs * sr))
+            sink = np.zeros(cap, dtype=np.float32)
+        except (OverflowError, ValueError, MemoryError):
+            return False
         with self._lock:
             if self._stream is None:
                 return False  # torn down during the allocation
