@@ -158,6 +158,16 @@ BLOCK_MS      = _BLOCK_MS_EXT
 _FILTER_PRESETS = _FILTER_PRESETS_EXT
 FILTER_MODE_DEFAULT = _FILTER_MODE_DEFAULT_EXT
 SAMPLERATE_PREF_VALUES = _SAMPLERATE_PREF_VALUES_EXT
+
+# Mic-gain SETUP control: the offered dB steps + the dB→linear conversion the
+# engine expects. Module-level so the combo, the startup sync, and any test all
+# agree on one source.
+MIC_GAIN_DB_STEPS = (-12, -6, 0, 6, 12, 18, 24)
+
+
+def _db_to_linear(db: float) -> float:
+    """dB gain → linear multiplier (0 dB → 1.0)."""
+    return 10.0 ** (float(db) / 20.0)
 SAMPLERATE_CANDIDATES = _SAMPLERATE_CANDIDATES_EXT
 
 # v0.5.6: frequency-adaptive cent display precision.
@@ -2255,7 +2265,7 @@ class MainWindow(QMainWindow):
         self._engine.set_filter_mode(
             getattr(self._cfg, 'filter_mode', FILTER_MODE_DEFAULT))
         self._engine.set_mic_gain(
-            10.0 ** (float(getattr(self._cfg, 'mic_gain_db', 0.0)) / 20.0))
+            _db_to_linear(getattr(self._cfg, 'mic_gain_db', 0.0)))
         self._engine.set_prefer_wdmks(
             bool(getattr(self._cfg, 'prefer_wdmks', False)))
         # Persistence comes from config (welcome dialog), with the env var
@@ -2324,7 +2334,7 @@ class MainWindow(QMainWindow):
             get_instrument_key=lambda: self.instrument,
             get_stats=lambda: self.stats,
             get_display_mode=lambda: self.display,
-            get_a4=lambda: float(self._a4_combo.currentText()),
+            get_a4=lambda: float(self._a4_combo.currentData()),
         )
         # Phase-5 extraction: family/instrument selection, nickname editing,
         # per-instrument range editor, custom-instrument registration, and
@@ -3011,7 +3021,7 @@ class MainWindow(QMainWindow):
         self._setup_mic_gain_combo.setMinimumWidth(160)
         self._setup_mic_gain_combo.setAccessibleName(self._t('setup_mic_gain'))
         self._setup_mic_gain_combo.setToolTip(self._t('setup_mic_gain_tip'))
-        for _db in (-12, -6, 0, 6, 12, 18, 24):
+        for _db in MIC_GAIN_DB_STEPS:
             self._setup_mic_gain_combo.addItem(
                 '0 dB' if _db == 0 else f'{_db:+d} dB', _db)
         # Snap the display to the nearest offered step (the engine already uses

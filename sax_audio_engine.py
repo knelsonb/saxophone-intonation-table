@@ -478,6 +478,9 @@ class AudioEngine:
         # decision + the level meter in the input callback — never the signal
         # buffer — so pitch detection stays scale-invariant and the deck tap
         # records the raw mic. Set from cfg.mic_gain_db via set_mic_gain().
+        # Read UNLOCKED on the audio thread: a bare-float store is GIL-atomic
+        # (like last_rms_db), so the worst case is a one-block-stale gain — no
+        # need to pay a lock acquire on the hot path for a single scalar.
         self.mic_gain: float = 1.0
 
         # Diagnostic scalars. Read snapshot via get_diagnostics().
