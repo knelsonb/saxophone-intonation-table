@@ -358,6 +358,9 @@ STRINGS = {
                                   'auf die Stille-Erkennung und die Pegelanzeige '
                                   '— die Cent-Anzeige bleibt unverändert. '
                                   '0 dB = aus.',
+        'setup_mic_gain_off':     'Kein Boost — Mikrofon auf natürlichem Pegel.',
+        'setup_mic_gain_boost':   '+{db} dB — leises Spiel wird leichter erkannt.',
+        'setup_mic_gain_cut':     '{db} dB — unterdrückt mehr Hintergrundgeräusche.',
         'setup_appearance_group': 'Darstellung',
         'setup_theme':            'Farbschema',
         'theme_dark':             'Dunkel',
@@ -707,6 +710,9 @@ STRINGS = {
                                   'detection floor. Affects only the silence '
                                   'gate and the level meter — the cents readout '
                                   'is unchanged. 0 dB = off.',
+        'setup_mic_gain_off':     'No boost — mic at its natural level.',
+        'setup_mic_gain_boost':   '+{db} dB — quiet playing registers more easily.',
+        'setup_mic_gain_cut':     '{db} dB — rejects more background noise.',
         'setup_appearance_group': 'Appearance',
         'setup_theme':            'Theme',
         'theme_dark':             'Dark',
