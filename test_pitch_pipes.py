@@ -122,3 +122,21 @@ def test_pipes_produce_audio_through_mixer():
     out = np.zeros(4096, dtype=np.float32)
     m.render(out, 4096)
     assert float(np.max(np.abs(out))) > 1e-3, "a sounding pipe must produce audio"
+
+
+@pytest.mark.parametrize("midi", [60, 64, 67, 69, 72, 79, 84])
+def test_pitch_pipe_rendered_pitch_is_accurate(midi):
+    """A pitch pipe is a TUNING REFERENCE, so its rendered AUDIO must sound at
+    the exact target frequency — not just the freq math (covered above), but the
+    actual sample stream after the attack envelope. Measured via FFT-peak; the
+    residual is FFT-bin resolution at a 16384 window (the underlying sine is
+    exact at midi_to_freq), so the bound is generous but still catches a real
+    pitch defect (phase-accumulation drift, an envelope-induced shift)."""
+    import sim_harness as H
+    sr = 48000
+    src = pp.PitchPipeSource(midi, sr, 2048, a4=440.0)
+    buf = H.render_stream(src, 16384, block=2048, warmup=6)   # past the 8 ms attack
+    target = pp.midi_to_freq(midi, 440.0)
+    err = H.cents(H.fft_peak_hz(buf, sr), target)
+    assert abs(err) < 2.0, (
+        f"pitch pipe midi {midi} rendered {err:+.2f} cents off {target:.2f} Hz")
