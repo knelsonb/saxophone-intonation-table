@@ -4049,7 +4049,8 @@ class MainWindow(QMainWindow):
         from PyQt6.QtWidgets import QGridLayout
         dlg = QDialog(self)
         dlg.setWindowTitle(self._t('pipes_title'))
-        dlg.setStyleSheet('QDialog{background:#12121a;}')
+        # bg inherits the global QWidget/window_bg rule (themed); pads + tip +
+        # status carry their own themed objectName rules.
         v = QVBoxLayout(dlg)
         tip = QLabel(self._t('pipes_tip'))
         tip.setWordWrap(True)
@@ -4065,12 +4066,7 @@ class MainWindow(QMainWindow):
             b.setCheckable(True)
             b.setCursor(Qt.CursorShape.PointingHandCursor)
             b.clicked.connect(lambda _c, m=midi: self._on_pipe_tapped(m))
-            b.setStyleSheet(
-                'QPushButton{background:#1e1e2e;color:#ddd;border:1px solid '
-                '#444;border-radius:6px;padding:14px;font-size:15px;'
-                'font-weight:bold;}QPushButton:checked{background:#2d4a7a;'
-                'color:#fff;border:1px solid #6699cc;}'
-                'QPushButton:hover{border:1px solid #6699cc;}')
+            b.setObjectName('padChip')   # themed via QPushButton#padChip
             self._pipe_btns[midi] = b
             grid.addWidget(b, i // 4, i % 4)
         v.addLayout(grid)
@@ -4756,16 +4752,7 @@ class MainWindow(QMainWindow):
         dlg.setProperty('_lang_title_key', 'welcome_title')
         dlg.setWindowTitle(self._t('welcome_title'))
         dlg.setMinimumWidth(480)
-        dlg.setStyleSheet("""
-            QDialog { background: #1a1a2e; color: #ddd; }
-            QLabel  { color: #ccc; font-size: 13px; }
-            QCheckBox { color: #ddd; font-size: 13px; padding: 6px 0; }
-            QPushButton {
-                background: #2c5282; color: white; border: none;
-                border-radius: 5px; padding: 8px 18px; font-size: 13px;
-            }
-            QPushButton:hover  { background: #3a6da8; }
-        """)
+        dlg.setObjectName('welcomeDlg')   # themed via QDialog#welcomeDlg
         layout = QVBoxLayout(dlg)
         layout.setSpacing(14)
         layout.setContentsMargins(24, 14, 24, 18)
@@ -4981,13 +4968,7 @@ class MainWindow(QMainWindow):
         midi_gr  = midi_kl - transp
         note_str = f"{midi_note_name(midi_gr)} / {midi_note_name(midi_kl)}"
 
-        menu = QMenu(self)
-        menu.setStyleSheet("""
-            QMenu { background:#1e1e2e; color:#ddd; border:1px solid #444;
-                    font-size:13px; padding:4px; }
-            QMenu::item { padding:6px 20px; border-radius:4px; }
-            QMenu::item:selected { background:#c03030; color:white; }
-        """)
+        menu = QMenu(self)   # themed via the global QMenu rule in build_app_qss
         action = menu.addAction(f"\U0001f5d1  {self._t('ctx_discard')}")
         action.setData(midi_kl)
 

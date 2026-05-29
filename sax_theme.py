@@ -392,4 +392,21 @@ def build_app_qss(p: ThemePalette) -> str:
         /* checkboxes (were per-widget inline #bbb) */
         QCheckBox{{color:{p.text_dim};font-size:12px;padding:2px 4px;}}
         QCheckBox::indicator{{width:14px;height:14px;}}
+        /* pitch-pipe pads — the chip toggle at pad size */
+        QPushButton#padChip{{background:{p.base_bg};color:{p.text};
+                   border:1px solid {p.input_border};border-radius:6px;
+                   padding:14px;font-size:15px;font-weight:bold;}}
+        QPushButton#padChip:checked{{background:{p.accent_muted};
+                   color:{p.text_bright};border:1px solid {p.accent};}}
+        QPushButton#padChip:hover{{border:1px solid {p.accent};}}
+        /* first-launch welcome dialog (primary accent buttons) */
+        QDialog#welcomeDlg{{background:{p.window_bg};color:{p.text};}}
+        QDialog#welcomeDlg QLabel{{color:{p.text};font-size:13px;}}
+        QDialog#welcomeDlg QPushButton{{background:{p.accent};color:#ffffff;
+                   border:none;border-radius:5px;padding:8px 18px;font-size:13px;}}
+        QDialog#welcomeDlg QPushButton:hover{{background:{p.accent_muted};}}
+        /* table context menu (destructive "discard" → bad-red selected item) */
+        QMenu{{background:{p.base_bg};color:{p.text};border:1px solid {p.input_border};}}
+        QMenu::item{{padding:6px 20px;border-radius:4px;}}
+        QMenu::item:selected{{background:{p.bad};color:#ffffff;}}
     """
