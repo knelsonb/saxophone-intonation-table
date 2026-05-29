@@ -1,16 +1,23 @@
 """Simulation + validation harness for the saxophone-intonation app.
 
-Hardware-free tooling to SIMULATE audio (synthesise signals, render any
-MixerSource / controller offscreen) and VALIDATE behaviour:
+Hardware-free tooling to SIMULATE both audio paths and VALIDATE behaviour:
+
+  INPUT  (mic -> detection): feed_engine / detect_tone drive the engine's REAL
+         hot path (silence gate -> YIN -> confirm/lock -> emit) with synthetic
+         mic signals and capture the CONFIRMED notes — the input twin of the
+         output renderers below.
+  OUTPUT (sources -> speaker): render_source / render_stream / render_mixer
+         pull MixerSources and the real Mixer offscreen (summing, duck, reap).
 
   * pitch accuracy   — FFT-peak AND YIN, with cents error vs a target
+  * detection        — full engine pipeline: gated? locked? emitted note + cents
   * transients       — boundary discontinuities (clicks/pops), fade-in/out
   * allocation       — tracemalloc a hot-path callable (steady-state bytes)
   * drift            — per-block continuity of a rendered stream
 
 Pure numpy + the app's own modules (NO Qt, NO sounddevice), so it imports and
 runs under system python and the test venv alike. Used by the test_* accuracy
-/ transient / alloc nets and for ad-hoc validation during the reliability pass.
+/ transient / alloc / sim nets and for ad-hoc validation during reliability work.
 
 Design note — FFT/parabolic peak interpolation uses the vertex formula
   offset = 0.5*(a-c)/(a - 2b + c)
@@ -92,6 +99,23 @@ def render_stream(source, total: int, block: int = 2048,
         if i >= warmup:
             out.append(buf.copy())
     return np.concatenate(out)[:total] if out else np.zeros(0, dtype=np.float32)
+
+
+def render_mixer(mixer, total: int, block: int = 2048) -> np.ndarray:
+    """Render `total` samples from a real ``Mixer`` through its ACTUAL output
+    path — every registered source summed, ducked, and auto-reaped exactly as
+    the output stream pulls it. Sources must be ``register()``-ed beforehand.
+    Returns the concatenated mono output (the true thing a speaker would get),
+    so output checks cover mixing/reap, not just one source in isolation."""
+    out = []
+    remaining = int(total)
+    while remaining > 0:
+        nb = min(block, remaining)
+        buf = np.zeros(nb, dtype=np.float32)
+        mixer.render(buf, nb)
+        out.append(buf.copy())
+        remaining -= nb
+    return np.concatenate(out) if out else np.zeros(0, dtype=np.float32)
 
 
 # ---------------------------------------------------------------------------
@@ -201,11 +225,128 @@ def alloc_bytes(fn, *args, iterations: int = 200, warmup: int = 5,
     return max(0.0, total / float(iterations))
 
 
+# ---------------------------------------------------------------------------
+# Engine INPUT-path simulation — the FULL detection pipeline, device-free.
+#
+# yin_hz() above tests the bare pitch function; this drives the real engine
+# hot path (AudioEngine.feed_input_frames -> silence gate -> YIN -> confirm /
+# lock / median -> emit), capturing the CONFIRMED notes the live app would
+# show. No PortAudio, no Qt: we synthesize the mic and inject our own note
+# sink. This is the input twin of render_mixer()'s output simulation.
+# ---------------------------------------------------------------------------
+class _Emit:
+    """Records one signal's .emit(...) payloads into a shared list."""
+    def __init__(self, store: list) -> None:
+        self._store = store
+
+    def emit(self, midi, freq, cents) -> None:
+        self._store.append((int(midi), float(freq), float(cents)))
+
+
+class _NoteSink:
+    """Stand-in for the engine's Qt ``signals`` object. The engine emits a
+    confirmed note via ``signals.note_detected.emit(midi, freq, cents)``;
+    recording it lets a headless sim capture the engine's REAL output (the
+    post-confirm/median note), not just the raw per-hop YIN estimate."""
+    def __init__(self) -> None:
+        self.notes: list[tuple[int, float, float]] = []
+        self.note_detected = _Emit(self.notes)
+
+
+class DetectionResult:
+    """Outcome of feeding a signal through the engine detection pipeline."""
+    def __init__(self, engine, notes, target_hz=None) -> None:
+        self.notes = list(notes)                  # [(midi, freq, cents), ...]
+        self.last_freq = float(engine.last_freq)  # raw last-hop YIN estimate
+        self.last_rms_db = float(engine.last_rms_db)
+        self.locked_midi = engine.last_locked_midi
+        self.target_hz = target_hz
+
+    @property
+    def emitted(self) -> bool:
+        """True if the pipeline confirmed + emitted at least one note."""
+        return bool(self.notes)
+
+    @property
+    def dominant_midi(self):
+        if not self.notes:
+            return None
+        from collections import Counter
+        return Counter(m for m, _, _ in self.notes).most_common(1)[0][0]
+
+    @property
+    def median_freq(self) -> float:
+        fs = sorted(f for _, f, _ in self.notes)
+        return fs[len(fs) // 2] if fs else 0.0
+
+    @property
+    def median_cents(self) -> float:
+        cs = sorted(c for _, _, c in self.notes)
+        return cs[len(cs) // 2] if cs else float('nan')
+
+    def cents_error(self) -> float:
+        """Cents of the median detected freq vs the target tone (NaN if no
+        target was set or nothing was detected)."""
+        if not self.target_hz or not self.notes:
+            return float('nan')
+        return cents(self.median_freq, self.target_hz)
+
+
+def feed_engine(engine, signal, block: int = DEFAULT_N, capture: bool = True):
+    """Feed a 1-D float32 ``signal`` into the engine's REAL input hot path in
+    ``block``-sized chunks (as PortAudio delivers it), capturing every
+    confirmed note. Returns a DetectionResult. No device, no Qt."""
+    sig = np.asarray(signal, dtype=np.float32)
+    sink = _NoteSink()
+    if capture:
+        engine.signals = sink
+    i, n = 0, sig.shape[0]
+    while i < n:
+        engine.feed_input_frames(sig[i:i + block])
+        i += block
+    return DetectionResult(engine, sink.notes)
+
+
+def detect_tone(freq, *, kind='sax', mode='normal', a4=440.0, mic_gain=1.0,
+                snr_db=None, hops=20, sr=DEFAULT_SR, amp=0.5):
+    """Synthesize a steady tone and run it through a FRESH engine's detection
+    pipeline for ``hops`` block-sized passes — enough for the silence gate to
+    fill, then the confirm/lock machinery to emit. Returns a DetectionResult
+    with ``target_hz`` set, so ``.cents_error()`` is meaningful.
+
+    kind : 'sax' (5-harmonic), 'sine', or 'noisy' (sine + noise at snr_db).
+    mode : engine response preset ('fast' / 'normal' / 'slow').
+    """
+    from sax_audio_engine import AudioEngine
+    eng = AudioEngine()
+    eng.set_filter_mode(mode)
+    eng.set_a4(a4)
+    eng.set_mic_gain(mic_gain)
+    total = DEFAULT_N * max(1, int(hops))
+    if kind == 'sine':
+        sig = sine(freq, sr, total, amp)
+    elif kind == 'noisy' or snr_db is not None:
+        sig = noisy(freq, sr, total,
+                    snr_db=(snr_db if snr_db is not None else 20.0), amp=amp)
+    else:
+        sig = sax_like(freq, sr, total, amp)
+    res = feed_engine(eng, sig, block=DEFAULT_N)
+    res.target_hz = freq
+    return res
+
+
 if __name__ == '__main__':  # quick self-check / demo
     import sax_audio_engine as eng  # noqa
+    print("— bare yin_pitch (single window) —")
     for f in (110.0, 440.0, 880.0, 1760.0):
         buf = sax_like(f)
         fp = fft_peak_hz(buf)
         yf, ap = yin_hz(buf)
         print(f"{f:8.1f} Hz: fft {fp:8.2f} ({cents(fp, f):+.2f}ct)  "
               f"yin {yf:8.2f} ({cents(yf, f):+.2f}ct) ap={ap:.2e}")
+    print("— full engine detection pipeline (feed_input_frames) —")
+    for f in (110.0, 220.0, 440.0, 880.0):
+        r = detect_tone(f, kind='sax')
+        print(f"{f:8.1f} Hz: midi={r.dominant_midi} "
+              f"median={r.median_freq:8.2f} ({r.cents_error():+.2f}ct) "
+              f"emitted={r.emitted}")
