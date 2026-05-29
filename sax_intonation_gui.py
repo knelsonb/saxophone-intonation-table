@@ -2927,6 +2927,22 @@ class MainWindow(QMainWindow):
         instr_grp = QGroupBox(self._t('setup_instrument_group'))
         ig = QVBoxLayout(instr_grp)
         ig.setContentsMargins(12, 10, 12, 10)
+        # Horn nickname — promote the existing config field (cfg.last_nickname,
+        # used by CSV per-nickname slicing) to a first-class SETUP editor.
+        # Mirrors the toolbar _nick_edit; the toolbar field stays canonical (the
+        # controller + session-state read it) and both sync via _apply_nickname.
+        # No inline style — rides the themed QLineEdit QSS (off the #31 tail).
+        nick_row = QHBoxLayout()
+        nick_row.addWidget(QLabel(self._t('grp_nickname')))
+        self._setup_nick_edit = QLineEdit()
+        self._setup_nick_edit.setObjectName('setupNickname')
+        self._setup_nick_edit.setPlaceholderText(self._t('nickname_tip'))
+        self._setup_nick_edit.setAccessibleName(self._t('grp_nickname'))
+        self._setup_nick_edit.setText(getattr(self._cfg, 'last_nickname', '') or '')
+        self._setup_nick_edit.editingFinished.connect(
+            self._on_setup_nickname_changed)
+        nick_row.addWidget(self._setup_nick_edit)
+        ig.addLayout(nick_row)
         self._btn_setup_range = QPushButton(self._t('setup_range_edit'))
         self._btn_setup_range.setObjectName('setupRangeEdit')
         self._btn_setup_range.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -4658,6 +4674,29 @@ class MainWindow(QMainWindow):
         self._refresh_table()
 
     def _on_nickname_changed(self) -> None:
+        """Toolbar nickname edited → mirror into SETUP + stamp the run label."""
+        self._apply_nickname(self._nick_edit.text(), source=self._nick_edit)
+
+    def _on_setup_nickname_changed(self) -> None:
+        """SETUP nickname edited → mirror into the toolbar + stamp the label.
+        Parity with the toolbar horn-nickname field."""
+        self._apply_nickname(self._setup_nick_edit.text(),
+                             source=self._setup_nick_edit)
+
+    def _apply_nickname(self, text, source=None) -> None:
+        """Nickname changed from EITHER the toolbar or the SETUP editor. Mirror
+        the other editor (signals blocked) so both surfaces agree; the toolbar
+        _nick_edit stays canonical — the InstrumentController and session-state
+        read it — so it is updated before stamping. Then stamp the label onto
+        the active run via the controller (a no-op when not recording)."""
+        for edit in (getattr(self, '_nick_edit', None),
+                     getattr(self, '_setup_nick_edit', None)):
+            if edit is None or edit is source:
+                continue
+            if edit.text() != text:
+                edit.blockSignals(True)
+                edit.setText(text)
+                edit.blockSignals(False)
         self._instr_ctrl.on_nickname_changed()
 
     def _on_add_custom(self) -> None:
@@ -5033,6 +5072,14 @@ class MainWindow(QMainWindow):
         so external/internal call sites that reference this name keep
         working without change."""
         self._session_state.restore()
+        # Restore wrote the toolbar widgets from cfg; mirror the values into
+        # their SETUP parity twins so both surfaces agree on launch (restore
+        # only knows about the toolbar widgets). Signals blocked — this is a
+        # programmatic sync, not a user edit.
+        if hasattr(self, '_setup_nick_edit') and hasattr(self, '_nick_edit'):
+            self._setup_nick_edit.blockSignals(True)
+            self._setup_nick_edit.setText(self._nick_edit.text())
+            self._setup_nick_edit.blockSignals(False)
 
     def closeEvent(self, ev):
         # v0.5.5: snapshot the full session state to the config file so the
