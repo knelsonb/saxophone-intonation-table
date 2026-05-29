@@ -2950,6 +2950,26 @@ class MainWindow(QMainWindow):
         ig.addWidget(self._btn_setup_range)
         outer.addWidget(instr_grp)
 
+        # Concert pitch (A4) — SETUP parity with the toolbar Kammerton combo.
+        # Both combos drive the engine A4 + the (heavy) measurement recalc via
+        # the shared _apply_a4, mirrored under blockSignals so the re-derive
+        # runs exactly once. Items are language-independent ("NNN Hz"), so no
+        # retranslate. No inline style — themed QSS (off the #31 tail).
+        a4_grp = QGroupBox(self._t('grp_a4'))
+        a4g = QVBoxLayout(a4_grp)
+        a4g.setContentsMargins(12, 10, 12, 10)
+        self._setup_a4_combo = QComboBox()
+        self._setup_a4_combo.setObjectName('setupA4')
+        self._setup_a4_combo.setMinimumWidth(160)
+        self._setup_a4_combo.setAccessibleName(self._t('grp_a4'))
+        for hz in range(430, 451):
+            self._setup_a4_combo.addItem(f'{hz} Hz', hz)
+        self._setup_a4_combo.setCurrentIndex(self._a4_combo.currentIndex())
+        self._setup_a4_combo.currentIndexChanged.connect(
+            self._on_setup_a4_changed)
+        a4g.addWidget(self._setup_a4_combo)
+        outer.addWidget(a4_grp)
+
         # Response — pitch-detection smoothing preset (Fast / Normal / Slow).
         # SETUP parity with the toolbar Response combo: both drive
         # cfg.filter_mode + the engine through _apply_filter_mode and stay
@@ -4514,9 +4534,13 @@ class MainWindow(QMainWindow):
         stats reset + refresh via on_a4_changed), set the index, set the
         engine A4."""
         hz_int = int(hz)
-        self._a4_combo.blockSignals(True)
-        self._a4_combo.setCurrentIndex(hz_int - 430)
-        self._a4_combo.blockSignals(False)
+        for _combo in (getattr(self, '_a4_combo', None),
+                       getattr(self, '_setup_a4_combo', None)):
+            if _combo is None:
+                continue
+            _combo.blockSignals(True)
+            _combo.setCurrentIndex(hz_int - 430)
+            _combo.blockSignals(False)
         self._engine.a4 = float(hz_int)
 
     def _seed_expected_notes(self) -> None:
@@ -4829,12 +4853,34 @@ class MainWindow(QMainWindow):
         self._refresh_table()
 
     def _on_a4_changed(self, idx):
-        """Concert pitch changed. Cents are a function of frequency + A4,
-        so the cents values stored in self.stats are invalidated — but the
-        underlying frequencies are immutable and still live in the log.
-        Re-derive the table by walking the log's measurements at the new
-        A4 instead of throwing away everything the user just recorded."""
-        new_a4 = float(self._a4_combo.itemData(idx))
+        """Toolbar concert-pitch (A4) combo changed → apply + mirror SETUP."""
+        self._apply_a4(float(self._a4_combo.itemData(idx)))
+
+    def _on_setup_a4_changed(self, idx):
+        """SETUP concert-pitch (A4) combo changed → apply + mirror the toolbar.
+        Parity with the toolbar Kammerton selector."""
+        self._apply_a4(float(self._setup_a4_combo.itemData(idx)))
+
+    def _apply_a4(self, new_a4) -> None:
+        """Apply a concert-pitch (A4) change from EITHER the toolbar or the
+        SETUP combo. Mirror BOTH combos to new_a4 with signals blocked so this
+        heavy measurement recalc runs EXACTLY ONCE and is never re-entered by
+        the sibling combo. Cents are a function of frequency + A4, so the cents
+        in self.stats are invalidated — but the underlying frequencies are
+        immutable and still live in the log, so re-derive the table from them
+        instead of discarding what the user recorded."""
+        new_a4 = float(new_a4)
+        hz_int = int(new_a4)
+        for _combo in (getattr(self, '_a4_combo', None),
+                       getattr(self, '_setup_a4_combo', None)):
+            if _combo is None:
+                continue
+            _target = hz_int - 430
+            if (0 <= _target < _combo.count()
+                    and _combo.currentIndex() != _target):
+                _combo.blockSignals(True)
+                _combo.setCurrentIndex(_target)
+                _combo.blockSignals(False)
         # v0.6 Phase-4 (Item 3): A4 change recalibrates midi assignments,
         # so the wrong-instrument counter resets too.
         self._oor_count = 0
@@ -5080,6 +5126,10 @@ class MainWindow(QMainWindow):
             self._setup_nick_edit.blockSignals(True)
             self._setup_nick_edit.setText(self._nick_edit.text())
             self._setup_nick_edit.blockSignals(False)
+        if hasattr(self, '_setup_a4_combo') and hasattr(self, '_a4_combo'):
+            self._setup_a4_combo.blockSignals(True)
+            self._setup_a4_combo.setCurrentIndex(self._a4_combo.currentIndex())
+            self._setup_a4_combo.blockSignals(False)
 
     def closeEvent(self, ev):
         # v0.5.5: snapshot the full session state to the config file so the
