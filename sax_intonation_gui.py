@@ -2546,18 +2546,10 @@ class MainWindow(QMainWindow):
         fl = QHBoxLayout(self._grp_filter)
         fl.setContentsMargins(8, 4, 8, 4)
         self._filter_combo = QComboBox()
-        self._filter_combo.addItem(self._t('filter_fast'),   'fast')
-        self._filter_combo.addItem(self._t('filter_normal'), 'normal')
-        self._filter_combo.addItem(self._t('filter_slow'),   'slow')
-        cur_mode = getattr(self._cfg, 'filter_mode', FILTER_MODE_DEFAULT)
-        for i in range(self._filter_combo.count()):
-            if self._filter_combo.itemData(i) == cur_mode:
-                self._filter_combo.setCurrentIndex(i)
-                break
-        self._filter_combo.setToolTip(self._t('filter_tip'))
+        self._filter_combo.setMinimumWidth(100)
+        self._populate_filter_combo(self._filter_combo)
         self._filter_combo.currentIndexChanged.connect(
             self._on_filter_mode_changed)
-        self._filter_combo.setMinimumWidth(100)
         fl.addWidget(self._filter_combo)
 
         # Sprache
@@ -2941,6 +2933,25 @@ class MainWindow(QMainWindow):
         self._btn_setup_range.clicked.connect(self._open_range_editor)
         ig.addWidget(self._btn_setup_range)
         outer.addWidget(instr_grp)
+
+        # Response — pitch-detection smoothing preset (Fast / Normal / Slow).
+        # SETUP parity with the toolbar Response combo: both drive
+        # cfg.filter_mode + the engine through _apply_filter_mode and stay
+        # mirrored (blockSignals) so changing one updates the other without
+        # double-routing. No inline stylesheet — rides the themed QComboBox
+        # QSS, keeping it off the inline-style tail (#31).
+        resp_grp = QGroupBox(self._t('grp_filter'))
+        rg = QVBoxLayout(resp_grp)
+        rg.setContentsMargins(12, 10, 12, 10)
+        self._setup_filter_combo = QComboBox()
+        self._setup_filter_combo.setObjectName('setupResponse')
+        self._setup_filter_combo.setMinimumWidth(220)
+        self._setup_filter_combo.setAccessibleName(self._t('grp_filter'))
+        self._populate_filter_combo(self._setup_filter_combo)
+        self._setup_filter_combo.currentIndexChanged.connect(
+            self._on_setup_filter_mode_changed)
+        rg.addWidget(self._setup_filter_combo)
+        outer.addWidget(resp_grp)
 
         # Test tone — proves the output path end to end.
         tone_grp = QGroupBox(self._t('setup_testtone_group'))
@@ -4229,20 +4240,13 @@ class MainWindow(QMainWindow):
                     break
             self._layout_combo.blockSignals(False)
 
-        # Filter-mode combo — re-label Fast/Normal/Slow.
+        # Response combo (toolbar) — re-label Fast/Normal/Slow. The SETUP
+        # parity combo is built once in the active language alongside its
+        # SETUP neighbours (drone-voice / theme), which likewise do not
+        # live-retranslate; both combos carry the same data values, so
+        # _apply_filter_mode keeps them in functional sync regardless.
         if hasattr(self, '_filter_combo'):
-            cur = self._filter_combo.currentData()
-            self._filter_combo.blockSignals(True)
-            self._filter_combo.clear()
-            self._filter_combo.addItem(self._t('filter_fast'),   'fast')
-            self._filter_combo.addItem(self._t('filter_normal'), 'normal')
-            self._filter_combo.addItem(self._t('filter_slow'),   'slow')
-            for i in range(self._filter_combo.count()):
-                if self._filter_combo.itemData(i) == cur:
-                    self._filter_combo.setCurrentIndex(i)
-                    break
-            self._filter_combo.setToolTip(self._t('filter_tip'))
-            self._filter_combo.blockSignals(False)
+            self._populate_filter_combo(self._filter_combo)
         if hasattr(self, '_min_n_lbl'):
             self._min_n_lbl.setText(self._t('min_n_label'))
             self._min_n_spin.setToolTip(self._t('min_n_tip'))
@@ -4591,15 +4595,59 @@ class MainWindow(QMainWindow):
             sax_config.save_config(self._cfg)
             self._refresh_table()
 
-    def _on_filter_mode_changed(self, _idx: int) -> None:
-        """User picked Fast / Normal / Slow. Reroute live audio through
-        the new preset and persist."""
-        mode = self._filter_combo.currentData()
-        if mode in _FILTER_PRESETS:
-            self._cfg.filter_mode = mode
-            sax_config.save_config(self._cfg)
-            if AUDIO_OK:
-                self._engine.set_filter_mode(mode)
+    def _populate_filter_combo(self, combo) -> None:
+        """(Re)fill a Response combo with localized Fast / Normal / Slow,
+        preserving the current selection (seeding from cfg.filter_mode on
+        first build, when the combo is still empty). Signals stay blocked
+        throughout, so it is safe during construction and live
+        re-translation alike. Shared by the toolbar Response combo and the
+        SETUP-tab parity combo so the two never drift in contents."""
+        cur = combo.currentData()
+        if cur is None:
+            cur = getattr(self._cfg, 'filter_mode', FILTER_MODE_DEFAULT)
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem(self._t('filter_fast'),   'fast')
+        combo.addItem(self._t('filter_normal'), 'normal')
+        combo.addItem(self._t('filter_slow'),   'slow')
+        idx = combo.findData(cur)
+        if idx >= 0:
+            combo.setCurrentIndex(idx)
+        combo.setToolTip(self._t('filter_tip'))
+        combo.blockSignals(False)
+
+    def _on_filter_mode_changed(self, _idx: int = 0) -> None:
+        """Toolbar Response combo changed → apply + mirror into SETUP."""
+        self._apply_filter_mode(self._filter_combo.currentData(),
+                                source=self._filter_combo)
+
+    def _on_setup_filter_mode_changed(self, _idx: int = 0) -> None:
+        """SETUP Response combo changed → apply + mirror into the toolbar.
+        Parity with the toolbar Response control (Fast / Normal / Slow)."""
+        self._apply_filter_mode(self._setup_filter_combo.currentData(),
+                                source=self._setup_filter_combo)
+
+    def _apply_filter_mode(self, mode, source=None) -> None:
+        """Single source of truth for a Response/filter-mode change from
+        EITHER the toolbar or the SETUP combo. Mirror the *other* combo
+        (signals blocked so the change does not re-enter), persist
+        cfg.filter_mode, and reroute the live engine. No-op on an unknown
+        preset. Idempotent: re-applying the active mode changes nothing."""
+        if mode not in _FILTER_PRESETS:
+            return
+        for combo in (getattr(self, '_filter_combo', None),
+                      getattr(self, '_setup_filter_combo', None)):
+            if combo is None or combo is source:
+                continue
+            idx = combo.findData(mode)
+            if idx >= 0 and combo.currentIndex() != idx:
+                combo.blockSignals(True)
+                combo.setCurrentIndex(idx)
+                combo.blockSignals(False)
+        self._cfg.filter_mode = mode
+        sax_config.save_config(self._cfg)
+        if AUDIO_OK:
+            self._engine.set_filter_mode(mode)
 
     def _on_min_n_changed(self, value: int) -> None:
         """User adjusted the min-N filter. Persist + redraw the table.
