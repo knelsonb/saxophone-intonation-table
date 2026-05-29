@@ -243,6 +243,39 @@ def test_stop_output_tears_down_and_clears_running():
     assert eng.last_output_error == AudioEngineError.NONE
 
 
+def test_stop_output_preserves_active_device_as_last_selection():
+    """Persistence invariant (war-council-verified — sax_audio_engine.py:532):
+    stop_output() flips LIVENESS (output_running -> False) but PRESERVES
+    active_output_device, which is the last user SELECTION and the hot-plug
+    recovery target — not a liveness flag. Clearing it here would silently
+    break auto-recovery; this locks it so a future 'cleanup' can't regress it.
+    (The input side is symmetric: _teardown_stream nulls _stream but leaves
+    active_device; that persistence is exercised by test_hotplug_recovery.py's
+    retry/hotplug paths, which recover via the pinned device.)"""
+    _reset([_SPEAKERS], default_out=0)
+    eng = _new_engine()
+    eng.open_output_device(None)
+    selected = eng.active_output_device
+    assert selected is not None and eng.output_running is True
+    eng.stop_output()
+    assert eng.output_running is False, "liveness (output_running) must flip off"
+    assert eng.active_output_device is selected, (
+        "active_output_device must PERSIST across stop (last selection / "
+        "recovery target); only output_running is liveness")
+
+
+def test_open_stop_reopen_output_cycle_is_clean():
+    """A full open -> stop -> reopen cycle must leave the engine running again —
+    a clean stop never wedges the output lifecycle."""
+    _reset([_SPEAKERS], default_out=0)
+    eng = _new_engine()
+    assert eng.open_output_device(None) is True
+    eng.stop_output()
+    assert eng.output_running is False
+    assert eng.open_output_device(None) is True, "reopen after a clean stop must succeed"
+    assert eng.output_running is True
+
+
 # ---------------------------------------------------------------------------
 # 3. Test tone — the Sprint-1 acceptance vehicle.
 # ---------------------------------------------------------------------------
