@@ -20,6 +20,13 @@ This program records notes via microphone, detects the pitch in real time, and m
 - Chart export (PNG): one-click shareable bar chart of mean cents per note with ±1σ whiskers
 - Optional cross-session persistence: set the environment variable `SAX_INTONATION_LOG_PATH` to a file path and every measurement is appended there as JSONL
 - Interface switchable between German and English
+- Tab-based interface: Tuner · Metronome · Tape Deck · Setup
+- Metronome with accented downbeat, common time signatures, and tap tempo (sample-accurate scheduling)
+- Drone reference tone: 5 quick presets plus 128 General MIDI voices (SoundFont)
+- Pitch pipes: sustained sine reference pads across the chromatic octave
+- Tape deck: record your playing through the mic and play it back; export the take to WAV
+- Themes: dark, night (red-shifted to preserve dark-adapted vision in a darkened hall/pit), and light — switchable live without restart
+- Output-device selection in Setup (the tuner keeps reading the mic while a reference tone sounds)
 
 ---
 
@@ -202,6 +209,13 @@ Dieses Programm nimmt Töne über das Mikrofon auf, erkennt die Tonhöhe in Echt
 - Diagramm-Export (PNG): ein-Klick-Balkendiagramm der mittleren Cent-Abweichung pro Ton mit ±1σ-Whiskers, fertig zum Teilen
 - Optionale sitzungsübergreifende Persistenz: Umgebungsvariable `SAX_INTONATION_LOG_PATH` auf einen Pfad setzen, dann werden alle Messungen zusätzlich als JSONL angehängt
 - Oberfläche auf Deutsch und Englisch umschaltbar
+- Tab-Oberfläche: Tuner · Metronom · Bandmaschine · Einstellungen
+- Metronom mit betontem Auftakt, gängigen Taktarten und Tap-Tempo (taktgenaue Planung)
+- Bordun-Referenzton: 5 Schnellvorgaben plus 128 General-MIDI-Klänge (SoundFont)
+- Stimmpfeifen: gehaltene Sinus-Referenztöne über die chromatische Oktave
+- Bandmaschine: das eigene Spiel über das Mikrofon aufnehmen und wiedergeben; Aufnahme als WAV exportieren
+- Themes: Dunkel, Nacht (rotverschoben zum Schutz der dunkeladaptierten Sicht in dunklem Saal/Graben) und Hell — live umschaltbar ohne Neustart
+- Ausgabegerät-Auswahl in den Einstellungen (der Tuner liest weiter das Mikrofon, während ein Referenzton klingt)
 
 ---
 
