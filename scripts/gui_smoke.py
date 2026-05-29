@@ -175,6 +175,33 @@ def main() -> int:
         win._on_setup_nickname_changed()
         app.processEvents()
 
+    # SETUP parity: concert-pitch (A4) combo mirrors the toolbar Kammerton combo
+    # through the shared _apply_a4 — the heavy measurement recalc runs once,
+    # never double-fired by the sibling (blockSignals). Drive both directions
+    # and confirm the engine A4 follows.
+    check(hasattr(win, "_setup_a4_combo")
+          and win._setup_a4_combo.count() == 21,
+          "SETUP A4 combo missing or wrong item count (expected 430..450)")
+    if hasattr(win, "_setup_a4_combo"):
+        _a4_saved = win._a4_combo.currentIndex()
+        # SETUP drives → toolbar + engine follow.
+        win._setup_a4_combo.setCurrentIndex(win._setup_a4_combo.findData(442))
+        app.processEvents()
+        check(win._a4_combo.currentData() == 442,
+              "SETUP A4 change did not mirror into the toolbar combo")
+        check(int(win._engine.a4) == 442,
+              "SETUP A4 change did not reach the engine")
+        # Toolbar drives → SETUP follows (other direction).
+        win._a4_combo.setCurrentIndex(win._a4_combo.findData(437))
+        app.processEvents()
+        check(win._setup_a4_combo.currentData() == 437,
+              "toolbar A4 change did not mirror into the SETUP combo")
+        check(int(win._engine.a4) == 437,
+              "toolbar A4 change did not reach the engine")
+        # Restore original A4.
+        win._a4_combo.setCurrentIndex(_a4_saved)
+        app.processEvents()
+
     # Test tone with no engine mirror (headless): must NOT claim to be playing.
     # The button reverts to unchecked and surfaces a failure status (N2).
     win._btn_test_tone.setChecked(True)
