@@ -312,13 +312,40 @@ def test_start_registers_click_and_schedules_first_beat():
     assert m.pending_events() >= 1, "start must schedule the first beat"
 
 
-def test_stop_unregisters_click():
+def test_stop_reaps_click_after_drain():
     m = Mixer(max_block=4096)
     c = MetronomeController(m, 48000)
     c.start()
     c.stop()
     assert c.is_running() is False
-    assert m.active_sources() == 0, "stop must unregister the click source"
+    # stop() no longer hard-unregisters mid-click (that truncates the burst ->
+    # pop). It requests stop; the Mixer reaps the click once any in-flight burst
+    # has drained. With nothing sounding, the next render reaps it.
+    out = np.zeros(4096, dtype=np.float32)
+    m.render(out, 4096)
+    assert m.active_sources() == 0, "the click must be reaped after stop drains"
+
+
+def test_stop_does_not_truncate_inflight_click():
+    """stop() while a click is sounding lets the burst finish (no truncation
+    pop), then the Mixer reaps the source once it has decayed to zero."""
+    m = Mixer(max_block=64)            # small blocks -> the burst spans many
+    c = MetronomeController(m, 48000)
+    c.start()
+    c._click.trigger(accent=True, offset=0)   # fire a click now
+    out = np.zeros(64, dtype=np.float32)
+    m.render(out, 64)
+    assert c._click._buf is not None, "a click should be mid-burst"
+    c.stop()
+    assert c._click._buf is not None, "stop must NOT truncate the in-flight click"
+    tail = 0.0
+    for _ in range(60):                # drain well past the 38 ms burst
+        out[:] = 0.0
+        m.render(out, 64)
+        tail = float(np.max(np.abs(out)))
+    assert c._click._buf is None, "the burst must finish on its own"
+    assert m.active_sources() == 0, "then the Mixer reaps the click"
+    assert tail < 1e-3, "the click tail must decay to ~0, not hard-cut"
 
 
 def test_toggle_flips_running():

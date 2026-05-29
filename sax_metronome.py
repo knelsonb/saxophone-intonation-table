@@ -173,6 +173,10 @@ class ClickSource:
         self._buf: Optional[np.ndarray] = None
         self._pos = 0
         self._start_off = 0
+        # Set by request_stop(): once the in-flight burst drains, `finished`
+        # goes True and the Mixer reaps this source (a click-free stop with no
+        # mid-burst truncation pop). Cleared by arm() on (re)start.
+        self._stopping = False
 
     # -- synthesis ----------------------------------------------------------
     def _synth(self, freq: float, peak: float) -> np.ndarray:
@@ -216,6 +220,23 @@ class ClickSource:
         self._buf = self._accent if accent else self._beat
         self._pos = 0
         self._start_off = max(0, int(offset))
+
+    def request_stop(self) -> None:
+        """Stop after the in-flight click finishes. The current burst plays out
+        (no truncation pop); once it drains, ``finished`` is True and the Mixer
+        reaps this source."""
+        self._stopping = True
+
+    def arm(self) -> None:
+        """Clear a pending stop so a re-registered click isn't instantly reaped
+        (called on metronome (re)start)."""
+        self._stopping = False
+
+    @property
+    def finished(self) -> bool:
+        """True once a requested stop's in-flight burst has fully drained — the
+        Mixer reaps the source then, so the final click ends click-free."""
+        return self._stopping and self._buf is None
 
     @property
     def active_midi(self) -> Optional[int]:
@@ -359,6 +380,7 @@ class MetronomeController:
         if self._running:
             return
         self._running = True
+        self._click.arm()              # clear any pending stop before re-register
         self._mixer.register(self._click)
         self._anchor = int(self._mixer.clock)
         self._anchor_beat = 0
@@ -370,7 +392,10 @@ class MetronomeController:
         if not self._running:
             return
         self._running = False
-        self._mixer.unregister(self._click)
+        # Don't hard-unregister: that truncates an in-flight click burst (a
+        # pop, up to ~0.5 amplitude mid-decay). Request stop instead — the burst
+        # plays out, then the Mixer reaps the source once it reports finished.
+        self._click.request_stop()
         self._emit()
 
     def toggle(self) -> None:
