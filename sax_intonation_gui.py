@@ -5242,10 +5242,15 @@ class MainWindow(QMainWindow):
         so external/internal call sites that reference this name keep
         working without change."""
         self._session_state.restore()
-        # Restore wrote the toolbar widgets from cfg; mirror the values into
-        # their SETUP parity twins so both surfaces agree on launch (restore
-        # only knows about the toolbar widgets). Signals blocked — this is a
-        # programmatic sync, not a user edit.
+        # Restore wrote the canonical toolbar widgets from cfg; mirror them into
+        # the SETUP twins so both surfaces agree on launch.
+        self._sync_setup_twins_from_toolbar()
+
+    def _sync_setup_twins_from_toolbar(self) -> None:
+        """Copy the canonical toolbar A4 + nickname into their SETUP twins
+        (signals blocked — a programmatic sync, not a user edit). Called after
+        session-state restore, which only knows about the toolbar widgets.
+        Idempotent."""
         if hasattr(self, '_setup_nick_edit') and hasattr(self, '_nick_edit'):
             self._setup_nick_edit.blockSignals(True)
             self._setup_nick_edit.setText(self._nick_edit.text())

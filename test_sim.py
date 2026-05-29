@@ -54,13 +54,21 @@ def test_detection_honours_a4_reference():
 
 
 def test_silence_emits_nothing():
-    eng_freq = 0.0  # unused; feed pure silence directly
     from sax_audio_engine import AudioEngine
     eng = AudioEngine()
     res = H.feed_engine(eng, H.silence(H.DEFAULT_N * 12))
     assert not res.emitted
     assert res.dominant_midi is None
-    assert math.isnan(res.cents_error())  # no target, nothing detected
+    assert res.locked_midi is None        # the lock machinery stayed cold
+
+
+def test_detect_noisy_tone_locks_at_reasonable_snr():
+    # Exercises detect_tone's 'noisy' branch (sine + noise at snr_db): a 20 dB
+    # SNR tone must still lock the fundamental. A regression in the noisy
+    # generator's RMS normalization would let noise dominate and fail this.
+    r = H.detect_tone(440.0, kind='noisy', snr_db=20.0)
+    assert r.emitted and r.dominant_midi == 69
+    assert abs(r.cents_error()) < 10.0
 
 
 def test_response_modes_all_detect_clean_tone():
@@ -85,7 +93,7 @@ def test_feed_engine_result_surface():
     # DetectionResult exposes a coherent, inspectable surface.
     assert isinstance(r.notes, list) and r.notes
     assert all(len(n) == 3 for n in r.notes)
-    assert r.last_rms_db > -120.0          # meter moved off the floor
+    assert r.last_rms_db > -30.0           # meter at a real level (amp~0.5 sax)
     assert r.locked_midi == 69
 
 
@@ -121,6 +129,5 @@ def test_render_mixer_sums_two_sources():
     freqs = np.fft.rfftfreq(out.size, 1.0 / sr)
     def _has_peak(target):
         k = int(np.argmin(np.abs(freqs - target)))
-        band = sp[max(0, k - 3):k + 4]
-        return sp[k] > 0 and sp[k] >= 0.25 * float(sp.max()) and band.size > 0
+        return sp[k] >= 0.25 * float(sp.max())
     assert _has_peak(440.0) and _has_peak(660.0)
