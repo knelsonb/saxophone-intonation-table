@@ -333,6 +333,25 @@ class Mixer:
                 # callback; skip its contribution this block.
                 continue
 
+        # 3b. Reap fully-finished sources — a released test tone or pitch pad
+        #     whose tail has faded to zero (MixerSource.finished documents this
+        #     contract: "the mixer should drop it"). This is what lets a source
+        #     self-retire with a click-free release instead of a hard-cut
+        #     unregister. Cheap lock-free scan of the tiny source tuple; the
+        #     lock is taken ONLY to swap the tuple WHOLE when something actually
+        #     needs dropping (rare), so the steady state stays lock-free and
+        #     allocation-free (a plain loop + getattr boxes nothing). A source
+        #     with no `finished` attribute (the default) is never reaped.
+        reap = False
+        for s in self._sources:
+            if getattr(s, "finished", False):
+                reap = True
+                break
+        if reap:
+            with self._lock:
+                self._sources = tuple(
+                    s for s in self._sources if not getattr(s, "finished", False))
+
         # 4. Clamp in place to the output rails. np.clip routes through a
         #    fromnumeric wrapper that allocates small dispatch objects on a
         #    fraction of calls; the minimum/maximum ufuncs with preboxed
@@ -402,7 +421,8 @@ class TestToneSource:
     __test__ = False
 
     def __init__(self, freq: float, samplerate: int, max_block: int,
-                 gain: float = 0.2, midi: Optional[int] = None):
+                 gain: float = 0.2, midi: Optional[int] = None,
+                 attack_ms: float = 0.0, release_ms: float = 0.0):
         if samplerate <= 0:
             raise ValueError(f"samplerate must be > 0, got {samplerate}")
         if max_block < 1:
@@ -431,6 +451,23 @@ class TestToneSource:
         self._ramp = np.arange(self._max_block, dtype=np.float32)
         self._work = np.zeros(self._max_block, dtype=np.float32)
 
+        # Optional click-free envelope (OPT-IN; default OFF so the reference
+        # steady tone — and every test/use that builds it plainly — is
+        # byte-identical). When enabled, the tone attacks from silence on the
+        # first render and release() ramps it back down; once the tail reaches
+        # zero the source reports finished=True so the Mixer auto-reaps it,
+        # turning stop_test_tone into a fade instead of a hard-cut click.
+        # Mirrors PitchPipeSource's envelope. _env_work is allocated only when
+        # enveloped (the steady reference tone keeps its lean footprint).
+        self._enveloped = (attack_ms > 0.0 or release_ms > 0.0)
+        self._env = 0.0 if attack_ms > 0.0 else 1.0
+        self._env_target = 1.0
+        self._atk_step = 1.0 / max(1.0, attack_ms * self.samplerate / 1000.0)
+        self._rel_step = 1.0 / max(1.0, release_ms * self.samplerate / 1000.0)
+        self._done = False
+        self._env_work = (np.zeros(self._max_block, dtype=np.float32)
+                          if self._enveloped else None)
+
     # -- gain / duck --------------------------------------------------------
     def set_gain(self, g: float) -> None:
         """Set output gain in [0, 1]. The mic-coordination duck drives this
@@ -442,9 +479,30 @@ class TestToneSource:
     def gain(self) -> float:
         return self._gain
 
+    # -- release / lifecycle ------------------------------------------------
+    def release(self) -> None:
+        """Begin a click-free release fade (enveloped tones only). The tone
+        keeps sounding until its tail reaches zero, then reports finished=True
+        so the Mixer drops it. For a tone built WITHOUT an envelope this marks
+        it finished immediately (same effect as the old hard unregister, but
+        via the uniform reap path)."""
+        if self._enveloped:
+            self._env_target = 0.0
+        else:
+            self._done = True
+
+    @property
+    def finished(self) -> bool:
+        """True once a released tone has fully faded — the Mixer reaps it."""
+        return self._done
+
     # -- MixerSource protocol ----------------------------------------------
     @property
     def active_midi(self) -> Optional[int]:
+        # A released-and-faded tone no longer sounds (so it stops vote-excluding
+        # / ducking the moment its tail is gone); otherwise reports its midi.
+        if self._done:
+            return None
         return self._midi
 
     def render(self, out: np.ndarray, frames: int, t0: int) -> None:
@@ -455,9 +513,15 @@ class TestToneSource:
         place, scaled by gain, and added to ``out``. ``t0`` is unused — a
         steady tone has no scheduled start — but is part of the protocol.
         """
+        if self._done:
+            return
         if frames <= 0 or self._gain == 0.0:
             # Still advance phase so a later un-duck stays phase-continuous.
             self._phase = (self._phase + self._dphi * frames) % (2.0 * math.pi)
+            return
+        if self._enveloped and self._env == 0.0 and self._env_target == 0.0:
+            # Released and fully faded: retire (the Mixer reaps on finished).
+            self._done = True
             return
         # Use the working buffers WHOLE when the block fills them (the steady
         # state); slicing self._work[:n] would allocate a view object every
@@ -479,6 +543,28 @@ class TestToneSource:
         work += self._phase_box
         np.sin(work, out=work)
         work *= self._gain32
+        if self._enveloped:
+            # Apply the attack/release envelope. Steady (env == target) is a
+            # single scalar multiply (or nothing at full gain); a transition
+            # ramps the envelope per-sample across the block. The full-block
+            # path uses the preallocated _env_work WHOLE, so the steady state
+            # stays allocation-free (only a short final block slices a view).
+            if self._env == self._env_target:
+                if self._env != 1.0:
+                    work *= np.float32(self._env)
+            else:
+                step = (self._atk_step if self._env_target > self._env
+                        else -self._rel_step)
+                env = (self._env_work if n == self._max_block
+                       else self._env_work[:n])
+                np.multiply(ramp, np.float32(step), out=env)
+                env += np.float32(self._env)
+                np.clip(env, 0.0, 1.0, out=env)
+                work *= env
+                self._env = float(env[n - 1])
+                if abs(self._env - self._env_target) <= max(self._atk_step,
+                                                            self._rel_step):
+                    self._env = self._env_target
         # Additive mix — both float32, so this is a true in-place add with no
         # dtype cast and no temporary.
         tgt += work

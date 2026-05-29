@@ -378,6 +378,79 @@ def test_testtone_active_midi_passthrough():
 
 
 # ---------------------------------------------------------------------------
+# 6b. Click-free envelope (opt-in) + Mixer auto-reap of finished sources
+# ---------------------------------------------------------------------------
+def test_testtone_default_has_no_envelope():
+    """The default tone is the byte-identical steady reference: full amplitude
+    from the first sample, and never 'finished'."""
+    src = TestToneSource(freq=440.0, samplerate=48000, max_block=256, gain=0.5)
+    assert src.finished is False
+    out = np.zeros(256, dtype=np.float32)
+    src.render(out, 256, t0=0)
+    # No attack ramp: the sine swings within the first few samples, not held
+    # near zero by an envelope.
+    assert np.max(np.abs(out[:32])) > 1e-3
+
+
+def test_testtone_enveloped_attacks_from_silence():
+    src = TestToneSource(freq=440.0, samplerate=48000, max_block=256, gain=0.5,
+                         attack_ms=8.0, release_ms=60.0)
+    out = np.zeros(256, dtype=np.float32)
+    src.render(out, 256, t0=0)
+    assert abs(float(out[0])) < 1e-4, "enveloped tone must start at ~0 (no click)"
+    assert np.max(np.abs(out)) > 0.1, "should ramp up to audible within the block"
+
+
+def test_testtone_release_fades_to_zero_and_finishes():
+    sr, mb = 48000, 256
+    src = TestToneSource(freq=440.0, samplerate=sr, max_block=mb, gain=0.5,
+                         attack_ms=8.0, release_ms=40.0)
+    out = np.zeros(mb, dtype=np.float32)
+    for _ in range(8):                       # reach steady full gain
+        out[:] = 0.0
+        src.render(out, mb, t0=0)
+    src.release()
+    last = out
+    for _ in range(40):                      # render past the 40 ms release
+        out = np.zeros(mb, dtype=np.float32)
+        src.render(out, mb, t0=0)
+        last = out
+    assert src.finished is True, "a fully-released tone must report finished"
+    assert np.max(np.abs(last)) < 1e-4, "release must fade to ~0, not hard-cut"
+
+
+def test_testtone_nonenveloped_release_marks_finished():
+    """release() on a plain (non-enveloped) tone marks it finished at once, so
+    the Mixer reaps it through the same path — no behavioural special-case."""
+    src = TestToneSource(freq=440.0, samplerate=48000, max_block=64, gain=0.2)
+    assert src.finished is False
+    src.release()
+    assert src.finished is True
+
+
+def test_mixer_reaps_finished_sources():
+    """A source reporting finished=True is dropped by the Mixer after render —
+    the contract (MixerSource.finished) that lets a released tone/pad
+    self-retire with a click-free fade instead of a hard unregister."""
+    sr, mb = 48000, 128
+    m = Mixer(max_block=mb)
+    keep = TestToneSource(freq=440.0, samplerate=sr, max_block=mb, gain=0.2)
+    transient = TestToneSource(freq=660.0, samplerate=sr, max_block=mb,
+                               gain=0.2, attack_ms=4.0, release_ms=20.0)
+    m.register(keep)
+    m.register(transient)
+    out = np.zeros(mb, dtype=np.float32)
+    m.render(out, mb)
+    assert m.active_sources() == 2
+    transient.release()
+    for _ in range(40):                      # render past the release
+        out[:] = 0.0
+        m.render(out, mb)
+    assert m.active_sources() == 1, "the faded source must be reaped"
+    assert keep in m._sources, "the steady (unfinished) source must survive"
+
+
+# ---------------------------------------------------------------------------
 # 7. Constructor validation
 # ---------------------------------------------------------------------------
 def test_mixer_rejects_nonpositive_max_block():

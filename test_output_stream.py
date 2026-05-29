@@ -263,23 +263,47 @@ def test_start_test_tone_registers_on_mixer_when_running():
     assert eng.mixer.active_sources() == 1, 'tone should be registered once'
 
 
+def _drain_release(mixer, blocks: int = 200) -> None:
+    """Render enough blocks to complete a test-tone release fade. stop/replace
+    now RELEASE the tone (a ~60 ms click-free fade) instead of hard-cutting it,
+    so the Mixer reaps the source a block after its tail reaches zero — pump it
+    until that happens."""
+    mb = getattr(mixer, '_max_block', 1024)
+    buf = np.zeros(mb, dtype=np.float32)
+    for _ in range(blocks):
+        mixer.render(buf, mb)
+
+
 def test_start_test_tone_is_idempotent_not_stacking():
     _reset([_SPEAKERS], default_out=0)
     eng = _new_engine()
     eng.open_output_device(None)
     eng.start_test_tone(440.0)
-    eng.start_test_tone(660.0)   # replaces, does not stack
+    eng.start_test_tone(660.0)   # replaces: releases the first (it fades out)
+    # A replace releases the previous tone (now fading) and registers the new
+    # one, so two may briefly coexist; once the released one fades it is reaped
+    # and the count settles at exactly one. The invariant is "doesn't stack
+    # unbounded", not "instantly one".
+    _drain_release(eng.mixer)
     assert eng.mixer.active_sources() == 1, (
-        'a second start_test_tone must replace, not add a second source')
+        'repeated start_test_tone must settle to a single source, not stack')
 
 
-def test_stop_test_tone_unregisters():
+def test_stop_test_tone_releases_then_reaps():
     _reset([_SPEAKERS], default_out=0)
     eng = _new_engine()
     eng.open_output_device(None)
     eng.start_test_tone(440.0)
     eng.stop_test_tone()
-    assert eng.mixer.active_sources() == 0
+    # stop now RELEASES the tone (click-free fade) rather than hard-cutting it,
+    # so it stays registered, fading, until the Mixer reaps it.
+    assert eng.mixer.active_sources() == 1, (
+        'stop_test_tone releases (fades) the tone; it lingers until faded out')
+    assert eng._test_tone_handle is None, (
+        'the engine clears its handle immediately even though the tone fades')
+    _drain_release(eng.mixer)
+    assert eng.mixer.active_sources() == 0, (
+        'the faded test tone must be reaped by the Mixer')
 
 
 def test_get_sounding_output_midis_empty_for_unpitched_test_tone():
