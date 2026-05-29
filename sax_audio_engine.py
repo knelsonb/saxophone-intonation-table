@@ -1496,7 +1496,11 @@ class AudioEngine:
             self.output_block_size = int(out_block)
             self._out_underflow_count = 0
             self.active_output_device = dev
-        self.output_running = True
+            # Publish liveness INSIDE the lock, atomically with the stream
+            # install: a concurrent _teardown_output_stream() (which takes the
+            # same lock) then cannot slip between the install and the flag and
+            # leave output_running=True with _out_stream=None.
+            self.output_running = True
         self.last_output_error = AudioEngineError.NONE
         self.last_output_error_message = ''
         return True, AudioEngineError.NONE, ''

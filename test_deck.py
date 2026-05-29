@@ -567,3 +567,22 @@ def test_finalize_persists_scratch_when_dir_set(tmp_path):
     assert d.state == "have-take"
     assert d.last_take_path is not None
     assert os.path.exists(d.last_take_path), "finalised take must be persisted to scratch_dir"
+
+
+def test_resample_last_sample_boundary_uses_take_end_not_penultimate():
+    """ADVERSARIAL-SWEEP wave 1: when a resampled position lands exactly on the
+    last take index (_n-1), the interpolation must yield take[_n-1], not the
+    penultimate take[_n-2] (the clipped-idx vs floor-based-frac off-by-one). Use
+    a tiny samplerate so EDGE_FADE_MS rounds to 0 — otherwise the boundary sample
+    sits in the fade ramp and the error is masked toward silence."""
+    take = np.array([0.1, 0.2, 0.3, 0.4], dtype=np.float32)
+    # 50 Hz capture -> 100 Hz output: ratio 0.5, positions hit 3.0 (=_n-1) exactly;
+    # 5 ms * 50 = 0.25 samples -> round -> 0 -> no edge fade.
+    src = sax_deck.DeckPlaybackSource(take, 50, 100, 64)
+    assert src._fade == 0, "test needs the edge fade disabled to observe the boundary"
+    out = np.zeros(64, dtype=np.float32)
+    src.render(out, 64, 0)
+    # positions 0, 0.5, 1, 1.5, 2, 2.5, 3.0 -> 7 samples; out[6] is pos == 3.0.
+    assert out[6] == pytest.approx(0.4, abs=1e-6), (
+        f"boundary sample must be take[-1]=0.4, got {out[6]:.4f} "
+        f"(0.3 is the off-by-one bug)")

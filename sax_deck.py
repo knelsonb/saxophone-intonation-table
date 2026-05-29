@@ -301,7 +301,12 @@ class DeckPlaybackSource:
         np.copyto(idx, floor_buf, casting="unsafe")     # integer lower index
         np.clip(idx, 0, self._n - 2, out=idx)           # tail guard: idx+1 stays valid
         frac64 = self._frac64[:n]
-        np.subtract(pos_buf, floor_buf, out=frac64)     # fractional part in [0, 1)
+        # Fraction relative to the CLIPPED lower index, not the raw floor: at the
+        # exact last-sample boundary (pos == _n-1) the floor is _n-1 but idx is
+        # clipped to _n-2, so a floor-based frac would be 0.0 and yield take[_n-2];
+        # an idx-based frac is 1.0 there and correctly yields take[_n-1]. (Interior
+        # positions are unaffected — idx == floor.)
+        np.subtract(pos_buf, idx, out=frac64)           # frac in [0, 1]
         frac = self._frac32[:n]
         np.copyto(frac, frac64, casting="unsafe")
 
