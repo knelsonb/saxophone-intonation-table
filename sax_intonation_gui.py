@@ -2858,6 +2858,7 @@ class MainWindow(QMainWindow):
         og.setSpacing(8)
         self._out_device_combo = QComboBox()
         self._out_device_combo.setMinimumWidth(320)
+        self._out_device_combo.setAccessibleName(self._t('setup_output_device'))
         self._out_device_combo.currentIndexChanged.connect(
             self._on_output_device_changed)
         # Handle for the active test-tone source (None while silent).
@@ -2887,6 +2888,7 @@ class MainWindow(QMainWindow):
         vg.setContentsMargins(12, 10, 12, 10)
         self._drone_voice_combo = QComboBox()
         self._drone_voice_combo.setMinimumWidth(260)
+        self._drone_voice_combo.setAccessibleName(self._t('setup_drone_voice'))
         # Presets first (labelled), then the full GM catalog. Each item's data
         # is the voice id the controller resolves.
         seen_ids = set()
@@ -2911,6 +2913,7 @@ class MainWindow(QMainWindow):
         ag = QFormLayout(appear_grp)
         ag.setContentsMargins(12, 10, 12, 10)
         self._theme_combo = QComboBox()
+        self._theme_combo.setAccessibleName(self._t('setup_theme'))
         for _tname in sax_theme.THEME_ORDER:
             self._theme_combo.addItem(self._t(f'theme_{_tname}'), _tname)
         _cur_theme = sax_theme.active_name()
@@ -3390,6 +3393,7 @@ class MainWindow(QMainWindow):
                 '#444;border-radius:5px;padding:4px 12px;font-size:18px;'
                 'min-width:30px;}QToolButton:hover{border:1px solid #6699cc;}')
         self._metro_slider = QSlider(Qt.Orientation.Horizontal)
+        self._metro_slider.setAccessibleName(self._t('metro_bpm'))
         self._metro_slider.setRange(self.METRO_BPM_MIN, self.METRO_BPM_MAX)
         self._metro_slider.setValue(self._metro_bpm)
         self._metro_slider.valueChanged.connect(self._on_metro_slider)

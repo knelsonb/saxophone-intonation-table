@@ -494,6 +494,28 @@ def main() -> int:
               f"theme {_name!r} window_bg not in the applied stylesheet")
     win._apply_theme(_start_theme)
 
+    # ── A11Y: accessible names on the parity-sprint controls (A11Y-LABELS) ────
+    # Screen readers derive a button/checkbox name from its visible text, so
+    # text-bearing controls only need non-empty text; text-LESS controls
+    # (combos, sliders, line edits) announce as anonymous without an explicit
+    # accessibleName. Assert each class accordingly across the new controls.
+    def _acc_name(w):
+        return (w.accessibleName() or "").strip()
+
+    for _attr in ("_out_device_combo", "_drone_voice_combo", "_theme_combo",
+                  "_setup_filter_combo", "_setup_a4_combo",
+                  "_setup_mic_gain_combo", "_setup_nick_edit", "_metro_slider"):
+        _w = getattr(win, _attr, None)
+        check(_w is not None and _acc_name(_w) != "",
+              f"new control {_attr} has no accessibleName (screen-reader anonymous)")
+
+    for _attr in ("_btn_test_tone", "_btn_setup_range", "_btn_metro_start",
+                  "_btn_metro_tap", "_btn_drone_on", "_btn_deck_record",
+                  "_btn_deck_stop", "_btn_deck_play", "_btn_deck_export"):
+        _w = getattr(win, _attr, None)
+        check(_w is not None and bool(_acc_name(_w) or _w.text().strip()),
+              f"new button {_attr} has neither accessibleName nor text")
+
     win.close()
 
     if failures:
