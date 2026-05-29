@@ -79,17 +79,36 @@ def main() -> int:
         for i, key in enumerate(win._tab_keys):  # tuner, metro, deck, setup
             win._tabs.setCurrentIndex(i)
             _grab(win, f"{theme}-{key}")
-        # Range-editor dialog: built directly (not exec'd, which would block)
-        # so we capture its inputs + ok/warn validation styling per theme.
+        # Modal dialogs — constructed (NOT exec'd, which would block) with args
+        # derived from the live window, so they're screenshot-verifiable too.
+        import sax_instruments as _si
+        key = win.instrument
         try:
-            dlg = G.RangeEditorDialog(parent=win, instrument=win.instrument) \
-                if hasattr(G, "RangeEditorDialog") else None
-            if dlg is not None:
-                dlg.resize(520, 360)
-                _grab(dlg, f"{theme}-rangedlg")
-                dlg.close()
+            cur_lo, cur_hi = _si.fingered_range(key)
+            baked_lo, baked_hi = _si.baked_fingered_range(key)
+            _name_fn = getattr(G, "instrument_display_name", lambda k, l: str(k))
+            rdlg = G.RangeEditorDialog(
+                win, win._t, key, _name_fn(key, win.lang),
+                cur_lo, cur_hi, baked_lo, baked_hi, _si.has_baked_range(key),
+                display=getattr(win, "display", "griff"),
+                transp=G.TRANSP_MAP.get(key, 0))
+            rdlg.resize(560, 380)
+            _grab(rdlg, f"{theme}-rangedlg")
+            # Drive it INVALID (lo > hi) to capture the warn/validation styling.
+            rdlg._lo_spin.setValue(min(127, cur_hi + 2))
+            for _ in range(2):
+                app.processEvents()
+            _grab(rdlg, f"{theme}-rangedlg-warn")
+            rdlg.close()
         except Exception as exc:                 # never let one target sink the run
             print(f"  (rangedlg skipped for {theme}: {exc})")
+        try:
+            pdlg = G.AudioPickerDialog(win, win._t, win._engine, win._cfg, None)
+            pdlg.resize(560, 420)
+            _grab(pdlg, f"{theme}-pickerdlg")
+            pdlg.close()
+        except Exception as exc:
+            print(f"  (pickerdlg skipped for {theme}: {exc})")
 
     win.close()
     print(f"wrote {len(saved)} screenshots to {outdir}")
