@@ -361,4 +361,16 @@ def build_app_qss(p: ThemePalette) -> str:
                    border-top:1px solid {p.input_border};}}
         QSpinBox#rangeSpin::down-button:hover{{background:{p.button_hover};}}
         QSpinBox#rangeSpin::down-button:pressed{{background:{p.tab_bg};}}
+        /* device-picker dialog (was a dark inline modal + list + buttons) */
+        QDialog#pickerDlg{{background:{p.window_bg};color:{p.text};}}
+        QDialog#pickerDlg QLabel{{color:{p.text};font-size:12px;}}
+        QDialog#pickerDlg QListWidget{{background:{p.base_bg};
+                   border:1px solid {p.input_border};color:{p.text};font-size:12px;}}
+        QDialog#pickerDlg QListWidget::item{{padding:6px;}}
+        QDialog#pickerDlg QListWidget::item:selected{{background:{p.button_bg};
+                   color:{p.text_bright};}}
+        QDialog#pickerDlg QPushButton{{background:{p.button_bg};color:{p.text_bright};
+                   border:none;border-radius:5px;padding:6px 14px;font-size:12px;}}
+        QDialog#pickerDlg QPushButton:hover{{background:{p.button_hover};}}
+        QDialog#pickerDlg QCheckBox{{color:{p.text_dim};font-size:11px;}}
     """
