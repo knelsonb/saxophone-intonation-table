@@ -1226,13 +1226,7 @@ class AudioChip(QPushButton):
         self._t = t_func
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setMinimumHeight(36)
-        self.setStyleSheet("""
-            QPushButton{background:#34495e;color:#eee;border:none;
-                         border-radius:5px;padding:4px 10px;font-size:12px;
-                         text-align:left;}
-            QPushButton:hover{background:#3d566e;}
-            QPushButton:pressed{background:#2c3e50;}
-        """)
+        self.setObjectName('audioChip')   # themed via QPushButton#audioChip
         # Layout: dot · label · device name · chevron.
         from PyQt6.QtWidgets import QHBoxLayout
         lay = QHBoxLayout(self)
@@ -1246,17 +1240,16 @@ class AudioChip(QPushButton):
         # local `background:transparent` override, the labels paint dark
         # navy rectangles on top of the chip's slate-blue button bg —
         # rendering as vertical color bands across the chip.
+        # Colour + transparent bg come from QPushButton#audioChip QLabel; keep
+        # only the per-label font here.
         self._label = QLabel(self._t('audio_chip_label'))
-        self._label.setStyleSheet('color:#bdc3c7;font-size:10px;'
-                                  'font-weight:bold;background:transparent;')
+        self._label.setStyleSheet('font-size:10px;font-weight:bold;')
         lay.addWidget(self._label)
         self._name = QLabel(self._t('audio_chip_none'))
-        self._name.setStyleSheet('color:#eee;font-size:12px;'
-                                 'background:transparent;')
+        self._name.setStyleSheet('font-size:12px;')
         lay.addWidget(self._name, 1)
         self._chevron = QLabel('▾')
-        self._chevron.setStyleSheet('color:#888;font-size:12px;'
-                                    'background:transparent;')
+        self._chevron.setStyleSheet('font-size:12px;')
         lay.addWidget(self._chevron)
 
     def retranslate(self, t_func) -> None:
@@ -1363,13 +1356,7 @@ class InfoBanner(QWidget):
         super().__init__()
         self._t = t_func
         self._action_callback = None
-        self.setStyleSheet("""
-            QWidget{background:#1e2a3a;border:1px solid #444;border-left:4px solid #3498db;border-radius:5px;}
-            QLabel{color:#eee;font-size:12px;}
-            QPushButton{background:#34495e;color:#eee;border:none;border-radius:4px;
-                         padding:5px 12px;font-size:12px;}
-            QPushButton:hover{background:#3d566e;}
-        """)
+        self.setObjectName('infoBanner')   # themed via QWidget#infoBanner
         from PyQt6.QtWidgets import QHBoxLayout
         lay = QHBoxLayout(self)
         lay.setContentsMargins(10, 6, 10, 6)
