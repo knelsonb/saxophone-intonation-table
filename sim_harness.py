@@ -138,6 +138,36 @@ def fft_peak_hz(buf: np.ndarray, sr: int = DEFAULT_SR) -> float:
     return float(k) * sr / n
 
 
+def peak_near_hz(buf: np.ndarray, target: float, sr: int = DEFAULT_SR,
+                 search_cents: float = 70.0) -> float:
+    """Refined spectral-peak frequency NEAREST ``target`` (within ±search_cents),
+    or 0.0 if no bin falls in the window. For VERIFYING a KNOWN intended pitch in
+    a RICH tone: a global fft_peak finds whichever partial is loudest (often a
+    harmonic, or a sub-octave for organ-ish voices — measured: fft_peak read a
+    drone an octave/+2792c off), and YIN octave-errs on sub-octave-heavy voices.
+    Searching around the known target measures the intended fundamental's exact
+    frequency, sidestepping that ambiguity. A real pitch error larger than the
+    window still fails (no in-window peak)."""
+    x = np.asarray(buf, dtype=np.float64)
+    n = x.shape[0]
+    if n < 8 or not np.any(x) or target <= 0:
+        return 0.0
+    sp = np.abs(np.fft.rfft(x * np.hanning(n)))
+    freqs = np.fft.rfftfreq(n, 1.0 / float(sr))
+    lo = target * 2.0 ** (-search_cents / 1200.0)
+    hi = target * 2.0 ** (search_cents / 1200.0)
+    klo, khi = int(np.searchsorted(freqs, lo)), int(np.searchsorted(freqs, hi))
+    if khi <= klo:
+        return 0.0
+    k = klo + int(np.argmax(sp[klo:khi]))
+    if 1 <= k < sp.shape[0] - 1:
+        a, b, c = sp[k - 1], sp[k], sp[k + 1]
+        d = a - 2.0 * b + c
+        if d:
+            k = k + 0.5 * (a - c) / d
+    return float(k) * sr / n
+
+
 def yin_hz(buf: np.ndarray, sr: int = DEFAULT_SR) -> tuple[float, float]:
     """(freq_hz, aperiodicity) from the engine's own yin_pitch."""
     from sax_audio_engine import yin_pitch
