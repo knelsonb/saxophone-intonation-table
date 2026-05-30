@@ -205,6 +205,42 @@ def has_fade_out(buf: np.ndarray, ms: float = 5.0, sr: int = DEFAULT_SR,
 
 
 # ---------------------------------------------------------------------------
+# Onset / timing detection — WHEN does a burst (click/note) start in a render?
+# The pitch fns above answer "what frequency?"; these answer "at what sample?",
+# so a virtual render can be checked for timing (metronome on the BPM grid, a
+# note's attack), not just whether it sounds. `min_gap` must exceed one burst's
+# length so an oscillating burst collapses to a single onset (the metronome
+# click is ~38 ms ≈ 1800 samples @48k; a beat interval is far larger).
+# ---------------------------------------------------------------------------
+def onset_samples(buf: np.ndarray, threshold: float = 1e-2,
+                  min_gap: int = 4000) -> list[int]:
+    """Sample indices where |buf| RISES across `threshold` — the onset of each
+    burst. `min_gap` debounces within a burst (keep an onset only if it is
+    >= min_gap samples past the previous kept one)."""
+    x = np.abs(np.asarray(buf, dtype=np.float64))
+    if x.size == 0:
+        return []
+    above = x >= threshold
+    rising = (np.flatnonzero(above[1:] & ~above[:-1]) + 1).tolist()
+    if above[0]:
+        rising = [0] + rising
+    out: list[int] = []
+    last = -(min_gap + 1)
+    for idx in rising:
+        if idx - last >= min_gap:
+            out.append(int(idx))
+            last = int(idx)
+    return out
+
+
+def onset_intervals(buf: np.ndarray, **kw) -> list[int]:
+    """Gaps (in samples) between consecutive burst onsets — the rendered tempo.
+    Flat intervals == no drift; the values == sr*60/bpm for a metronome."""
+    o = onset_samples(buf, **kw)
+    return [o[i + 1] - o[i] for i in range(len(o) - 1)]
+
+
+# ---------------------------------------------------------------------------
 # Allocation measurement (hot-path no-alloc gates)
 # ---------------------------------------------------------------------------
 def alloc_bytes(fn, *args, iterations: int = 200, warmup: int = 5,
