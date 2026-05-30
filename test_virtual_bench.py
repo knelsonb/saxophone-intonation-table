@@ -20,7 +20,7 @@ import pytest
 
 import sim_harness as H
 from sax_mixer import Mixer, TestToneSource
-from sax_metronome import MetronomeController, beat_onset_sample
+from sax_metronome import MetronomeController, beat_onset_sample, beats_per_bar
 
 pp = pytest.importorskip("sax_pitch_pipes", reason="pitch pipes module")
 PitchPipeSource = pp.PitchPipeSource
@@ -180,3 +180,38 @@ def test_deck_playback_duration_and_pitch():
     det = H.fft_peak_hz(out[300:n - 300], SR)              # skip the 5 ms edge fades
     assert abs(H.cents(det, f)) < 2.0, f"deck playback pitch {det:.2f}Hz vs {f}"
     assert H.max_abs(out[n + 1000:]) < 1e-3, "playback must STOP at the take's end (timing)"
+
+
+# ---------------------------------------------------------------------------
+# 8. OUTPUT timing — the metronome ACCENT GRID across 5 tempos x each stock time
+#    signature. Verifies, from the rendered audio: (a) every click on the BPM
+#    grid with no drift, and (b) the downbeat accent falls on every
+#    beats_per_bar-th beat (the accent click is louder than the plain click).
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("time_sig", ["2/4", "3/4", "4/4", "6/8"])
+@pytest.mark.parametrize("bpm", [40, 80, 120, 160, 200])
+def test_metronome_accent_grid_across_tempos_and_time_sigs(time_sig, bpm):
+    mb = 1024
+    mixer = Mixer(max_block=mb)
+    metro = MetronomeController(mixer, SR, bpm=bpm, time_sig=time_sig)
+    metro.start()
+    n = beats_per_bar(time_sig)
+    interval = SR * 60.0 / bpm
+    nbeats = n * 3 + 1                                     # ~3 full bars + 1
+    sig = H.render_mixer(mixer, int(interval * (nbeats + 1)), block=mb)
+    onsets = H.onset_samples(sig, threshold=1e-2, min_gap=int(interval * 0.4))
+    assert len(onsets) >= nbeats, f"{time_sig}@{bpm}: {len(onsets)} onsets < {nbeats}"
+    onsets = onsets[:nbeats]
+    # (a) grid: even spacing, no drift over all beats
+    intervals = np.diff(onsets)
+    assert np.all(np.abs(intervals - interval) <= 2), (
+        f"{time_sig}@{bpm}: beat spacing drifts from {interval:.0f}: {intervals.tolist()}")
+    # (b) accent pattern: every n-th beat (the downbeat) is LOUDER than the rest
+    win = min(int(interval * 0.3), 1500)
+    peaks = [float(np.max(np.abs(sig[o:o + win]))) for o in onsets]
+    accented = [peaks[i] for i in range(nbeats) if i % n == 0]
+    plain = [peaks[i] for i in range(nbeats) if i % n != 0]
+    assert plain, f"{time_sig}: expected some non-downbeat beats"
+    assert min(accented) > max(plain), (
+        f"{time_sig}@{bpm}: downbeat accent not louder than plain beats — "
+        f"accent~{min(accented):.2f} vs plain~{max(plain):.2f}")
