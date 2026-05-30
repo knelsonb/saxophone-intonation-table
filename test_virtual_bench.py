@@ -396,3 +396,78 @@ def test_onset_metric_sees_injected_timing_drift():
     assert len(onsets) >= 5, f"injected grid under-detected: {onsets.tolist()}"
     assert intervals.max() - intervals.min() >= 100, (
         f"onset metric blind to injected drift: intervals={intervals.tolist()}")
+
+
+# ---------------------------------------------------------------------------
+# 13. INTERACTIONS / simultaneous use — sections 1-12 verify each source in
+#     ISOLATION; this covers the scenarios where they run TOGETHER, which is how
+#     the app is actually used and where "feels off" hides. (1) The single most
+#     common pairing — metronome + tuner — bleeds UNPITCHED clicks into the mic:
+#     clicks have active_midi=None so they are NOT vote-excluded by D3, so the
+#     detector itself must reject the transient. (2) Two outputs sounding at once
+#     must each keep their pitch through the additive mix (test_mixer pins the
+#     sample-level sum; this is the musical property a player would hear).
+# ---------------------------------------------------------------------------
+def test_metronome_click_bleed_does_not_false_trigger_detection():
+    """Player silent, metronome running: the clicks bleeding into the mic are
+    broadband transients with no stable pitch — the confirm/lock machinery must
+    NOT emit a phantom note. (Clicks are active_midi=None, so D3 can't help; the
+    detector's own transient rejection is what's under test.)"""
+    sr = H.DEFAULT_SR
+    mb = 1024
+    mixer = Mixer(max_block=mb)
+    metro = MetronomeController(mixer, sr, bpm=120)
+    metro.start()
+    # enough hops that a REAL pitched tone WOULD confirm + emit (cf. §4 hops=24),
+    # so "clicks don't emit" tests rejection, not just too-short a signal.
+    total = H.DEFAULT_N * 24
+    clicks = H.render_mixer(mixer, total, block=mb).astype(np.float32)
+    from sax_audio_engine import AudioEngine
+    eng = AudioEngine()
+    eng.set_filter_mode('normal')
+    eng.set_a4(440.0)
+    res = H.feed_engine(eng, clicks)
+    assert not res.emitted, (
+        f"metronome click bleed false-triggered a phantom note: {res.notes}")
+
+
+def test_metronome_click_bleed_does_not_corrupt_player_pitch():
+    """Player on A4 WITH metronome clicks bleeding into the mic: the tuner must
+    still read the player's note and pitch — the transient clicks are outlier-
+    rejected, not averaged into the reading."""
+    sr = H.DEFAULT_SR
+    mb = 1024
+    mixer = Mixer(max_block=mb)
+    metro = MetronomeController(mixer, sr, bpm=120)
+    metro.start()
+    total = H.DEFAULT_N * 24          # enough hops to confirm + emit (cf. §4)
+    clicks = H.render_mixer(mixer, total, block=mb).astype(np.float32)
+    player = H.sax_like(440.0, sr, total, 0.4)
+    m = min(len(player), len(clicks))
+    mix = (player[:m] + 0.4 * clicks[:m]).astype(np.float32)
+    from sax_audio_engine import AudioEngine
+    eng = AudioEngine()
+    eng.set_filter_mode('normal')
+    eng.set_a4(440.0)
+    res = H.feed_engine(eng, mix)
+    res.target_hz = 440.0
+    assert res.emitted and res.dominant_midi == 69, (
+        f"clicks corrupted the note read: midi={res.dominant_midi} notes={res.notes}")
+    assert abs(res.cents_error()) < 3.0, (
+        f"metronome clicks pulled the player's cents to {res.cents_error():+.2f}c")
+
+
+def test_two_simultaneous_output_tones_each_keep_pitch_in_the_mix():
+    """Two pitched outputs sounding together must each keep their own pitch in the
+    COMBINED mix — additive mixing must not pull either off-frequency. peak_near at
+    each target reads that target back out of the two-tone spectrum."""
+    mb = 2048
+    mixer = Mixer(max_block=mb)
+    fa, fb = 220.0, 330.0                    # a fifth apart; neither in the other's ±70c window
+    mixer.register(TestToneSource(fa, SR, mb, gain=0.3))
+    mixer.register(TestToneSource(fb, SR, mb, gain=0.3))
+    sig = H.render_mixer(mixer, 32768, block=mb)
+    ea = H.cents(H.peak_near_hz(sig, fa, SR), fa)
+    eb = H.cents(H.peak_near_hz(sig, fb, SR), fb)
+    assert abs(ea) < 2.0, f"tone A {fa}Hz pulled to {ea:+.2f}c in the mix"
+    assert abs(eb) < 2.0, f"tone B {fb}Hz pulled to {eb:+.2f}c in the mix"
