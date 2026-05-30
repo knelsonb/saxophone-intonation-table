@@ -445,6 +445,37 @@ def detection_latency_hops(freq: float, *, kind: str = 'sax', sr: int = DEFAULT_
     return None
 
 
+def detect_with_sounding_output(mic_freq, sounding_midis, *, kind='sax',
+                                a4=440.0, sr=DEFAULT_SR, hops=20, amp=0.5):
+    """Detection while the OUTPUT mixer sounds ``sounding_midis`` — the
+    mic-coordination scenario (a drone / pitch-pipe is playing and bleeds into
+    the mic). The engine must vote-exclude every sounding output note so the
+    drone's own mic-bleed can never become the locked reading. Verifies the duck
+    end-to-end through the REAL detection hot path:
+      - a DISTINCT player note is still detected (the readout stays live);
+      - pure leakage AT a sounding note is rejected (no confirmed emit).
+
+    Each sounding note is staged with a SILENT (gain 0) TestToneSource marker:
+    the detector reads the fed MIC signal, never this source, so the marker only
+    has to make ``mixer.sounding_midis()`` report the note — no soundfont / tsf
+    needed. Pass ``sounding_midis=()`` for the negative control (nothing
+    sounding -> normal lock). Returns a DetectionResult (target_hz = mic_freq)."""
+    from sax_audio_engine import AudioEngine
+    from sax_mixer import TestToneSource
+    eng = AudioEngine()
+    eng.set_filter_mode('normal')
+    eng.set_a4(a4)
+    for m in sounding_midis:
+        hz = a4 * 2.0 ** ((int(m) - 69) / 12.0)
+        eng.mixer.register(
+            TestToneSource(hz, sr, DEFAULT_N, gain=0.0, midi=int(m)))
+    total = DEFAULT_N * max(1, int(hops))
+    sig = (sine if kind == 'sine' else sax_like)(mic_freq, sr, total, amp)
+    res = feed_engine(eng, sig, block=DEFAULT_N)
+    res.target_hz = mic_freq
+    return res
+
+
 if __name__ == '__main__':  # quick self-check / demo
     import sax_audio_engine as eng  # noqa
     print("— bare yin_pitch (single window) —")

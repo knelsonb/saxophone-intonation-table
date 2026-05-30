@@ -243,3 +243,38 @@ def test_drone_organ_is_a_steady_reference():
     mean_c, spread_c = H.pitch_stability(sig, true, SR)
     assert spread_c < 6.0, f"organ A4 pitch spread {spread_c:.1f}c — not steady (vibrato?)"
     assert abs(mean_c) < 4.0, f"organ A4 centre {mean_c:+.1f}c off"
+
+
+# ---------------------------------------------------------------------------
+# 10. INPUT x OUTPUT coordination — the DRONE must not fool the TUNER. When the
+#     output sounds a note that bleeds into the mic, the engine vote-excludes it
+#     (D3 mic-coordination) so the drone's own note can never become the locked
+#     reading. The most direct "feels off" scenario: turn on the drone and watch
+#     the tuner start reading the DRONE instead of you. Driven through the REAL
+#     detection hot path (feed_input_frames -> _on_input -> coordination_step).
+# ---------------------------------------------------------------------------
+def test_player_note_detected_while_drone_sounds_a_different_note():
+    """Drone sounds A4 (69); player plays C5 (72). The tuner must read the
+    PLAYER, not the drone — your live readout stays yours while the drone sounds."""
+    res = H.detect_with_sounding_output(pp.midi_to_freq(72, 440.0), [69], hops=24)
+    assert res.emitted, "player note must still be detected while the drone sounds"
+    assert res.dominant_midi == 72, (
+        f"tuner read midi {res.dominant_midi}, expected the player's 72 "
+        f"(the drone's sounding 69 must be vote-excluded, not read)")
+
+
+def test_drone_leakage_at_its_own_pitch_is_rejected():
+    """Player silent; the mic hears ONLY the drone's A4 bleed. The tuner must
+    stay quiet — the drone's own sounding note is vote-excluded, never locked."""
+    res = H.detect_with_sounding_output(pp.midi_to_freq(69, 440.0), [69], hops=24)
+    assert not res.emitted, (
+        f"drone's own note leaked into the locked reading: {res.notes}")
+
+
+def test_negative_control_same_leakage_locks_when_no_drone_sounds():
+    """The control that proves the rejection above is REAL: feed the identical
+    A4 tone with NOTHING sounding on the output and the engine locks 69 normally.
+    So the rejection is the coordination doing its job — not A4 failing to lock."""
+    res = H.detect_with_sounding_output(pp.midi_to_freq(69, 440.0), [], hops=24)
+    assert res.dominant_midi == 69, (
+        f"with no drone sounding, A4 must lock normally; got {res.dominant_midi}")
