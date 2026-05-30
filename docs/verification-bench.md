@@ -136,6 +136,20 @@ hold (`format_cents`; locked by `test_format_cents.py`).
   fixed) a latent harness incoherence: the `sr` kwarg set tone-generation but not
   the engine's detection rate, so it only behaved at the 44.1 k default. It now
   sets `eng.samplerate` too.
+- **Audio-visual sync has no per-beat drift seam — by design.** Tracing the GUI
+  side of "feels off": the metronome's audible click is sample-accurate (scheduled
+  on the mixer clock, §1/§8), but there is **no per-beat visual flash** to drift
+  against it. The metronome's only on-screen surface is a *running-state dot*
+  (green = running), updated through `on_state_changed`, which always fires on the
+  **GUI thread** via the existing repaint/poll tick — never from the render-thread
+  beat closure (`sax_deck.py`: "so the GUI never needs a `QTimer.singleShot`
+  marshal"). The tuner needle/visualizer pull the engine's real `_buf`/detections
+  at ~30 fps, so their only audio→visual offset is *bounded detection latency*
+  (§5, ≤ 12 hops) plus one refresh tick — lag, not accumulating drift. There is
+  thus nothing sample-synced on screen for the hardware-free bench to measure; the
+  requirement is met by the *absence* of a per-beat visual claim, not by syncing
+  one. (Adding a per-beat visual indicator later would reopen this — it would need
+  to read the same beat the click sounds from, not a separate GUI timer.)
 
 ---
 
