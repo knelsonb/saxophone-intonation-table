@@ -279,6 +279,19 @@ def test_open_stop_reopen_output_cycle_is_clean():
 # ---------------------------------------------------------------------------
 # 3. Test tone — the Sprint-1 acceptance vehicle.
 # ---------------------------------------------------------------------------
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), 0.0, -100.0],
+                         ids=["nan", "inf", "zero", "negative"])
+def test_start_test_tone_rejects_nonfinite_or_nonpositive_freq(bad):
+    """A non-finite / non-positive freq -> NaN/garbage dphi -> NaN into the
+    output buffer (ADVERSARIAL-SWEEP wave 5). start_test_tone must return None
+    and register no tone."""
+    _reset([_SPEAKERS], default_out=0)
+    eng = _new_engine()
+    eng.open_output_device(None)
+    assert eng.start_test_tone(bad) is None, f"freq={bad} must be rejected"
+    assert eng.mixer.active_sources() == 0, "no tone may be registered for a bad freq"
+
+
 def test_start_test_tone_returns_none_when_not_running():
     _reset([_SPEAKERS], default_out=0)
     eng = _new_engine()

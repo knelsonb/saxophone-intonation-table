@@ -577,8 +577,8 @@ class DeckController:
             samples, sr = read_wav(path)
         except Exception:
             return False
-        if samples is None or len(samples) == 0:
-            return False
+        if samples is None or len(samples) == 0 or sr <= 0:
+            return False      # sr<=0 (corrupt WAV framerate) -> ratio 0 -> resample div0
         self._take = np.ascontiguousarray(samples)
         self._take_sr = int(sr)
         self._take_truncated = False

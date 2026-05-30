@@ -1300,8 +1300,11 @@ class AudioEngine:
         output stream is running (nothing would be heard)."""
         if not self.output_running:
             return None
+        f = float(freq)
+        if not math.isfinite(f) or f <= 0.0:
+            return None       # non-finite / non-positive freq -> NaN dphi -> NaN audio
         self.stop_test_tone(self._test_tone_handle)
-        tone = TestToneSource(freq=float(freq),
+        tone = TestToneSource(freq=f,
                               samplerate=int(self.output_samplerate),
                               max_block=int(self.output_block_size),
                               gain=0.2, attack_ms=8.0, release_ms=60.0)

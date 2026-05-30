@@ -80,6 +80,18 @@ def test_load_take_accepts_valid_wav(tmp_path):
     assert deck.state == DeckState.HAVE_TAKE
 
 
+def test_load_take_rejects_zero_samplerate(monkeypatch):
+    """A corrupt WAV whose header framerate is 0 -> read_wav returns sr=0 ->
+    DeckPlaybackSource ratio 0 -> _render_resampled divides by zero on play.
+    load_take must reject sr<=0 at the boundary. (wave can't WRITE framerate 0,
+    so inject it via read_wav — ADVERSARIAL-SWEEP wave 5.)"""
+    monkeypatch.setattr(sax_deck, "read_wav",
+                        lambda p: (np.ones(100, dtype=np.float32), 0))
+    deck = DeckController(Mixer(max_block=1024), 48000)
+    assert deck.load_take("anything.wav") is False
+    assert deck.state == DeckState.IDLE
+
+
 # ---------------------------------------------------------------------------
 # 2. Engine non-finite / degenerate input — the detection hot path must gate,
 #    not crash, and must recover on the next clean frame.
