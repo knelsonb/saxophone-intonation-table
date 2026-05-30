@@ -327,3 +327,72 @@ def test_metronome_resync_renders_clean_beat_across_device_switch(bpm):
     # ties the rendered re-attack to the accent-pattern continuity.
     assert metro._beat > beat_before, (
         f"@{bpm}bpm beat index reset across the switch ({beat_before} -> {metro._beat})")
+
+
+# ---------------------------------------------------------------------------
+# 12. The verifier has TEETH — prove every measurement class the bench leans on
+#     actually RESPONDS to a known fault. A bench that only sees correct inputs
+#     and passes is unproven: a too-loose gate or a measurement that reads the
+#     wrong thing would rubber-stamp a real regression. Sections 0 (onset
+#     accuracy) and 10 (coordination negative control) are this discipline; here
+#     it is applied to the pitch + timing measurements the WHOLE bench depends on.
+#     Each test injects a KNOWN error and asserts the metric tracks it ~linearly,
+#     so the sub-cent / sub-sample gates elsewhere demonstrably have a real error
+#     bar rather than a green light that can't turn red.
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("detune_c", [-50, -25, -10, 10, 25, 50])
+def test_fft_peak_tracks_injected_detune(detune_c):
+    """fft_peak_hz reads a KNOWN detune as ~that many cents — so the sub-1.5c
+    output-pitch gates (§2/§3) would actually fail on a real detune this size."""
+    target = 440.0
+    detuned = target * 2.0 ** (detune_c / 1200.0)
+    sig = H.sine(detuned, SR, 16384, 0.5)
+    measured = H.cents(H.fft_peak_hz(sig, SR), target)
+    assert abs(measured - detune_c) <= 2.5, (
+        f"injected {detune_c:+d}c read {measured:+.2f}c — the pitch gate is blind to it")
+
+
+@pytest.mark.parametrize("detune_c", [-45, -20, 20, 45])
+def test_engine_cents_tracks_injected_detune(detune_c):
+    """The full engine pipeline's cents_error tracks a known detune — the INPUT
+    pitch gate (§4) has a real error bar, not a rubber stamp. (Measured vs the
+    INTENDED pitch; |detune| < 50c keeps the nearest semitone = the target note.)"""
+    target = 440.0
+    detuned = target * 2.0 ** (detune_c / 1200.0)
+    res = H.detect_tone(detuned, kind='sine', hops=24)
+    res.target_hz = target
+    assert abs(res.cents_error() - detune_c) <= 3.0, (
+        f"injected {detune_c:+d}c, engine read {res.cents_error():+.2f}c")
+
+
+@pytest.mark.parametrize("detune_c", [-40, -15, 15, 40])
+def test_peak_near_tracks_detune_on_rich_timbre(detune_c):
+    """peak_near_hz tracks a known detune on a HARMONICALLY RICH tone — the drone
+    case where a global FFT peak can land on a partial. Proves the drone-pitch
+    gate (§6) catches a real detune rather than locking the on-target bin."""
+    target = 440.0
+    detuned = target * 2.0 ** (detune_c / 1200.0)
+    sig = H.sax_like(detuned, SR, 16384, 0.5)        # 5 harmonics, fundamental detuned
+    measured = H.cents(H.peak_near_hz(sig, target, SR), target)
+    assert abs(measured - detune_c) <= 6.0, (
+        f"peak_near read {measured:+.2f}c for an injected {detune_c:+d}c detune")
+
+
+def test_onset_metric_sees_injected_timing_drift():
+    """The no-drift gates (§1/§8/§11 assert beat spacing within 2-3 samples) must
+    be able to SEE drift. A synthetic click grid whose interval grows every beat
+    must surface intervals well past the gate — so a real drifting metronome
+    could not slip through as 'no drift'."""
+    base = 12000
+    t = np.arange(1500)
+    burst = (np.sin(2 * np.pi * 1000 * t / SR) * np.exp(-t / 400.0) * 0.5).astype(np.float32)
+    sig = np.zeros(base * 9, dtype=np.float32)
+    pos = 0
+    for k in range(6):
+        sig[pos:pos + 1500] += burst
+        pos += base + k * 100                        # each interval 100 samples longer
+    onsets = H.onset_samples(sig, threshold=1e-2, min_gap=int(base * 0.4))
+    intervals = np.diff(onsets)
+    assert len(onsets) >= 5, f"injected grid under-detected: {onsets.tolist()}"
+    assert intervals.max() - intervals.min() >= 100, (
+        f"onset metric blind to injected drift: intervals={intervals.tolist()}")
