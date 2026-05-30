@@ -215,19 +215,10 @@ def _format_cents_label(value_cents: float, freq_hz: float,
     if (not math.isfinite(value_cents) or not math.isfinite(freq_hz)
             or freq_hz <= 0):
         return '–'
-    sr = float(sample_rate) if sample_rate else 44100.0
-    if sr <= 0 or freq_hz <= 0:
-        floor_ct = 0.3
-    else:
-        floor_ct = 173.0 * float(freq_hz) / sr
-    if floor_ct <= 0.3:
-        v = float(value_cents)
-        return f"{'+' if v >= 0 else '-'}{abs(v):.1f}"
-    if floor_ct <= 0.7:
-        v = round(float(value_cents) * 2.0) / 2.0
-        return f"{'+' if v >= 0 else '-'}{abs(v):.1f}"
-    v = round(float(value_cents))
-    return f"{'+' if v >= 0 else '-'}{abs(int(v))}"
+    # Integer cents only — never decimal (mirror of format_cents). sample_rate is
+    # retained for signature parity with the GUI helper.
+    v = int(round(float(value_cents)))
+    return f"{'+' if v >= 0 else '-'}{abs(v)}"
 
 
 def _draw_bars(p: QPainter,

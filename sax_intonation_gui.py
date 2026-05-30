@@ -194,9 +194,9 @@ def format_cents(value_cents: float, freq_hz: float,
                  sample_rate: int) -> str:
     """Format a cent value at the precision the measurement supports.
 
-    Always emits a sign so neutral readouts read "+0" / "+0.0" rather
-    than the visually-jumpy bare "0". Negative-zero floats coerce to
-    "+0..." via the explicit ``>= 0`` test.
+    Always emits a sign so a neutral readout reads "+0" rather than the
+    visually-jumpy bare "0". Negative-zero / tiny-negative values coerce to
+    "+0" via the explicit ``>= 0`` test (round(-0.2) -> 0 -> "+0").
 
     v0.5.7.2: guard against non-finite inputs. NoteStats.mean can be
     NaN after a reset race (empty vals → np.mean), and int(round(NaN))
@@ -206,18 +206,14 @@ def format_cents(value_cents: float, freq_hz: float,
     if (not math.isfinite(value_cents) or not math.isfinite(freq_hz)
             or freq_hz <= 0):
         return '–'
-    floor_ct = cent_precision_floor(freq_hz, sample_rate)
-    if floor_ct <= CENT_PREC_TENTHS_MAX:
-        snapped = float(value_cents)
-        sign = '+' if snapped >= 0 else '-'
-        return f"{sign}{abs(snapped):.1f}"
-    if floor_ct <= CENT_PREC_HALVES_MAX:
-        snapped = round(float(value_cents) * 2.0) / 2.0
-        sign = '+' if snapped >= 0 else '-'
-        return f"{sign}{abs(snapped):.1f}"
-    snapped = round(float(value_cents))
+    # Integer cents only — NEVER decimal. A real saxophone tone vibratos by more
+    # than a cent, so sub-cent digits claim resolution the reading can't hold and
+    # only jitter the display; an integer readout is the correct tuner UX.
+    # (freq_hz still guards validity above; sample_rate is retained for API
+    # stability now that the adaptive precision floor no longer gates the format.)
+    snapped = int(round(float(value_cents)))
     sign = '+' if snapped >= 0 else '-'
-    return f"{sign}{abs(int(snapped))}"
+    return f"{sign}{abs(snapped)}"
 
 CHROMA = ['C', 'C#/Db', 'D', 'D#/Eb', 'E', 'F',
           'F#/Gb', 'G', 'G#/Ab', 'A', 'A#/Bb', 'B']
