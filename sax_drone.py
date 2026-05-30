@@ -280,7 +280,11 @@ class DroneSource:
         self._vol32 = np.float32(self._user_volume)
 
     def set_program(self, gm_program: int) -> None:
-        self._program = int(gm_program)
+        # tsf's program_select raises (RuntimeError: channel_set_preset_number)
+        # for a program outside the GM range [0,127]; clamp. The controller's
+        # resolve_drone_voice already yields a valid program — this guards
+        # direct / API callers.
+        self._program = max(0, min(127, int(gm_program)))
         self._syn.program_select(0, self._sfid, 0, self._program)
         if self._note is not None:           # re-voice a sounding note
             self._retrigger()

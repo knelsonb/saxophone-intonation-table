@@ -126,6 +126,22 @@ def test_semitones_clamped_to_plus_minus_octave():
     assert c.semitones == -12, "semitones clamp to -12"
 
 
+def test_set_program_clamps_to_gm_range_no_crash():
+    """ADVERSARIAL-SWEEP wave 4: tsf's program_select raises (RuntimeError:
+    channel_set_preset_number) for a program outside the GM range [0,127];
+    DroneSource.set_program must clamp instead of crashing."""
+    m = Mixer(max_block=2048)
+    c = D.DroneController(m, 48000, voice_id="organ")
+    c.set_enabled(True)                 # creates the TSF-backed source
+    src = c.source
+    src.set_program(-1)
+    assert src._program == 0, "negative program must clamp to 0 (no RuntimeError)"
+    src.set_program(256)
+    assert src._program == 127, "out-of-range program must clamp to 127"
+    src.set_program(40)
+    assert src._program == 40, "in-range program is unchanged"
+
+
 def test_active_midi_is_audible_tail_aware():
     """active_midi follows AUDIO not note-on: after disable (note_off) it must
     stay set while the release tail is audible, then flip None once silent —
