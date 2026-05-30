@@ -215,3 +215,31 @@ def test_metronome_accent_grid_across_tempos_and_time_sigs(time_sig, bpm):
     assert min(accented) > max(plain), (
         f"{time_sig}@{bpm}: downbeat accent not louder than plain beats — "
         f"accent~{min(accented):.2f} vs plain~{max(plain):.2f}")
+
+
+# ---------------------------------------------------------------------------
+# 9. OUTPUT pitch STABILITY — the organ drone is the steady PRECISION reference
+#    (vibrato-free), centred on pitch. The sampled-instrument voices carry
+#    baked-in vibrato/chorus (measured at A4: strings ~21c, tenorsax ~14c,
+#    warmpad ~12c, cello ~7c spread) and are COLOUR voices, not precision
+#    references -- documented here, not asserted. The pure-sine test-tone /
+#    pitch-pipe (sections 2-3) are the sub-cent precision references.
+# ---------------------------------------------------------------------------
+def test_drone_organ_is_a_steady_reference():
+    """The organ is the steadiest, most-centred drone voice — verified at concert
+    A4, where FFT-based stability measurement of a rich tone is reliable: pitch
+    spread < 6c (vibrato-free) and centre within 4c. (Low notes like A2 are
+    FFT-resolution-limited for this measure — ~46c/bin at 110 Hz — so the lock is
+    the reliably-measurable A4 point, not a claim the organ is untestable there.
+    For sub-cent precision across the full range, the pure-sine test-tone /
+    pitch-pipe are the references; the drone is a musical reference.)"""
+    pytest.importorskip("tinysoundfont", reason="drone synth is venv/CI only")
+    import sax_drone as D
+    mixer = Mixer(max_block=2048)
+    c = D.DroneController(mixer, SR, voice_id="organ", volume=0.7)  # ref 69 = A4
+    c.set_enabled(True)
+    sig = H.render_mixer(mixer, 180000, block=2048)[20000:]   # ~3.3 s steady
+    true = D.midi_to_freq(69, 440.0)
+    mean_c, spread_c = H.pitch_stability(sig, true, SR)
+    assert spread_c < 6.0, f"organ A4 pitch spread {spread_c:.1f}c — not steady (vibrato?)"
+    assert abs(mean_c) < 4.0, f"organ A4 centre {mean_c:+.1f}c off"

@@ -181,6 +181,29 @@ def cents(detected: float, target: float) -> float:
     return 1200.0 * math.log2(detected / target)
 
 
+def pitch_stability(buf: np.ndarray, target: float, sr: int = DEFAULT_SR,
+                    win: int = 16384, search_cents: float = 80.0
+                    ) -> tuple[float, float]:
+    """(mean_cents, spread_cents) of a sustained tone's pitch across consecutive
+    `win`-sample windows, each measured near `target`. Quantifies vibrato /
+    chorus / drift: a STEADY reference tone -> spread ~0; a sampled instrument
+    with baked-in vibrato -> a wide spread (it wobbles, so it is a poor PRECISION
+    tuning reference even when its CENTRE sits on pitch). The 'pitch is right'
+    pitch fns answer where the centre is; this answers how much it moves."""
+    x = np.asarray(buf, dtype=np.float64)
+    vals = []
+    i = 0
+    while i + win <= x.shape[0]:
+        det = peak_near_hz(x[i:i + win], target, sr, search_cents)
+        if det > 0:
+            vals.append(cents(det, target))
+        i += win
+    if not vals:
+        return (float('nan'), float('nan'))
+    arr = np.asarray(vals)
+    return (float(arr.mean()), float(arr.max() - arr.min()))
+
+
 # ---------------------------------------------------------------------------
 # Transient / discontinuity detection (clicks & pops)
 # ---------------------------------------------------------------------------
