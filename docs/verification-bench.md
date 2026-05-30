@@ -10,7 +10,7 @@ pure numpy (no PortAudio, no Qt, no soundcard).
 
 | | |
 |---|---|
-| Bench | `test_virtual_bench.py` — 89 tests, 15 sections (`# 0` … `# 14`) |
+| Bench | `test_virtual_bench.py` — 95 tests, 16 sections (`# 0` … `# 15`) |
 | Toolkit | `sim_harness.py` — signal generators, renderers, pitch/timing/level meters, engine drivers |
 | Runs on | system `python3` (numpy) for the pure paths; a venv with `tinysoundfont` for the drone sections (§6, §9 `importorskip` cleanly otherwise) |
 | Principle | render/feed the **real** sources + engine, then **measure** the result — not "assert the math", but "does it actually sound/read at the right pitch, at the right time" |
@@ -59,10 +59,11 @@ A throwaway full-path mutation (re-introducing the accumulating-drift bug into t
 *real* `beat_onset_sample`) confirmed the §1 gate turns red on a real regression —
 i.e. the bench is wired to production, not just to synthetic signals.
 
-### 5. Rate-invariance — pitch + timing hold at a non-default sample rate
+### 5. Invariance — pitch + timing hold across sample rate *and* concert pitch
 | § | What | Why |
 |---|------|-----|
 | 14 | full input pipeline + test-tone + pitch-pipe + metronome grid at **48 k and 96 k** | invariant #1 (the engine hop is a constant *duration*, scaled in samples by `sr`) and the drift-zero scheduler exist *because* a real rate-scaling bug bit at 96 k / 192 k |
+| 15 | input cents + rendered pitch-pipe output at concert **A4 = 415 / 442 / 443** | the concert-pitch reference must flow through both the emitted cents and the reference tone the player tunes to — not silently hardcoded to 440 (orchestra-at-442, baroque-at-415) |
 
 ---
 

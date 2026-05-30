@@ -524,3 +524,38 @@ def test_metronome_rendered_grid_is_rate_invariant(sr):
     assert len(onsets) >= 4, f"@{sr}Hz too few clicks: {onsets.tolist()}"
     assert np.all(np.abs(intervals - interval) <= 2), (
         f"@{sr}Hz metronome grid drifted: {intervals.tolist()} (interval {interval:.1f})")
+
+
+# ---------------------------------------------------------------------------
+# 15. CONCERT-PITCH (A4) REFERENCE end-to-end across a RANGE. The bench runs at
+#     A4=440 almost everywhere, but orchestras tune to 442/443 and baroque
+#     ensembles to 415 — and the reference must flow through BOTH the input cents
+#     AND the rendered output pitch. The "feels off" scenario: you set 442 but the
+#     app secretly tunes to 440, so every reading and every reference tone is ~8c
+#     off. (test_sim has one a4=442 input case; test_pitch_pipes tests the freq
+#     MATH — this is the end-to-end measurement across a range.)
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("a4,detune_c", [
+    (415.0, 0.0), (442.0, 10.0), (443.0, -10.0)],
+    ids=["baroque-415-intune", "442+10c", "443-10c"])
+def test_input_cents_are_relative_to_the_set_concert_pitch(a4, detune_c):
+    """At a non-440 concert A, the EMITTED cents are measured against THAT
+    reference: a tone detuned detune_c from A4@a4 reads ~detune_c (and the exact
+    reference reads ~0). Proves the cents aren't silently hardcoded to 440."""
+    f = a4 * 2.0 ** (detune_c / 1200.0)
+    res = H.detect_tone(f, kind='sax', a4=a4, hops=24)
+    res.target_hz = a4                              # the in-tune A4 at this concert pitch
+    assert res.emitted and res.dominant_midi == 69, (
+        f"A4@{a4}Hz {detune_c:+.0f}c: read midi {res.dominant_midi} (expected 69)")
+    assert abs(res.cents_error() - detune_c) < 1.5, (
+        f"A4@{a4}Hz {detune_c:+.0f}c: engine read {res.cents_error():+.2f}c")
+
+
+@pytest.mark.parametrize("a4", [415.0, 442.0, 443.0])
+def test_pitch_pipe_output_honors_concert_pitch(a4):
+    """The reference tone the player tunes TO must itself follow the concert pitch:
+    the A4 pitch-pipe pad rendered at concert A=a4 sounds at exactly a4 Hz."""
+    src = PitchPipeSource(69, SR, 2048, a4=a4)
+    sig = H.render_stream(src, 16384, block=2048, warmup=2)
+    err = H.cents(H.fft_peak_hz(sig, SR), a4)       # A4 must render at a4 Hz, not 440
+    assert abs(err) < 1.5, f"pitch-pipe A4 @ concert {a4}Hz rendered {err:+.2f}c off"

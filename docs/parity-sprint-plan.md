@@ -113,8 +113,8 @@ absorbs drone controls and the pitch-pipes launcher rather than shrinking.
   bench** (`test_virtual_bench.py` + the `sim_harness.py` toolkit) renders/feeds the
   real sources and engine with no hardware and *measures* the pitch + timing of
   every input and output — see `docs/verification-bench.md` for the five axes
-  (isolation, interactions, resilience, self-verification, rate-invariance), the
-  tolerance budget, and how to run it.
+  (isolation, interactions, resilience, self-verification, and invariance across
+  sample rate + concert pitch), the tolerance budget, and how to run it.
 - **Packaging:** `intonation_analyzer.spec` and `.github/workflows/release.yml`
   get updated in the sprint that adds a new native dependency or data file. The
   SF2 soundfont and any click samples are bundled via the spec's `datas`; new
