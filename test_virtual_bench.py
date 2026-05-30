@@ -122,3 +122,52 @@ def test_input_pipeline_confirms_correct_pitch(f, midi):
         f"{f}Hz -> midi {res.dominant_midi} (expected {midi})")
     assert abs(res.cents_error()) < 2.0, (
         f"{f}Hz input cents error {res.cents_error():+.2f}c")
+
+
+# ---------------------------------------------------------------------------
+# 5. INPUT timing — detection latency (the confirm/lock machinery is not
+#    instant, but must be PROMPT). The input twin of onset timing.
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("f", [220.0, 440.0, 880.0])
+def test_input_detection_latency_bounded(f):
+    hops = H.detection_latency_hops(f, kind="sax")
+    assert hops is not None, f"{f}Hz never confirmed within the hop cap"
+    assert hops <= 12, f"{f}Hz took {hops} hops to confirm (latency regression?)"
+
+
+# ---------------------------------------------------------------------------
+# 6. OUTPUT pitch — the rendered DRONE has its FUNDAMENTAL at the reference note.
+#    Measured by FFT STRONGEST-PEAK, not YIN: the "organ" voice carries a strong
+#    16'-style sub-octave partial (~0.7 of the fundamental's magnitude) that
+#    octave-HALVES YIN (verified: YIN reads 220 for an A4 drone). The dominant
+#    spectral peak is the true sounding pitch (and the app never YIN-measures its
+#    own drone — it knows the note from active_midi). tsf/venv only.
+# ---------------------------------------------------------------------------
+def test_drone_rendered_pitch_matches_reference():
+    pytest.importorskip("tinysoundfont", reason="drone synth is venv/CI only")
+    import sax_drone as D
+    mixer = Mixer(max_block=2048)
+    c = D.DroneController(mixer, SR, voice_id="organ", volume=0.7)  # ref_midi 69, semis 0 -> A4
+    c.set_enabled(True)
+    assert c.source.active_midi == 69, "drone must declare A4 (reference 69 + 0 semitones)"
+    sig = H.render_mixer(mixer, 32768, block=2048)[4096:]  # skip the note attack
+    det = H.fft_peak_hz(sig, SR)
+    true = D.midi_to_freq(69, 440.0)
+    err = H.cents(det, true)
+    assert abs(err) < 3.0, f"drone A4 fundamental rendered {det:.2f}Hz ({err:+.2f}c)"
+
+
+# ---------------------------------------------------------------------------
+# 7. OUTPUT timing + pitch — a recorded take plays back for its full duration
+#    at the right pitch, then stops on time. (Cross-rate resample pitch is also
+#    in test_deck.py::test_playback_resample_preserves_pitch.)
+# ---------------------------------------------------------------------------
+def test_deck_playback_duration_and_pitch():
+    from sax_deck import DeckPlaybackSource
+    n, f = 24000, 440.0                                    # 0.5 s take @ A4
+    take = (np.sin(2 * np.pi * f * np.arange(n) / SR) * 0.5).astype(np.float32)
+    src = DeckPlaybackSource(take, SR, SR, 2048)
+    out = H.render_stream(src, n + 4096, block=2048)
+    det = H.fft_peak_hz(out[300:n - 300], SR)              # skip the 5 ms edge fades
+    assert abs(H.cents(det, f)) < 2.0, f"deck playback pitch {det:.2f}Hz vs {f}"
+    assert H.max_abs(out[n + 1000:]) < 1e-3, "playback must STOP at the take's end (timing)"

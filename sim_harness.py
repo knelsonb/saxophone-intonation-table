@@ -371,6 +371,27 @@ def detect_tone(freq, *, kind='sax', mode='normal', a4=440.0, mic_gain=1.0,
     return res
 
 
+def detection_latency_hops(freq: float, *, kind: str = 'sax', sr: int = DEFAULT_SR,
+                           amp: float = 0.5, mode: str = 'normal',
+                           max_hops: int = 40):
+    """Hops (DEFAULT_N-sample blocks) until the engine FIRST emits a confirmed
+    note for a steady `freq` tone (or None within `max_hops`). The input-timing
+    twin of onset_samples() for outputs: the confirm/lock machinery is
+    deliberately not instant, so this bounds how PROMPT detection is."""
+    from sax_audio_engine import AudioEngine
+    eng = AudioEngine()
+    eng.set_filter_mode(mode)
+    eng.set_a4(440.0)
+    sink = _NoteSink()
+    eng.signals = sink
+    gen = sine if kind == 'sine' else sax_like
+    for hop in range(max_hops):
+        eng.feed_input_frames(gen(freq, sr, DEFAULT_N, amp))
+        if sink.notes:
+            return hop + 1
+    return None
+
+
 if __name__ == '__main__':  # quick self-check / demo
     import sax_audio_engine as eng  # noqa
     print("— bare yin_pitch (single window) —")
