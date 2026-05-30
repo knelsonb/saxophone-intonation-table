@@ -104,6 +104,21 @@ def main() -> int:
     check(not win._deck_pulse_timer.isActive(),
           "deck pulse timer still active after set_deck_recording(False)")
 
+    # Audio-visual sync: the engine's note_detected signal updates the live
+    # readout EVENT-DRIVEN (note_detected -> _on_note -> tuner + status label),
+    # so a detected note must reach the display with the CORRECT note and
+    # INTEGER cents (never decimal). Drive _on_note (the connected slot) directly.
+    win._recording = True
+    win._cfg.allow_out_of_range = True       # don't drop the probe note
+    win._on_note(69, 440.0, 7.3)             # A4 detected, +7.3 cents
+    app.processEvents()
+    check(win._active_midi == 69,
+          f"detected note did not reach the readout (active_midi={win._active_midi})")
+    _st = win._status_lbl.text()
+    check("+7" in _st and "+7.3" not in _st,
+          f"live readout must show INTEGER cents for a detected note: {_st!r}")
+    win._recording = False
+
     # SETUP controls present.
     check(win._out_device_combo.count() >= 1,
           "output device combo has no entries (expected at least System default)")
