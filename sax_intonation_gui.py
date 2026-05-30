@@ -76,6 +76,7 @@ try:
     from sax_drone import (
         DroneController as _DroneController,
         DRONE_PRESETS as _DRONE_PRESETS,
+        DRONE_SYNTH_VOICES as _DRONE_SYNTH_VOICES,
         DRONE_FULL_GM as _DRONE_FULL_GM,
     )
 except Exception:
@@ -88,6 +89,9 @@ except Exception:
         ('cello', 'Cello', 42), ('tenorsax', 'Tenor Sax', 66),
         ('warmpad', 'Warm Pad', 89),
     ]
+    # Desktop-only synthesised voices (pure-sine precision reference); kept out of
+    # the 5-voice Android catalog. Mirror sax_drone.DRONE_SYNTH_VOICES.
+    _DRONE_SYNTH_VOICES = [('sine', 'Pure Sine', -1)]
     _DRONE_FULL_GM = []
 try:
     from sax_pitch_pipes import PitchPipesController as _PitchPipesController
@@ -2775,7 +2779,8 @@ class MainWindow(QMainWindow):
         # Presets first (labelled), then the full GM catalog. Each item's data
         # is the voice id the controller resolves.
         seen_ids = set()
-        for v in list(_DRONE_PRESETS) + list(_DRONE_FULL_GM):
+        # Presets, then the desktop-only synth voices (pure sine), then full GM.
+        for v in list(_DRONE_PRESETS) + list(_DRONE_SYNTH_VOICES) + list(_DRONE_FULL_GM):
             vid, label, program = self._drone_voice_fields(v)
             if vid in seen_ids:
                 continue

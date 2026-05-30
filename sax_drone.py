@@ -49,8 +49,9 @@ _SF2_FILENAME = "GeneralUser-GS.sf2"
 
 __all__ = [
     "A4_DEFAULT", "GM_NAMES", "DRONE_PRESETS", "DRONE_FULL_GM",
+    "DRONE_SYNTH_VOICES", "SINE_VOICE_ID", "is_sine_voice",
     "resolve_drone_voice", "midi_to_freq", "drone_freq",
-    "DroneSource", "DroneController",
+    "DroneSource", "SineDroneSource", "DroneController",
 ]
 
 # General MIDI Level-1 instrument names, indexed by 0-based program number
@@ -107,6 +108,17 @@ DRONE_FULL_GM: List[Tuple[str, str, int]] = [
 
 _DEFAULT_PROGRAM = 19  # Organ — the fallback for an unknown voice id.
 
+# Desktop-only SYNTHESISED voices — NOT part of the Android droneVoices catalog
+# (DRONE_PRESETS, pinned to the five ported voices by test_drone). Same
+# (id, display name, GM program) shape so the GUI picker treats them uniformly;
+# the program is unused (these are generated, not loaded from the SF2). The pure
+# sine is the drone's sub-cent, vibrato-free PRECISION tuning reference (the SF2
+# voices carry musical vibrato/chorus — see test_virtual_bench §9/§16).
+SINE_VOICE_ID = "sine"
+DRONE_SYNTH_VOICES: List[Tuple[str, str, int]] = [
+    (SINE_VOICE_ID, "Pure Sine", -1),
+]
+
 
 def _default_sf2_path() -> str:
     """Frozen-aware path to the bundled SoundFont. Uses sax_assets.asset_path
@@ -146,6 +158,13 @@ def resolve_drone_voice(voice_id) -> int:
         if 0 <= n <= 127:
             return n
     return _DEFAULT_PROGRAM
+
+
+def is_sine_voice(voice_id) -> bool:
+    """True if ``voice_id`` selects the pure-sine precision voice (a synthesised
+    voice, NOT an SF2 patch). The controller branches on this to build a
+    SineDroneSource instead of a DroneSource."""
+    return str(voice_id).strip().lower() == SINE_VOICE_ID
 
 
 def midi_to_freq(midi: float, a4: float = A4_DEFAULT) -> float:
@@ -413,6 +432,188 @@ class DroneSource:
 
 
 # ---------------------------------------------------------------------------
+# SineDroneSource — pure-numpy sine, the vibrato-free PRECISION drone voice.
+# ---------------------------------------------------------------------------
+class SineDroneSource:
+    """A single sustained pure sine — the drone's precision tuning reference.
+
+    DroneSource plays sampled SF2 patches, which carry baked-in vibrato/chorus
+    (a *musical* reference). This synthesises a numpy sine at exactly
+    ``midi_to_freq(note, a4)``: no SoundFont, no vibrato, sub-cent stable — a
+    reference you can hold a note against. It mirrors DroneSource's MixerSource +
+    control API so DroneController drives either behind one interface, needs NO
+    tinysoundfont (runs on system-python), is click-free (a short attack/release
+    envelope over a continuous phase accumulator), and allocates nothing per
+    block (preallocated phase / sine / mono buffers). ``active_midi`` is
+    audible-tail aware (held through the release ramp) so the D3 mic-coordinator
+    vote-excludes the sounding note exactly like the SF2 drone.
+    """
+
+    __test__ = False
+
+    # Output peak below which a released voice is inaudible, and how long it must
+    # stay there before active_midi flips to None (mirrors DroneSource).
+    _SILENCE_PEAK = 1e-4
+    _TWO_PI = 2.0 * math.pi
+
+    def __init__(self, samplerate: int, max_block: int, *,
+                 volume: float = 0.5, a4: float = A4_DEFAULT,
+                 glide_ms: float = 5.0):
+        if samplerate <= 0:
+            raise ValueError(f"samplerate must be > 0, got {samplerate}")
+        if max_block < 1:
+            raise ValueError(f"max_block must be >= 1, got {max_block}")
+        self.samplerate = int(samplerate)
+        self._max_block = int(max_block)
+        self._user_volume = _clamp01(volume)
+        self._a4 = float(a4)
+
+        # Phase accumulator: _inc = radians/sample of the current note (0 until a
+        # note sounds); _phase wrapped to [0, 2pi) in float64 so a long sustained
+        # hold keeps full precision.
+        self._inc = 0.0
+        self._phase = 0.0
+
+        # Preallocated work buffers — zero per-block allocation. Phase + sine in
+        # float64 for accuracy; the mono output is float32 (the mixer's dtype).
+        self._idx = np.arange(self._max_block, dtype=np.float64)
+        self._phs = np.zeros(self._max_block, dtype=np.float64)
+        self._sin = np.zeros(self._max_block, dtype=np.float64)
+        self._mono = np.zeros(self._max_block, dtype=np.float32)
+        self._vol32 = np.float32(self._user_volume)
+
+        # Note envelope (click-free attack/release) + the D3 duck — both glide.
+        self._env = GainGlide(self._max_block, self.samplerate,
+                              glide_ms=glide_ms, initial=0.0)
+        self._duck = GainGlide(self._max_block, self.samplerate,
+                               glide_ms=glide_ms, initial=1.0)
+
+        self._note: Optional[int] = None      # currently note-on MIDI, or None
+        self._sounding: Optional[int] = None   # audible MIDI incl. tail, or None
+        self._silent_blocks = 0
+        self._silence_confirm = max(
+            1, int(0.05 * self.samplerate / self._max_block))
+
+    # -- control ------------------------------------------------------------
+    def set_volume(self, volume: float) -> None:
+        self._user_volume = _clamp01(volume)
+        self._vol32 = np.float32(self._user_volume)
+
+    def set_program(self, gm_program: int) -> None:
+        # A pure sine has no GM patch — accept + ignore for API symmetry with
+        # DroneSource. (DroneController rebuilds the source on an SF2<->sine
+        # switch, so set_program is only ever a no-op self-select here.)
+        return
+
+    def set_a4(self, a4: float) -> None:
+        a4 = float(a4)
+        if not math.isfinite(a4) or a4 <= 0.0:
+            return                 # match DroneSource.set_a4 + the engine
+        self._a4 = a4
+        if self._note is not None:
+            self._set_freq(self._note)   # phase stays continuous -> click-free
+
+    def set_duck_target(self, level: float) -> None:
+        """Engine D3 hook: per-hop duck gain target (in [duck_depth, 1.0])."""
+        self._duck.set_target(level)
+
+    def _set_freq(self, midi: int) -> None:
+        freq = midi_to_freq(midi, self._a4)
+        self._inc = self._TWO_PI * float(freq) / float(self.samplerate)
+
+    def note_on(self, midi: int, velocity: int = 100) -> None:
+        midi = max(0, min(127, int(midi)))
+        self._note = midi
+        self._set_freq(midi)
+        self._env.set_target(1.0)        # ramp up (click-free attack)
+        self._sounding = midi
+        self._silent_blocks = 0
+
+    def note_off(self) -> None:
+        self._note = None
+        self._env.set_target(0.0)        # ramp down; _sounding clears on the tail
+
+    def silence(self) -> None:
+        """Force the audible-tail state to silent immediately WITHOUT precluding
+        re-enable (mirrors DroneSource.silence): note off, release the envelope,
+        and clear ``_sounding`` directly so active_midi can't stick non-None when
+        no render runs to drain it (the D3-critical part). The envelope releases
+        over its normal ~5 ms ramp rather than snapping — click-free, and moot
+        when this is called with output stopped (nothing is rendering)."""
+        self._note = None
+        self._env.set_target(0.0)
+        self._sounding = None
+        self._silent_blocks = 0
+
+    def close(self) -> None:
+        self._note = None
+        self._sounding = None
+        self._env.set_target(0.0)
+
+    @property
+    def active_midi(self) -> Optional[int]:
+        return self._sounding
+
+    @property
+    def duck_gain(self) -> float:
+        """Current (glided) duck gain — observable for tests/telemetry."""
+        return self._duck.gain
+
+    # -- MixerSource render -------------------------------------------------
+    def render(self, out: np.ndarray, frames: int, t0: int) -> None:
+        if frames <= 0:
+            return
+        n = self._max_block if frames >= self._max_block else frames
+
+        if n == self._max_block:
+            idx, phs, sin64, mono = self._idx, self._phs, self._sin, self._mono
+        else:
+            idx, phs = self._idx[:n], self._phs[:n]
+            sin64, mono = self._sin[:n], self._mono[:n]
+
+        # sine[i] = sin(_phase + i*_inc), generated in float64, cast into the
+        # float32 mono buffer in place (no per-block allocation).
+        np.multiply(idx, self._inc, out=phs)
+        phs += self._phase
+        np.sin(phs, out=sin64)
+        mono[:] = sin64
+        # Advance + wrap the running phase so the next block continues seamlessly
+        # (and a freq change between blocks stays phase-continuous -> no click).
+        self._phase = math.fmod(self._phase + n * self._inc, self._TWO_PI)
+
+        # Envelope (attack/release) FIRST, so a released note actually decays to
+        # silence before the audible-tail check reads its peak.
+        self._env.apply(mono, n)
+
+        # Audible-tail tracking on the post-envelope, pre-volume/pre-duck signal
+        # (max/min avoid an np.abs temporary — zero per-block alloc), mirroring
+        # DroneSource so D3 sees the same active_midi lifecycle.
+        hi = float(mono.max())
+        lo = float(mono.min())
+        peak = hi if hi >= -lo else -lo
+        if self._note is None:
+            if peak < self._SILENCE_PEAK:
+                self._silent_blocks += 1
+                if self._silent_blocks >= self._silence_confirm:
+                    self._sounding = None
+            else:
+                self._silent_blocks = 0
+        else:
+            self._silent_blocks = 0
+
+        # User volume then the duck glide — both on the drone's OWN buffer, never
+        # the shared accumulator (the duck must affect only the drone).
+        if self._user_volume != 1.0:
+            mono *= self._vol32
+        self._duck.apply(mono, n)
+
+        if out.shape[0] == n:
+            out += mono
+        else:
+            out[:n] += mono
+
+
+# ---------------------------------------------------------------------------
 # DroneController — state + lifecycle on the mixer.
 # ---------------------------------------------------------------------------
 class DroneController:
@@ -448,7 +649,7 @@ class DroneController:
         self._sf2_path = sf2_path
         self._on_state_changed = on_state_changed
         self.enabled = False
-        self._source: Optional[DroneSource] = None
+        self._source: "Optional[DroneSource | SineDroneSource]" = None
         self._max_block = int(getattr(mixer, "max_block", 2048))
         # NOTE: requested enabled=True is honoured lazily — call set_enabled(True)
         # after the output stream is open (GUI honesty discipline).
@@ -463,14 +664,50 @@ class DroneController:
     def _played_midi(self) -> int:
         return max(0, min(127, self.reference_midi + self.semitones))
 
-    def _ensure_source(self) -> DroneSource:
+    def _ensure_source(self) -> "DroneSource | SineDroneSource":
         if self._source is None:
             self._max_block = int(getattr(self._mixer, "max_block", self._max_block))
-            self._source = DroneSource(
-                self._samplerate, self._max_block,
-                resolve_drone_voice(self.voice_id), volume=self.volume,
-                a4=self._a4, sf2_path=self._sf2_path)
+            if is_sine_voice(self.voice_id):
+                self._source = SineDroneSource(
+                    self._samplerate, self._max_block,
+                    volume=self.volume, a4=self._a4)
+            else:
+                self._source = DroneSource(
+                    self._samplerate, self._max_block,
+                    resolve_drone_voice(self.voice_id), volume=self.volume,
+                    a4=self._a4, sf2_path=self._sf2_path)
         return self._source
+
+    def _rebuild_source(self) -> None:
+        """Tear the live source down and rebuild it from the current voice / rate
+        / volume / a4, preserving enabled + the playing note + mixer registration
+        + duck attach. Needed when something that can't be reconfigured in place
+        changes: the sample RATE (TinySoundFont binds its rate at construction) or
+        the source TYPE (SF2 DroneSource <-> SineDroneSource are different
+        classes). Assumes a live source exists; callers guard."""
+        was_enabled = self.enabled
+        eng = self._engine
+        if self._source is not None:
+            if eng is not None and hasattr(eng, "detach_duck_consumer"):
+                try:
+                    eng.detach_duck_consumer(self._source)
+                except Exception:
+                    pass
+            try:
+                self._mixer.unregister(self._source)
+            except Exception:
+                pass
+            try:
+                self._source.close()
+            except Exception:
+                pass
+            self._source = None
+        if was_enabled:
+            src = self._ensure_source()
+            self._mixer.register(src)
+            src.note_on(self._played_midi())
+            if eng is not None and hasattr(eng, "attach_duck_consumer"):
+                eng.attach_duck_consumer(src)
 
     def _emit(self) -> None:
         cb = self._on_state_changed
@@ -481,7 +718,7 @@ class DroneController:
                 pass
 
     @property
-    def source(self) -> Optional[DroneSource]:
+    def source(self) -> "Optional[DroneSource | SineDroneSource]":
         return self._source
 
     def is_enabled(self) -> bool:
@@ -532,9 +769,16 @@ class DroneController:
 
     # -- setters ------------------------------------------------------------
     def set_voice(self, voice_id: str) -> None:
+        # An SF2<->sine switch changes the source CLASS, which can't be
+        # reprogrammed in place — rebuild it. A patch change within the SF2
+        # catalog just reselects the program on the live synth.
+        type_changed = is_sine_voice(voice_id) != is_sine_voice(self.voice_id)
         self.voice_id = voice_id
         if self._source is not None:
-            self._source.set_program(resolve_drone_voice(voice_id))
+            if type_changed:
+                self._rebuild_source()
+            else:
+                self._source.set_program(resolve_drone_voice(voice_id))
         self._emit()
 
     def set_volume(self, volume: float) -> None:
@@ -579,26 +823,5 @@ class DroneController:
         self._samplerate = sr
         if self._source is None:
             return  # next _ensure_source() builds at the new rate
-        was_enabled = self.enabled
-        eng = self._engine
-        if eng is not None and hasattr(eng, "detach_duck_consumer"):
-            try:
-                eng.detach_duck_consumer(self._source)
-            except Exception:
-                pass
-        try:
-            self._mixer.unregister(self._source)
-        except Exception:
-            pass
-        try:
-            self._source.close()
-        except Exception:
-            pass
-        self._source = None
-        if was_enabled:
-            src = self._ensure_source()
-            self._mixer.register(src)
-            src.note_on(self._played_midi())
-            if eng is not None and hasattr(eng, "attach_duck_consumer"):
-                eng.attach_duck_consumer(src)
+        self._rebuild_source()   # rate binds at construction -> rebuild
         self._emit()

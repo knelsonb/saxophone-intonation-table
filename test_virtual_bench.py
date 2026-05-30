@@ -559,3 +559,61 @@ def test_pitch_pipe_output_honors_concert_pitch(a4):
     sig = H.render_stream(src, 16384, block=2048, warmup=2)
     err = H.cents(H.fft_peak_hz(sig, SR), a4)       # A4 must render at a4 Hz, not 440
     assert abs(err) < 1.5, f"pitch-pipe A4 @ concert {a4}Hz rendered {err:+.2f}c off"
+
+
+# ---------------------------------------------------------------------------
+# 16. The PURE-SINE drone — the drone's sub-cent PRECISION reference. The SF2
+#     voices (§6/§9) carry musical vibrato/chorus (organ steadiest, ~3c spread);
+#     this synthesised voice (sax_drone.SineDroneSource — pure numpy) is
+#     vibrato-free and exact, a tuning reference you can hold a note against.
+#     Unlike §6/§9 it needs NO SoundFont, so it is an ALWAYS-ON gate (system-
+#     python, no tsf importorskip) — the drone path's only always-runnable pitch
+#     lock. Renders through the REAL DroneController/Mixer, then measures.
+# ---------------------------------------------------------------------------
+def test_pure_sine_drone_is_a_sub_cent_stability_reference():
+    """The pure-sine drone holds A4 with no vibrato — spread far under the organ's
+    <6c (§9) and centred sub-cent: the precision reference the sampled voices
+    can't be."""
+    import sax_drone as D
+    mixer = Mixer(max_block=2048)
+    c = D.DroneController(mixer, SR, voice_id=D.SINE_VOICE_ID, volume=0.7)
+    c.set_enabled(True)
+    assert type(c.source).__name__ == "SineDroneSource", "sine id must build the sine source"
+    sig = H.render_mixer(mixer, 180000, block=2048)[20000:]   # ~3.3 s steady
+    true = D.midi_to_freq(69, 440.0)
+    mean_c, spread_c = H.pitch_stability(sig, true, SR)
+    assert spread_c < 0.5, f"pure-sine A4 spread {spread_c:.3f}c — should be vibrato-free"
+    assert abs(mean_c) < 1.5, f"pure-sine A4 centre {mean_c:+.3f}c off"
+
+
+@pytest.mark.parametrize("midi,name", [
+    (45, "A2"), (57, "A3"), (69, "A4"), (76, "E5"), (81, "A5")])
+def test_pure_sine_drone_pitch_is_exact_across_the_range(midi, name):
+    """The sounded fundamental is the reference note at every pitch. The synth is
+    exact (inc = 2*pi*f/sr); the residual is FFT bin resolution, widest at the
+    lowest note (~46c/bin at 110 Hz, recovered to ~1c by parabolic interp), so the
+    band is <2c — still 6x tighter than the rich-timbre SF2 gate (§6, <12c)."""
+    import sax_drone as D
+    mixer = Mixer(max_block=2048)
+    c = D.DroneController(mixer, SR, voice_id=D.SINE_VOICE_ID, volume=0.7)
+    c.set_reference_midi(midi)
+    c.set_enabled(True)
+    assert c.source.active_midi == midi, f"sine must declare midi {midi}"
+    sig = H.render_mixer(mixer, 49152, block=2048)[6000:]
+    true = D.midi_to_freq(midi, 440.0)
+    err = H.cents(H.fft_peak_hz(sig, SR), true)
+    assert abs(err) < 2.0, f"pure-sine {name} ({true:.1f}Hz) -> {err:+.2f}c"
+
+
+@pytest.mark.parametrize("a4", [415.0, 442.0, 443.0])
+def test_pure_sine_drone_reference_follows_concert_pitch(a4):
+    """A tuning reference must track the concert pitch: A4 on the pure-sine drone
+    sounds at exactly the set a4 (baroque 415 / orchestral 442 / 443), not a
+    hardcoded 440 (the SineDroneSource concert-pitch twin of §15)."""
+    import sax_drone as D
+    mixer = Mixer(max_block=2048)
+    c = D.DroneController(mixer, SR, voice_id=D.SINE_VOICE_ID, volume=0.7, a4=a4)
+    c.set_enabled(True)                                  # ref midi 69 = A4
+    sig = H.render_mixer(mixer, 49152, block=2048)[6000:]
+    err = H.cents(H.fft_peak_hz(sig, SR), a4)            # A4 must render at a4, not 440
+    assert abs(err) < 1.0, f"pure-sine A4 @ concert {a4}Hz rendered {err:+.2f}c off"

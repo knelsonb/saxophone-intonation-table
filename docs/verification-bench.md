@@ -10,9 +10,9 @@ pure numpy (no PortAudio, no Qt, no soundcard).
 
 | | |
 |---|---|
-| Bench | `test_virtual_bench.py` — 95 tests, 16 sections (`# 0` … `# 15`) |
+| Bench | `test_virtual_bench.py` — 104 tests, 17 sections (`# 0` … `# 16`) |
 | Toolkit | `sim_harness.py` — signal generators, renderers, pitch/timing/level meters, engine drivers |
-| Runs on | system `python3` (numpy) for the pure paths; a venv with `tinysoundfont` for the drone sections (§6, §9 `importorskip` cleanly otherwise) |
+| Runs on | system `python3` (numpy) for the pure paths — including the §16 **pure-sine drone**; a venv with `tinysoundfont` only for the SF2 drone sections (§6, §9 `importorskip` cleanly otherwise) |
 | Principle | render/feed the **real** sources + engine, then **measure** the result — not "assert the math", but "does it actually sound/read at the right pitch, at the right time" |
 
 Related: `docs/parity-sprint-plan.md` (parent plan) · `docs/v1.1-hardening.md` (the
@@ -22,7 +22,7 @@ hardening goal this grew out of) · `docs/response-modes.md` (engine filter pres
 
 ## The five axes
 
-Each source/path is verified along the axes that matter for "feels off". The 15
+Each source/path is verified along the axes that matter for "feels off". The 17
 bench sections map onto them:
 
 ### 1. Per-source isolation — every source's pitch + timing, measured alone
@@ -37,7 +37,8 @@ bench sections map onto them:
 | 6 | drone pitch — 5 notes × 3 voices (organ/cello/tenorsax) | `peak_near` reads the fundamental of the rich timbre < 12 c |
 | 7 | deck playback | a recorded take plays its full duration at the right pitch |
 | 8 | metronome accent grid — 5 tempos (40–200) × 4 time sigs (2/4,3/4,4/4,6/8) | every click on the grid + the downbeat is the loud accent |
-| 9 | drone pitch **stability** | the organ is a vibrato-free reference (A4 spread < 6 c, centre < 4 c) |
+| 9 | drone pitch **stability** | the organ is the steadiest SF2 reference (A4 spread < 6 c, centre < 4 c) |
+| 16 | drone pitch — the **pure-sine** precision voice (no SF2, always-on) | vibrato-free + exact: A4 spread < 0.5 c & centre < 1.5 c; < 2 c across A2–A5; follows concert A4 (415/442/443) — the SF2 voices' sub-cent twin |
 
 ### 2. Interactions — sources running *together* (where "feels off" hides)
 | § | Scenario | Verified |
@@ -110,6 +111,7 @@ YIN-vs-FFT vs full-pipeline readout across a few frequencies.
 | Detected input pitch (rate-invariance) | < 1 c | §14 |
 | Drone pitch (rich SF2 timbre via `peak_near`) | < 12 c | §6 |
 | Drone stability (organ A4 spread / centre) | < 6 c / < 4 c | §9 |
+| Drone pitch (pure-sine voice: range / A4 stability) | < 2 c / < 0.5 c | §16 |
 | Player pitch through metronome-click bleed | < 3 c | §13 |
 | Metronome beat spacing (per-beat + cumulative) | ≤ 2 samples | §1, §8, §11, §14 |
 | Detection latency | ≤ 12 hops | §5 |
@@ -126,8 +128,12 @@ hold (`format_cents`; locked by `test_format_cents.py`).
   voices carry baked-in vibrato/chorus — measured A4 pitch spread: strings ~21 c,
   tenorsax ~14 c, warmpad ~12 c, cello ~7 c; only the **organ** is steady (~3 c).
   The sub-cent precision references are the pure-sine **test-tone** and
-  **pitch-pipe** (§2, §3). A vibrato-free pure-sine *drone* voice is an open,
-  operator-gated option.
+  **pitch-pipe** (§2, §3) — and now a vibrato-free pure-sine **drone** voice too
+  (§16, `SineDroneSource`; A4 spread ~0 c, follows concert pitch). It needs no
+  SoundFont, so it is the drone path's one *always-on* precision gate, and gives
+  the player a drone reference they can hold a note against. (Surfaced in the SETUP
+  voice picker as "Pure Sine"; the 5-voice Android catalog `DRONE_PRESETS` is left
+  untouched — it's a desktop-only synthesised voice, `DRONE_SYNTH_VOICES`.)
 - **Device-switch resync re-attacks; it does not phase-preserve.** A switch has an
   unknown silent gap, so `resync()` re-anchors the next beat at the start of the
   new clock and continues the beat *index*/accent — it does not preserve a

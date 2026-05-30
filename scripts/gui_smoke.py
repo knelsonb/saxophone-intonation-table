@@ -431,6 +431,35 @@ def main() -> int:
         win._btn_drone_on.setChecked(False)
         app.processEvents()
 
+    # Pure-sine drone live-wiring lock (precision-reference voice, 2026-05-30):
+    # picking "Pure Sine" in the SETUP combo must drive the controller to build a
+    # SineDroneSource (pure numpy, no SF2) on the real mixer and declare its note.
+    # The SF2<->sine source-TYPE rebuild is unit-tested on the controller, but
+    # only this combo-path check proves the picker is actually wired to it. Output
+    # is "up" so the source builds.
+    if win._drone_ctrl is not None:
+        win._engine.output_running = True
+        win._engine.output_samplerate = 44100
+        win._engine.open_output_device = lambda *a, **k: None
+        combo = win._drone_voice_combo
+        sine_ix = next((i for i in range(combo.count())
+                        if combo.itemData(i) == "sine"), -1)
+        check(sine_ix >= 0, "SETUP picker has no 'Pure Sine' entry")
+        combo.setCurrentIndex(sine_ix)            # fires _on_drone_voice_changed
+        app.processEvents()
+        check(win._drone_voice_id == "sine" and win._cfg.drone_voice_id == "sine",
+              f"picking Pure Sine did not set the voice id: {win._drone_voice_id}")
+        win._btn_drone_on.setChecked(True)
+        app.processEvents()
+        _src = win._drone_ctrl.source
+        check(_src is not None and type(_src).__name__ == "SineDroneSource",
+              "Pure Sine selection did not build a SineDroneSource "
+              f"({type(_src).__name__ if _src else None})")
+        check(_src is not None and _src.active_midi is not None,
+              "enabled pure-sine drone declares no active_midi (D3 can't exclude it)")
+        win._btn_drone_on.setChecked(False)
+        app.processEvents()
+
     # DECK tab (Sprint 4) — built inert here (sax_deck lands in CI's venv; and
     # headless has no input device anyway). This is the HONESTY LOCK Treebeard
     # pins: a record attempt that can't arm the mic must NEVER show the pulsing

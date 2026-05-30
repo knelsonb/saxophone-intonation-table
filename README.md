@@ -22,7 +22,7 @@ This program records notes via microphone, detects the pitch in real time, and m
 - Interface switchable between German and English
 - Tab-based interface: Tuner · Metronome · Tape Deck · Setup
 - Metronome with accented downbeat, common time signatures, and tap tempo (sample-accurate scheduling)
-- Drone reference tone: 5 quick presets plus 128 General MIDI voices (SoundFont)
+- Drone reference tone: 5 quick presets plus 128 General MIDI voices (SoundFont), and a vibrato-free pure-sine precision voice
 - Pitch pipes: sustained sine reference pads across the chromatic octave
 - Tape deck: record your playing through the mic and play it back; export the take to WAV
 - Themes: dark, night (red-shifted to preserve dark-adapted vision in a darkened hall/pit), and light — switchable live without restart
@@ -211,7 +211,7 @@ Dieses Programm nimmt Töne über das Mikrofon auf, erkennt die Tonhöhe in Echt
 - Oberfläche auf Deutsch und Englisch umschaltbar
 - Tab-Oberfläche: Tuner · Metronom · Bandmaschine · Einstellungen
 - Metronom mit betontem Auftakt, gängigen Taktarten und Tap-Tempo (taktgenaue Planung)
-- Bordun-Referenzton: 5 Schnellvorgaben plus 128 General-MIDI-Klänge (SoundFont)
+- Bordun-Referenzton: 5 Schnellvorgaben plus 128 General-MIDI-Klänge (SoundFont) sowie eine vibratofreie reine Sinus-Stimme als Präzisionsreferenz
 - Stimmpfeifen: gehaltene Sinus-Referenztöne über die chromatische Oktave
 - Bandmaschine: das eigene Spiel über das Mikrofon aufnehmen und wiedergeben; Aufnahme als WAV exportieren
 - Themes: Dunkel, Nacht (rotverschoben zum Schutz der dunkeladaptierten Sicht in dunklem Saal/Graben) und Hell — live umschaltbar ohne Neustart
