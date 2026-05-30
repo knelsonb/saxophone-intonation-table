@@ -108,7 +108,7 @@ except Exception:
     _DeckController = None
 
 APP_NAME = 'Intonation Analyzer'
-APP_VERSION = '1.0.1'
+APP_VERSION = '1.1.0'
 
 # v0.5.4: AudioEngine + pitch detection + filter presets live in their own
 # module so the engine has a state machine, host-API fallback chain, and
