@@ -286,7 +286,10 @@ class DroneSource:
             self._retrigger()
 
     def set_a4(self, a4: float) -> None:
-        self._a4 = float(a4)
+        a4 = float(a4)
+        if not math.isfinite(a4) or a4 <= 0.0:
+            return            # a4 <= 0 -> _a4_to_tuning_semitones' log2 domain error
+        self._a4 = a4
         self._syn.set_tuning(0, _a4_to_tuning_semitones(self._a4))
         if self._note is not None:
             self._retrigger()
@@ -549,7 +552,10 @@ class DroneController:
         self._emit()
 
     def set_a4(self, a4: float) -> None:
-        self._a4 = float(a4)
+        a4 = float(a4)
+        if not math.isfinite(a4) or a4 <= 0.0:
+            return            # match DroneSource.set_a4 + the engine: reject a4 <= 0
+        self._a4 = a4
         if self._source is not None:
             self._source.set_a4(self._a4)
         self._emit()
