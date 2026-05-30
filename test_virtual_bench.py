@@ -471,3 +471,56 @@ def test_two_simultaneous_output_tones_each_keep_pitch_in_the_mix():
     eb = H.cents(H.peak_near_hz(sig, fb, SR), fb)
     assert abs(ea) < 2.0, f"tone A {fa}Hz pulled to {ea:+.2f}c in the mix"
     assert abs(eb) < 2.0, f"tone B {fb}Hz pulled to {eb:+.2f}c in the mix"
+
+
+# ---------------------------------------------------------------------------
+# 14. RATE-INVARIANCE — pitch + timing must hold at a NON-default sample rate.
+#     Invariant #1 (the engine hop is a constant DURATION, scaled in SAMPLES by
+#     sr) and the drift-zero scheduler exist BECAUSE a real rate-scaling bug bit
+#     at 96k/192k. Bare yin_pitch (test_yin_accuracy) and the drone (test_drone_
+#     pitch) are already rate-checked; this covers the bench-distinctive END-TO-
+#     END measurements that were single-rate: the FULL input pipeline (gate ->
+#     YIN -> confirm -> emit), the rendered test-tone / pitch-pipe pitch, and the
+#     rendered metronome grid. 48k is the baseline; 96k is the doubling that
+#     catches a samples-vs-duration scaling bug.
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("sr", [48000, 96000])
+def test_input_pipeline_pitch_is_rate_invariant(sr):
+    res = H.detect_tone(440.0, kind='sax', sr=sr, hops=24)
+    assert res.emitted and res.dominant_midi == 69, (
+        f"@{sr}Hz full pipeline read midi={res.dominant_midi} (expected 69)")
+    assert abs(res.cents_error()) < 1.0, (
+        f"@{sr}Hz full pipeline cents {res.cents_error():+.2f}c")
+
+
+@pytest.mark.parametrize("sr", [48000, 96000])
+def test_test_tone_rendered_pitch_is_rate_invariant(sr):
+    f = 440.0
+    tone = TestToneSource(f, sr, 2048, gain=0.3)
+    sig = H.render_stream(tone, sr // 3, block=2048)
+    err = H.cents(H.fft_peak_hz(sig, sr), f)
+    assert abs(err) < 1.5, f"test tone {f}Hz @{sr}Hz rendered {err:+.2f}c off"
+
+
+@pytest.mark.parametrize("sr", [48000, 96000])
+def test_pitch_pipe_rendered_pitch_is_rate_invariant(sr):
+    midi, a4 = 69, 440.0
+    src = PitchPipeSource(midi, sr, 2048, a4=a4)
+    sig = H.render_stream(src, sr // 3, block=2048, warmup=2)
+    err = H.cents(H.fft_peak_hz(sig, sr), pp.midi_to_freq(midi, a4))
+    assert abs(err) < 1.5, f"pitch pipe midi={midi} @{sr}Hz rendered {err:+.2f}c off"
+
+
+@pytest.mark.parametrize("sr", [48000, 96000])
+def test_metronome_rendered_grid_is_rate_invariant(sr):
+    mb = 1024
+    mixer = Mixer(max_block=mb)
+    metro = MetronomeController(mixer, sr, bpm=120)
+    metro.start()
+    interval = sr * 60.0 / 120
+    sig = H.render_mixer(mixer, int(interval * 6), block=mb)
+    onsets = H.onset_samples(sig, threshold=1e-2, min_gap=int(interval * 0.4))[:5]
+    intervals = np.diff(onsets)
+    assert len(onsets) >= 4, f"@{sr}Hz too few clicks: {onsets.tolist()}"
+    assert np.all(np.abs(intervals - interval) <= 2), (
+        f"@{sr}Hz metronome grid drifted: {intervals.tolist()} (interval {interval:.1f})")

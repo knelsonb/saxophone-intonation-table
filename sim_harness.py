@@ -408,6 +408,10 @@ def detect_tone(freq, *, kind='sax', mode='normal', a4=440.0, mic_gain=1.0,
     """
     from sax_audio_engine import AudioEngine
     eng = AudioEngine()
+    eng.samplerate = int(sr)        # the detection hop reads self.samplerate; the
+                                    # tone is generated at `sr`, so the engine MUST
+                                    # detect at `sr` too or lag->freq is wrong off
+                                    # the default rate (no-op when sr == default).
     eng.set_filter_mode(mode)
     eng.set_a4(a4)
     eng.set_mic_gain(mic_gain)
@@ -433,6 +437,7 @@ def detection_latency_hops(freq: float, *, kind: str = 'sax', sr: int = DEFAULT_
     deliberately not instant, so this bounds how PROMPT detection is."""
     from sax_audio_engine import AudioEngine
     eng = AudioEngine()
+    eng.samplerate = int(sr)        # detect at the same rate the tone is made at
     eng.set_filter_mode(mode)
     eng.set_a4(440.0)
     sink = _NoteSink()
