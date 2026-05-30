@@ -278,3 +278,52 @@ def test_negative_control_same_leakage_locks_when_no_drone_sounds():
     res = H.detect_with_sounding_output(pp.midi_to_freq(69, 440.0), [], hops=24)
     assert res.dominant_midi == 69, (
         f"with no drone sounding, A4 must lock normally; got {res.dominant_midi}")
+
+
+# ---------------------------------------------------------------------------
+# 11. OUTPUT timing — the metronome survives an output-device switch (Option-B
+#     resync) cleanly in the RENDERED audio. A device switch has an unknown
+#     SILENT gap (old stream stops, new device opens), so resync deliberately
+#     re-anchors the next beat at the START of the new clock and continues the
+#     beat INDEX/accent — it does NOT try to preserve a sub-beat phase across
+#     silence that the musician can't hear anyway. test_metro_resync proves the
+#     scheduler STATE; this proves the audio: a drift-free grid on EACH side of
+#     the switch + a PROMPT re-attack on the new stream (no hang, no silence).
+#     The "feels off" scenario: swap headphones for speakers mid-practice and
+#     the metronome hangs or the beat starts drifting.
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("bpm", [60, 120, 200])
+def test_metronome_resync_renders_clean_beat_across_device_switch(bpm):
+    mb = 1024
+    mixer = Mixer(max_block=mb)
+    metro = MetronomeController(mixer, SR, bpm=bpm)
+    metro.start()
+    interval = SR * 60.0 / bpm
+
+    def grid(sig):
+        on = H.onset_samples(sig, threshold=1e-2, min_gap=int(interval * 0.4))
+        return on, np.diff(on)
+
+    before = H.render_mixer(mixer, int(interval * 5), block=mb)
+    on_b, iv_b = grid(before)
+    assert len(on_b) >= 4, f"@{bpm}bpm too few pre-switch clicks: {on_b}"
+    assert np.all(np.abs(iv_b - interval) <= 2), (
+        f"@{bpm}bpm pre-switch beat grid drifted: {iv_b.tolist()}")
+    beat_before = metro._beat
+
+    mixer.reset_clock()                  # open_output_device() does this
+    metro.resync()                       # Option B: re-anchor onto the new clock
+
+    after = H.render_mixer(mixer, int(interval * 5), block=mb)
+    on_a, iv_a = grid(after)
+    assert len(on_a) >= 4, f"@{bpm}bpm too few post-switch clicks: {on_a}"
+    # PROMPT re-attack: the first click on the new stream lands within one beat,
+    # not after a hang or a dropped beat.
+    assert on_a[0] <= interval, f"@{bpm}bpm first post-switch click late: {on_a[0]}"
+    # the new stream's grid is itself drift-free
+    assert np.all(np.abs(iv_a - interval) <= 2), (
+        f"@{bpm}bpm post-switch beat grid drifted: {iv_a.tolist()}")
+    # and the beat INDEX continued across the switch (not a reset to beat 0) —
+    # ties the rendered re-attack to the accent-pattern continuity.
+    assert metro._beat > beat_before, (
+        f"@{bpm}bpm beat index reset across the switch ({beat_before} -> {metro._beat})")
