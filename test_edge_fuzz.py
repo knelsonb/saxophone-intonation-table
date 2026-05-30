@@ -146,3 +146,22 @@ def test_start_input_recording_rejects_overflowing_max_seconds():
         assert eng.start_input_recording(1e308) is False
     finally:
         eng._stream = None
+
+
+def test_controller_set_a4_rejects_bad_input():
+    """The a4 setters across controllers must ignore a4 <= 0 / non-finite — the
+    drone's _a4_to_tuning_semitones does log2(a4/440) (domain error at a4<=0) and
+    the pitch pipe would render NaN into its sine. GUI/config clamp a4 to
+    [430,450], but the public setters must be robust like the engine's set_a4."""
+    import sax_drone
+    pp = pytest.importorskip("sax_pitch_pipes")
+    dctrl = sax_drone.DroneController(Mixer(max_block=1024), 48000, a4=440.0)
+    pctrl = pp.PitchPipesController(Mixer(max_block=1024), 48000, a4=440.0)
+    for bad in (0.0, -5.0, float("inf"), float("nan")):
+        dctrl.set_a4(bad)
+        pctrl.set_a4(bad)
+        assert dctrl._a4 == 440.0, f"drone set_a4({bad}) must be ignored; a4={dctrl._a4}"
+        assert pctrl._a4 == 440.0, f"pitch-pipe set_a4({bad}) must be ignored; a4={pctrl._a4}"
+    dctrl.set_a4(442.0)
+    pctrl.set_a4(441.0)
+    assert dctrl._a4 == 442.0 and pctrl._a4 == 441.0, "a valid a4 still applies"

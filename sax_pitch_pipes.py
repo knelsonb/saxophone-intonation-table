@@ -242,8 +242,12 @@ class PitchPipesController:
 
     def set_a4(self, a4: float) -> None:
         """Update concert pitch; affects pads sounded AFTER this call (existing
-        pads keep their frequency to avoid a mid-sound glitch)."""
-        self._a4 = float(a4)
+        pads keep their frequency to avoid a mid-sound glitch). Ignores
+        non-finite / non-positive input (would render NaN into the sine)."""
+        a4 = float(a4)
+        if not math.isfinite(a4) or a4 <= 0.0:
+            return
+        self._a4 = a4
 
     def _reap(self) -> None:
         """Unregister pads whose release tail has fully faded."""
