@@ -172,7 +172,7 @@ python -c "import sounddevice; print(sounddevice.query_devices())"
   - *Overall mean per note* — aggregated across everything
   Run and instrument filters are enabled depending on the mode. A "run" begins on app start, on instrument or concert-pitch change, and when recording is resumed after a pause.
 - **Cross-session persistence (optional):** If the environment variable `SAX_INTONATION_LOG_PATH` points to a file, every measurement is also appended as JSON Lines. On the next launch the history is reloaded so the CSV slice modes can summarise across sessions.
-- **Accuracy:** From approximately N = 20 measurements per note, averages become very reliable. Playing steadily at medium volume yields the best results.
+- **Accuracy:** From approximately N = 20 measurements per note, averages become very reliable. Playing steadily at medium volume yields the best results. The pitch and timing of every input and output are verified virtually — with no audio hardware — before each release (see [`docs/verification-bench.md`](docs/verification-bench.md)).
 
 ---
 
@@ -361,6 +361,6 @@ python -c "import sounddevice; print(sounddevice.query_devices())"
   - *Gesamtmittel je Ton* — über alles aggregiert
   Filter für Lauf und Instrument werden je nach Modus aktiviert. Ein „Lauf" beginnt beim Programmstart, bei Instrument- oder Kammertonwechsel sowie nach dem Wiederaufnehmen einer pausierten Aufnahme.
 - **Sitzungsübergreifende Persistenz (optional):** Wenn die Umgebungsvariable `SAX_INTONATION_LOG_PATH` auf eine Datei zeigt, werden alle Messungen zusätzlich als JSONL angehängt. Beim nächsten Start sind sie wieder verfügbar und können über die CSV-Aufteilungen ausgewertet werden.
-- **Genauigkeit:** Ab ca. N = 20 Messungen pro Ton sind die Durchschnittswerte sehr zuverlässig. Am besten gleichmäßig und mittelstark spielen.
+- **Genauigkeit:** Ab ca. N = 20 Messungen pro Ton sind die Durchschnittswerte sehr zuverlässig. Am besten gleichmäßig und mittelstark spielen. Tonhöhe und Timing aller Ein- und Ausgänge werden vor jeder Veröffentlichung virtuell – ohne Audio-Hardware – verifiziert (siehe [`docs/verification-bench.md`](docs/verification-bench.md)).
 
 ---
