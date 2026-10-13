@@ -21,6 +21,11 @@ Failure modes a device can be given (``fail=``):
                   which the app's open timeout turns into a host-API failure.
 * ``'open_rate'`` rate probes pass but the real open rejects the rate (a
                   "lying" driver).
+* ``'vanish_on_probe'`` the device disappears the first time the app probes
+                  one of its rates (PortAudio "Invalid device", -9996); it
+                  stays unplugged until ``plug()``.
+* ``'vanish_on_open'``  rate probes pass, then the device disappears as the
+                  app opens it (-9996); it stays unplugged until ``plug()``.
 """
 from __future__ import annotations
 
@@ -223,6 +228,11 @@ class FakeAudioHost:
     def plug(self, name: str) -> None:
         self.device(name).present = True
 
+    def _vanish(self, dev: FakeDevice) -> None:
+        # One-shot: the device is gone now and comes back healthy on plug().
+        dev.fail = None
+        self.unplug(dev.name)
+
     def _find(self, name: str, present_only: bool = True) -> Optional[FakeDevice]:
         for d in self.devices:
             if d.name == name and (d.present or not present_only):
@@ -307,6 +317,9 @@ class FakeAudioHost:
 
     def _check(self, direction: str, device, samplerate) -> None:
         dev = self._resolve(device, direction)
+        if dev.fail == "vanish_on_probe":
+            self._vanish(dev)
+            raise PortAudioError("Error querying device: Invalid device [PaErrorCode -9996]")
         if (dev.max_input if direction == "in" else dev.max_output) < 1:
             raise PortAudioError("Invalid number of channels [PaErrorCode -9998]")
         if samplerate is not None and not dev.accepts(samplerate):
@@ -333,6 +346,8 @@ class FakeAudioHost:
             if dev.fail == "busy":
                 outcome = "busy"
                 raise PortAudioError(f"{what}: Device unavailable [PaErrorCode -9985]")
+            if dev.fail == "vanish_on_open":
+                self._vanish(dev)
             if not dev.present:
                 outcome = "gone"
                 raise PortAudioError(f"{what}: Invalid device [PaErrorCode -9996]")

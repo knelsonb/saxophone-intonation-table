@@ -368,6 +368,12 @@ class Settings(_Part):
         self._done()
 
     @property
+    def output_devices(self) -> list[str]:
+        """Output devices offered in SETUP, by name (the system-default entry
+        is left out)."""
+        return self._d.output_device_names()
+
+    @property
     def test_tone_playing(self) -> bool:
         return self._d.test_tone_playing()
 
@@ -425,6 +431,23 @@ class Audio(_Part):
     def retry(self) -> AudioStatus:
         self._d.audio_retry()
         return self._done(self.status())
+
+    @property
+    def notice(self) -> Optional[str]:
+        """The non-modal notice line (new interface detected and similar),
+        or None when none is shown."""
+        return self._d.notice_text()
+
+    def accept_notice(self) -> AudioStatus:
+        """Click the notice's action button (for example 'Switch')."""
+        self._d.notice_accept()
+        return self._done(self.status())
+
+    @property
+    def output_sources(self) -> int:
+        """How many sound sources (metronome, drone, test tone, pads) the
+        output mix currently holds."""
+        return self._d.output_source_count()
 
 
 # ------------------------------------------------------------------------- app

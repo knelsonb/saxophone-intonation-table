@@ -40,7 +40,8 @@ the list below is the contract the rewrite must keep or update here:
       ``_engine`` (``state`` ``last_error`` ``output_running`` ``samplerate``
       ``output_samplerate`` ``active_device`` ``active_output_device`` ``a4``).
   Banners
-    * ``_audio_banner`` (``_msg``, ``_btn_retry``), ``_audio_chip`` (``_name``).
+    * ``_audio_banner`` (``_msg``, ``_btn_retry``), ``_audio_chip`` (``_name``),
+      ``_info_banner`` (``_msg``, ``_btn_action``); ``_engine.mixer.active_sources()``.
   METRO tab
     * ``_metro_slider`` ``_metro_ts_btns`` ``_btn_metro_start`` ``_metro_ctrl``
       ``_metro_bpm`` ``_metro_time_sig`` ``_metro_status`` ``_metro_vol_slider``
@@ -922,6 +923,11 @@ class AppDriver:
         # plugged in later is not offered until the next launch.
         self._combo_select(self.win._out_device_combo, name or "", "output device")
 
+    def output_device_names(self) -> list[str]:
+        # Item data of ``_out_device_combo``; '' is the system-default entry.
+        c = self.win._out_device_combo
+        return [str(c.itemData(i)) for i in range(c.count()) if c.itemData(i)]
+
     def test_tone(self, on: bool) -> None:
         b = self.win._btn_test_tone
         if b.isChecked() != bool(on):
@@ -980,6 +986,21 @@ class AppDriver:
 
     def audio_retry(self) -> None:
         self.win._audio_banner._btn_retry.click()
+
+    def notice_text(self) -> Optional[str]:
+        # ``_info_banner`` (InfoBanner: ``_msg``, ``_btn_action``).
+        b = self.win._info_banner
+        return b._msg.text() if not b.isHidden() else None
+
+    def notice_accept(self) -> None:
+        b = self.win._info_banner
+        if b.isHidden() or b._btn_action.isHidden():
+            raise HarnessError("no notice with an action is shown")
+        b._btn_action.click()
+
+    def output_source_count(self) -> int:
+        # ``_engine.mixer.active_sources()``.
+        return int(self.win._engine.mixer.active_sources())
 
     # ================================================================ persistence
     def config_on_disk(self) -> dict:
