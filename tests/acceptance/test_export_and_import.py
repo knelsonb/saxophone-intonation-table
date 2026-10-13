@@ -136,8 +136,6 @@ def test_chart_and_csv_say_there_is_nothing_to_export_before_i_play(app):
     assert app.dialogs.last_message().text == app.text("csv_no_data")
 
 
-@pytest.mark.xfail(strict=True, reason="Frodo-18: TXT export with nothing played writes "
-                                       "an empty report instead of saying so")
 def test_txt_export_says_there_is_nothing_to_export_before_i_play(app):
     """Same as the chart and CSV: no readings, no empty report on disk."""
     assert app.export.txt(expect_failure=True) is None
@@ -154,8 +152,6 @@ def test_a_report_name_typed_without_extension_gets_one(app):
     assert (folder / "my-report.pdf").exists()
 
 
-@pytest.mark.xfail(strict=True, reason="Frodo-18: the TXT report dates are always "
-                                       "DD.MM.YYYY; the chart of the same session uses YYYY-MM-DD")
 def test_the_txt_report_and_the_chart_write_the_date_the_same_way(app):
     """Two files from one session should not disagree about how to write today."""
     play_known_table(app)

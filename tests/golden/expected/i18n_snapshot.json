@@ -296,11 +296,16 @@
       "txt_instr",
       "txt_maker",
       "txt_model",
+      "txt_no_data",
       "txt_no_transp",
       "txt_save_title",
       "txt_saved",
       "txt_total",
       "txt_transp",
+      "txt_transp_8va",
+      "txt_transp_8vb",
+      "txt_transp_octaves_down",
+      "txt_transp_octaves_up",
       "welcome_continue",
       "welcome_info",
       "welcome_path",
@@ -535,6 +540,12 @@
       ],
       "txt_transp": [
         "note"
+      ],
+      "txt_transp_octaves_down": [
+        "n"
+      ],
+      "txt_transp_octaves_up": [
+        "n"
       ],
       "welcome_path": [
         "path"
@@ -841,11 +852,16 @@
       "txt_instr",
       "txt_maker",
       "txt_model",
+      "txt_no_data",
       "txt_no_transp",
       "txt_save_title",
       "txt_saved",
       "txt_total",
       "txt_transp",
+      "txt_transp_8va",
+      "txt_transp_8vb",
+      "txt_transp_octaves_down",
+      "txt_transp_octaves_up",
       "welcome_continue",
       "welcome_info",
       "welcome_path",
@@ -1080,6 +1096,12 @@
       ],
       "txt_transp": [
         "note"
+      ],
+      "txt_transp_octaves_down": [
+        "n"
+      ],
+      "txt_transp_octaves_up": [
+        "n"
       ],
       "welcome_path": [
         "path"

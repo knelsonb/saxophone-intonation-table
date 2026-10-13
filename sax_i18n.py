@@ -223,7 +223,12 @@ STRINGS = {
         'txt_model':       'Modell      : {model}',
         'pdf_maker':       'Hersteller: {maker}',
         'pdf_model':       'Modell: {model}',
-        # Export: Speichern und Fehler
+        # Export: ganze Oktaven, leere Tabelle, Speichern und Fehler
+        'txt_transp_8va':          'Transpos.  : klingt eine Oktave höher als notiert',
+        'txt_transp_8vb':          'Transpos.  : klingt eine Oktave tiefer als notiert',
+        'txt_transp_octaves_up':   'Transpos.  : klingt {n} Oktaven höher als notiert',
+        'txt_transp_octaves_down': 'Transpos.  : klingt {n} Oktaven tiefer als notiert',
+        'txt_no_data':             'Noch keine Messdaten zum Exportieren. Spiel zuerst ein paar Töne.',
         'export_overwrite_title':  'Datei ersetzen?',
         'export_overwrite_body':   '{name} gibt es in {folder} schon.\nErsetzen?',
         'export_err_locked':       ('{name} konnte nicht gespeichert werden. Ist die Datei in einem '
@@ -582,7 +587,12 @@ STRINGS = {
         'txt_model':       'Model       : {model}',
         'pdf_maker':       'Manufacturer: {maker}',
         'pdf_model':       'Model: {model}',
-        # Export: saving and errors
+        # Export: whole octaves, empty table, saving and errors
+        'txt_transp_8va':          'Transpos.  : sounds an octave higher than written',
+        'txt_transp_8vb':          'Transpos.  : sounds an octave lower than written',
+        'txt_transp_octaves_up':   'Transpos.  : sounds {n} octaves higher than written',
+        'txt_transp_octaves_down': 'Transpos.  : sounds {n} octaves lower than written',
+        'txt_no_data':             'No measurement data to export yet. Play a few notes first.',
         'export_overwrite_title':  'Replace file?',
         'export_overwrite_body':   '{name} already exists in {folder}.\nReplace it?',
         'export_err_locked':       ('{name} could not be saved. Is it open in another program, '

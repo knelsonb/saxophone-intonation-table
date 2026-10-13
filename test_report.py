@@ -1,8 +1,8 @@
 """Unit tests for sax_report: the pure TXT / PDF renderers over a SessionSnapshot.
 
 The acceptance suite drives the same renderers through the window; these
-cover cases a scenario cannot reach cheaply (a write that fails
-halfway) and pin the snapshot contract.
+cover cases a scenario cannot reach cheaply (a piccolo header without
+playing a note, a write that fails halfway) and pin the snapshot contract.
 """
 from __future__ import annotations
 
@@ -40,9 +40,34 @@ def test_snapshot_lists_played_notes_only_in_pitch_order():
     assert snap.total == 7
 
 
+@pytest.mark.parametrize("instrument, key", [
+    ("flute_piccolo", "txt_transp_8va"),
+    ("double_bass", "txt_transp_8vb"),
+])
+@pytest.mark.parametrize("lang", ["en", "de"])
+def test_an_octave_transposer_says_it_sounds_an_octave_away(instrument, key, lang):
+    report = sax_report.render_txt(_snapshot(instrument), lang)
+    assert _header_line(report) == STRINGS[lang][key]
+    assert STRINGS[lang]["txt_no_transp"] not in report
+
+
+def test_a_transposition_of_several_octaves_names_the_count(monkeypatch):
+    monkeypatch.setattr(sax_report.sax_instruments, "transp_map",
+                        lambda: {"contra_test": -36})
+    report = sax_report.render_txt(_snapshot("contra_test"), "en")
+    assert _header_line(report) == STRINGS["en"]["txt_transp_octaves_down"].format(n=3)
+
+
 def test_other_transpositions_keep_the_fingered_c_wording():
     report = sax_report.render_txt(_snapshot("eb_alto"), "en")
     assert _header_line(report) == STRINGS["en"]["txt_transp"].format(note="D#/Eb")
+
+
+@pytest.mark.parametrize("lang, stamp", [("en", "2026-10-13 16:44"),
+                                         ("de", "13.10.2026 16:44")])
+def test_the_txt_date_is_written_the_way_the_language_writes_it(lang, stamp):
+    report = sax_report.render_txt(_snapshot(), lang)
+    assert STRINGS[lang]["txt_date"].format(dt=stamp) in report.splitlines()
 
 
 def test_a_failed_txt_write_leaves_the_previous_report_and_no_temp_file(tmp_path, monkeypatch):

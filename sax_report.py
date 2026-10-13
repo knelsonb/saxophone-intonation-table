@@ -110,6 +110,10 @@ def translator(lang: str) -> Callable[..., str]:
     return _t
 
 
+def format_stamp(dt: datetime.datetime, lang: str) -> str:
+    """Date and time as a reader of ``lang`` writes it: 13.10.2026 16:44 in
+    German, 2026-10-13 16:44 (ISO) in English."""
+    return dt.strftime('%d.%m.%Y %H:%M' if lang == 'de' else '%Y-%m-%d %H:%M')
 
 
 # ── TXT ────────────────────────────────────────────────────────────────────
@@ -129,7 +133,7 @@ def render_txt(snapshot: SessionSnapshot, lang: str) -> str:
     lines += [
         _txt_transposition(s.transposition, _t),
         _t('txt_a4', hz=s.a4),
-        _t('txt_date', dt=s.created.strftime('%d.%m.%Y %H:%M')),
+        _t('txt_date', dt=format_stamp(s.created, lang)),
         '',
         _t('txt_col_header',
            fingered=_t('pdf_col_finger'),
@@ -155,10 +159,20 @@ def write_txt(snapshot: SessionSnapshot, lang: str, path: Path | str) -> None:
 
 
 def _txt_transposition(transp: int, _t: Callable[..., str]) -> str:
-    """The header line naming the transposition."""
+    """The header line naming the transposition.
+
+    For whole octaves "fingered C sounds as C" would read like no
+    transposition at all, so those say the octave instead.
+    """
     if not transp:
         return _t('txt_no_transp')
-    return _t('txt_transp', note=CHROMA[transp % 12])
+    if transp % 12:
+        return _t('txt_transp', note=CHROMA[transp % 12])
+    octaves = abs(transp) // 12
+    if octaves == 1:
+        return _t('txt_transp_8va' if transp > 0 else 'txt_transp_8vb')
+    return _t('txt_transp_octaves_up' if transp > 0 else 'txt_transp_octaves_down',
+              n=octaves)
 
 
 def _make_bar(cents, w=20):
@@ -210,6 +224,8 @@ def render_pdf(snapshot: SessionSnapshot, lang: str, path: Path | str) -> None:
         (_t('pdf_transp', note=CHROMA[transp % 12], n=transp)
          if transp else _t('pdf_no_transp')), ts_sub))
     story.append(Paragraph(_t('pdf_a4', hz=s.a4), ts_sub))
+    # The PDF keeps the German-style date in both languages; its golden
+    # file pins that, unlike the TXT report and the chart.
     story.append(Paragraph(
         _t('pdf_created', dt=s.created.strftime('%d.%m.%Y %H:%M')), ts_sub))
     story.append(Spacer(1, 10*mm))
@@ -287,7 +303,7 @@ def render_chart(snapshot: SessionSnapshot, lang: str, path: Path | str) -> None
     notes = [((r.fingered if disp_griff else r.sounding),
               r.mean, r.std, r.n, r.freq_hz, r.midi_fingered, r.in_range)
              for r in s.rows]
-    dt = s.created.strftime('%Y-%m-%d %H:%M')
+    dt = format_stamp(s.created, lang)
     if s.maker or s.model:
         subtitle = _t('chart_subtitle_id', instr=s.instrument_label,
                       maker=s.maker, model=s.model, a4=s.a4, dt=dt)

@@ -5,7 +5,7 @@ Manufacturer: Selmer
 Model       : Mark VI
 Transpos.  : fingered C sounds as D#/Eb
 Concert pitch: A = 440 Hz
-Date       : <DD.MM.YYYY HH:MM>
+Date       : <YYYY-MM-DD HH:MM>
 
 Fingered     Sounding       Ø (ct)   σ (ct)      N  Tendency
 --------------------------------------------------------------

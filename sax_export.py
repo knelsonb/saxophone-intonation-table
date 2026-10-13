@@ -107,6 +107,10 @@ class ExportController:
 
     # ── Public entry points ───────────────────────────────────────────────
     def export_txt(self) -> None:
+        if not self._has_played_notes():
+            QMessageBox.information(self._w, self._t('export_title'),
+                                    self._t('txt_no_data'))
+            return
         model_info = self._ask_instrument_model()
         if model_info is None:
             return   # Abgebrochen
