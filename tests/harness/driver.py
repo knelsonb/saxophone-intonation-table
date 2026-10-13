@@ -680,10 +680,10 @@ class AppDriver:
 
     # =================================================================== exports
     def _export(self, what: str, button, path: Path, maker: str, model: str,
-                expect_failure: bool, extra=None) -> Optional[Path]:
+                expect_failure: bool, extra=None, keep_existing: bool = False) -> Optional[Path]:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        if path.exists():
+        if path.exists() and not keep_existing:
             path.unlink()
         with self.dialogs.scope() as sc:
             self.dialogs.expect("maker_model", maker=maker, model=model, optional=True)
@@ -714,12 +714,12 @@ class AppDriver:
         return self._export("chart", self.win._btn_chart, path, maker, model, expect_failure)
 
     def export_csv(self, path, mode, instrument, run_id, nickname, maker, model,
-                   expect_failure):
+                   expect_failure, keep_existing: bool = False):
         def slice_form():
             self.dialogs.expect("csv_slice", mode=mode, instrument=instrument,
                                 run_id=run_id, nickname=nickname, optional=True)
         return self._export("CSV", self.win._btn_csv, path, maker, model,
-                            expect_failure, extra=slice_form)
+                            expect_failure, extra=slice_form, keep_existing=keep_existing)
 
     # =================================================================== import
     def import_csv(self, path, confirm: bool) -> ImportResult:

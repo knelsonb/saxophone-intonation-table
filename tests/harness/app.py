@@ -187,10 +187,14 @@ class Export(_Part):
 
     def csv(self, mode: str = "raw", path=None, *, instrument: Optional[str] = None,
             run_id: Optional[str] = None, nickname: Optional[str] = None,
-            maker: str = "", model: str = "", expect_failure=False):
+            maker: str = "", model: str = "", expect_failure=False,
+            keep_existing: bool = False):
+        """``keep_existing=True`` saves over a file already at ``path`` (normally
+        the harness deletes it first so a missing file means a failed export)."""
         return self._done(self._d.export_csv(self._path(path, f"history-{mode}", "csv"),
                                              mode, instrument, run_id, nickname,
-                                             maker, model, expect_failure))
+                                             maker, model, expect_failure,
+                                             keep_existing=keep_existing))
 
     @property
     def pdf_model(self) -> Optional[dict]:
