@@ -17,6 +17,11 @@ the list below is the contract the rewrite must keep or update here:
       fake module is installed in ``sys.modules`` before that import;
     * ``sax_audio_engine.HOST_API_OPEN_TIMEOUT_S`` (the open timeout, patched
       to FakeAudioHost.OPEN_TIMEOUT_S so a hung device costs a quarter second);
+    * ``sax_audio_engine.ANALYSIS_IN_THREAD`` (patched to False: pitch
+      detection runs inline in the input callback the fake host pumps, so
+      every reading reaches the window before ``pump_input`` returns, in the
+      order played; with the real analysis thread, readings would arrive
+      whenever that thread and the Qt event loop got to them);
     * data directory ``~/.intonation_analyzer`` (resolved from HOME when the
       window is built, ``sax_paths.AppPaths.from_environment``) holding
       ``config.json``, ``custom_instruments.json``, ``instrument_ranges.json``,
@@ -214,6 +219,7 @@ class AppDriver:
                   staticmethod(lambda code={"de": "de_DE"}.get(self.lang, "en_US"): QLocale(code)))
         engine = sys.modules["sax_audio_engine"]
         p.setattr(engine, "HOST_API_OPEN_TIMEOUT_S", self.host.OPEN_TIMEOUT_S)
+        p.setattr(engine, "ANALYSIS_IN_THREAD", False)
         p.setattr(sys, "excepthook", self._trap_exception)
 
         self.dialogs.classify = self._classify

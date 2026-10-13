@@ -17,7 +17,7 @@ Public surface:
 * ``DeviceInfo`` / ``DeviceSelection`` — dataclasses for picker UI and
   persistence.
 * ``AudioSignals`` — Qt signals: ``state_changed``,
-  ``devices_changed``, ``note_detected``.
+  ``devices_changed``, ``note_detected``, ``note_event``.
 
 The engine *never* raises across its public API. Failures become state:
 ``self.state = FAILED`` plus ``self.last_error`` + ``self.last_error_message``,
@@ -26,9 +26,18 @@ banner.
 
 Threading contract:
 
-* Audio callback runs on a PortAudio worker thread. It briefly acquires
-  ``self._lock`` to mutate filter state and the shared ``_buf``, then
-  releases. YIN and FFT compute happen *outside* the lock.
+* The input callback runs on a PortAudio thread and only copies: each block
+  goes into the stream's single-producer/single-consumer ``_InputRing`` (and
+  the deck tap, under ``self._lock`` for microseconds), then wakes the
+  analysis thread. It never runs YIN.
+* The analysis thread (one per open input stream) is the ring's consumer and
+  the sole owner of the ``sax_detector.Detector``. Once per hop it reads the
+  detection window, runs the detector and emits ``note_event`` /
+  ``note_detected``; Qt queues those to the GUI thread. ``process_pending()``
+  is the same consumer step, callable directly: tests and the headless
+  harness run with ``ANALYSIS_IN_THREAD = False`` and analyse inline.
+* The GUI thread never touches the detector. Mode, A4 and resets reach it as
+  values the consumer reads under ``self._lock`` at the start of each hop.
 * GUI thread reads via ``get_buf_snapshot()`` and ``get_diagnostics()``
   which both acquire the lock briefly and return immutable snapshots.
 * The hot-plug poll runs on the Qt main thread; ``refresh_devices()``
@@ -42,6 +51,7 @@ import math
 import re
 import sys
 import threading
+import weakref
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
@@ -49,6 +59,12 @@ from typing import Optional
 import numpy as np
 
 from sax_coordination import OutputCoordinator
+from sax_detector import (  # noqa: F401  (re-exported)
+    FILTER_MODE_DEFAULT,
+    FILTER_PRESETS,
+    Detector,
+    NoteEvent,
+)
 from sax_mixer import Mixer, TestToneSource
 from sax_yin import MAX_FREQ, MIN_FREQ, YIN_THRESHOLD, yin_pitch  # noqa: F401
 
@@ -85,10 +101,10 @@ OUT_BLOCK_MS = HOP_MS                       # ~46 ms; preserved across rates
 DEFAULT_OUT_BLOCK = DEFAULT_HOP_SIZE        # 2048 frames at 44.1k
 
 # Candidate sample rates probed in this order when the user picks "auto".
-# 48k and 44.1k come first: pitch detection runs in the input callback and
-# its cost grows with the rate (about 2.4 ms per hop at 44.1k, 25 ms or more
-# at 192k, against a 46 ms hop), while the display shows whole cents, which
-# 44.1k already resolves. Higher rates remain as fallbacks for devices that
+# 48k and 44.1k come first: pitch detection cost grows with the rate (about
+# 0.4 ms per hop at 44.1k/48k and 1.4 ms at 192k, against a 46 ms hop) for no
+# visible gain, since the display shows whole cents, which 44.1k already
+# resolves. Higher rates remain as fallbacks for devices that
 # refuse both, and stay available as explicit choices.
 SAMPLERATE_CANDIDATES = (48000, 44100, 96000, 88200, 192000)
 SAMPLERATE_PREF_VALUES = ('auto', '44100', '48000', '88200', '96000',
@@ -97,30 +113,16 @@ SAMPLERATE_PREF_VALUES = ('auto', '44100', '48000', '88200', '96000',
 # re-exported above: callers and tests import them from the engine.
 A4_DEFAULT = 440.0
 
-# Filter-mode presets. Each callback fires every HOP_MS (~46 ms; the hop is
-# sized in samples per rate so its duration stays the same), so `confirm` and
-# `edge_hops` are quantized to that grid. The first reading after an onset
-# arrives after (confirm + 2*edge_hops) hops.
-#
-# Calibrated for three working-musician use cases:
-#   fast    — live play / scale drills / immediate per-note feedback
-#   normal  — practice & tuning long tones (the default)
-#   slow    — instrument setup, repair, cataloging intonation maps
-#
-# First reading ~ (confirm + 2 * edge_hops) * HOP_MS
-# Smoothing     ~ window * HOP_MS over the same-MIDI window
-#
-#   window     — recent valid detections kept for confirmation/median
-#   confirm    — required matching-MIDI detections in the window
-#   yin_thr    — YIN aperiodicity ceiling (lower = stricter)
-#   rms_floor  — RMS gate below which the frame is silence
-#   edge_hops  — attack/release transient guard (in hops)
-FILTER_PRESETS = {
-    'fast':   dict(window=3,  confirm=2, yin_thr=0.15, rms_floor=8e-5,  edge_hops=1),
-    'normal': dict(window=5,  confirm=3, yin_thr=0.10, rms_floor=1.5e-4, edge_hops=2),
-    'slow':   dict(window=10, confirm=6, yin_thr=0.07, rms_floor=3e-4,  edge_hops=4),
-}
-FILTER_MODE_DEFAULT = 'normal'
+# FILTER_PRESETS (the fast / normal / slow response modes) and
+# FILTER_MODE_DEFAULT live with the state machine they tune, in sax_detector,
+# and are re-exported above.
+
+# Where pitch detection runs. True: a dedicated analysis thread per open input
+# stream, so the PortAudio callback only copies samples. False: the callback
+# analyses inline after copying. The headless test harness sets False, because
+# its fake audio host drives callbacks synchronously and its scenarios need
+# each reading delivered before the next block is pumped.
+ANALYSIS_IN_THREAD = True
 
 # Per-host-API attempt timeout. Stream open measured at 30–400 ms
 # typical; 800 ms is the upper end we'll wait before declaring the host
@@ -232,8 +234,11 @@ if QT_OK:
         state_changed = pyqtSignal(object, object, str)
         # list[DeviceInfo]
         devices_changed = pyqtSignal(list)
-        # midi, freq, cents
+        # midi, freq, cents. Kept for listeners that only need the reading.
         note_detected = pyqtSignal(int, float, float)
+        # sax_detector.NoteEvent: the reading plus the A4 (and A4 generation)
+        # it was graded against.
+        note_event = pyqtSignal(object)
         # hot-plug toast: a vendor-class interface just appeared
         interface_appeared = pyqtSignal(object)  # DeviceInfo
 else:  # pragma: no cover — only hit in pure unit-test contexts
@@ -366,6 +371,110 @@ def _probe_default_output_index() -> Optional[int]:
 
 
 # ---------------------------------------------------------------------------
+# Input ring: callback -> analysis hand-off
+# ---------------------------------------------------------------------------
+class _InputRing:
+    """Single-producer/single-consumer sample ring for one input stream.
+
+    The producer (the input callback) appends each delivered block and records
+    where it ended as a *mark*; the consumer analyses one detection window
+    (``block`` samples) ending at each mark, so there is exactly one analysis
+    per delivered block, as when detection ran inside the callback.
+
+    Neither side locks. Positions are absolute frame counts that only grow, and
+    the producer publishes ``written`` / ``marks_written`` after its copy, so a
+    consumer that sees a mark sees the samples before it. The ring holds
+    ``SLACK_HOPS`` hops beyond one window: a consumer that falls further behind
+    than that has had its window overwritten, which ``read_window`` detects
+    after copying and reports as a dropped hop rather than a torn analysis.
+
+    The ring is created per stream and bound into that stream's callback before
+    the stream starts, so the callback can never write one stream's samples
+    into another stream's ring or analyse them at another stream's rate.
+    """
+
+    MARKS = 64
+    SLACK_HOPS = 16
+
+    def __init__(self, block: int, hop: int, samplerate: Optional[int] = None,
+                 inline: bool = True) -> None:
+        self.block = int(block)
+        self.hop = int(hop)
+        # None: not bound to a stream; the consumer uses the engine's rate.
+        self.samplerate = int(samplerate) if samplerate else None
+        # True: the producer analyses inline after each push (no thread).
+        self.inline = bool(inline)
+        self.capacity = self.block + self.SLACK_HOPS * self.hop
+        self.data = np.zeros(self.capacity, dtype=np.float32)
+        self.written = 0
+        self.marks = [0] * self.MARKS
+        self.marks_written = 0
+        self.marks_read = 0
+        self.window = np.zeros(self.block, dtype=np.float32)
+        self.dropped_hops = 0
+
+    # ---- producer ---------------------------------------------------------
+    def push(self, mono: np.ndarray) -> None:
+        n = int(mono.shape[0])
+        if n <= 0:
+            return
+        cap = self.capacity
+        w = self.written
+        if n > cap:                      # only the newest cap samples can matter
+            mono = mono[n - cap:]
+            w += n - cap
+            n = cap
+        s = w % cap
+        e = s + n
+        if e <= cap:
+            self.data[s:e] = mono
+        else:
+            first = cap - s
+            self.data[s:] = mono[:first]
+            self.data[:n - first] = mono[first:]
+        self.written = w + n
+        self.marks[self.marks_written % self.MARKS] = self.written
+        self.marks_written += 1
+
+    # ---- consumer ---------------------------------------------------------
+    def pop_mark(self) -> Optional[int]:
+        """The end position of the oldest unanalysed block, or None."""
+        while True:
+            mw = self.marks_written
+            if self.marks_read >= mw:
+                return None
+            if mw - self.marks_read > self.MARKS:
+                self.dropped_hops += mw - self.MARKS - self.marks_read
+                self.marks_read = mw - self.MARKS
+            idx = self.marks_read
+            end = self.marks[idx % self.MARKS]
+            self.marks_read = idx + 1
+            # The producer may have lapped this slot while we read it.
+            if self.marks_written - idx <= self.MARKS:
+                return end
+            self.dropped_hops += 1
+
+    def read_window(self, end: int) -> bool:
+        """Copy the ``block`` samples ending at ``end`` into ``self.window``.
+
+        Returns False when the producer has overwritten part of that span (the
+        copy may be torn); the caller skips the hop. Positions before the first
+        sample read as the ring's initial zeros.
+        """
+        cap, n = self.capacity, self.block
+        s = (end - n) % cap
+        if s + n <= cap:
+            self.window[:] = self.data[s:s + n]
+        else:
+            first = cap - s
+            self.window[:first] = self.data[s:]
+            self.window[first:] = self.data[:n - first]
+        # One more hop may be mid-write past `written`; it must not reach the
+        # oldest sample of the window.
+        return self.written - end <= cap - n - self.hop
+
+
+# ---------------------------------------------------------------------------
 # AudioEngine
 # ---------------------------------------------------------------------------
 class AudioEngine:
@@ -404,10 +513,10 @@ class AudioEngine:
         self.active_device: Optional[DeviceInfo] = None
 
         # Mic input gain (linear; 1.0 = no-op). Scales ONLY the silence-gate
-        # decision + the level meter in the input callback — never the signal
+        # decision + the level meter in the detection hop — never the signal
         # buffer — so pitch detection stays scale-invariant and the deck tap
         # records the raw mic. Set from cfg.mic_gain_db via set_mic_gain().
-        # Read UNLOCKED on the audio thread: a bare-float store is GIL-atomic
+        # Read UNLOCKED by the analysis consumer: a bare-float store is GIL-atomic
         # (like last_rms_db), so the worst case is a one-block-stale gain — no
         # need to pay a lock acquire on the hot path for a single scalar.
         self.mic_gain: float = 1.0
@@ -422,24 +531,37 @@ class AudioEngine:
 
         # Shared mutable state — protected by self._lock.
         self._lock = threading.Lock()
-        # _buf_ring: underlying circular storage, allocated once per
-        # sample-rate negotiation; _buf_head: next-write index into the ring.
-        # _buf: contiguous chronological snapshot, rebuilt each callback.
-        # _buf_unwrap: preallocated scratch the ring is unrolled INTO each
-        # callback (two slice-copies) so the hot path allocates nothing — see
-        # the unwrap site in _on_input. Safe to reuse: callbacks run serially
-        # (PortAudio), and get_buf_snapshot copies _buf under the lock, so no
-        # reader ever sees the scratch mid-rewrite.
-        self._buf_ring: np.ndarray = np.zeros(DEFAULT_BLOCK_SIZE,
-                                              dtype=np.float32)
-        self._buf_head: int = 0
-        self._buf: np.ndarray = np.zeros(DEFAULT_BLOCK_SIZE, dtype=np.float32)
-        self._buf_unwrap: np.ndarray = np.zeros(DEFAULT_BLOCK_SIZE,
-                                                dtype=np.float32)
+        # The input ring of the open stream (see _InputRing). Before any
+        # stream opens, an unbound inline ring at the default size serves
+        # feed_input_frames(), analysing at self.samplerate.
+        self._ring = _InputRing(DEFAULT_BLOCK_SIZE, DEFAULT_HOP_SIZE)
+        # _buf: the detection window of the last analysed hop (the ring's
+        # preallocated scratch, never reallocated per hop). The consumer
+        # rewrites it under self._lock and get_buf_snapshot copies it under the
+        # same lock, so no reader sees it mid-rewrite.
+        self._buf: np.ndarray = self._ring.window
         self._stream = None
         self._emissions_paused = False
         self._transitioning = False
-        self._reset_filter_state()
+
+        # ---- analysis consumer ---------------------------------------------
+        # The detector is owned by whichever thread holds _analysis_lock (the
+        # analysis thread, or an inline/test caller of process_pending). It is
+        # an RLock so a slot that runs inside an inline emit and feeds frames
+        # again cannot deadlock.
+        self._analysis_lock = threading.RLock()
+        self._detector = Detector(FILTER_MODE_DEFAULT)
+        # Reset requests from other threads: bumping _reset_serial (under
+        # self._lock) makes the consumer reset the detector before its next hop.
+        self._reset_serial = 0
+        self._detector_serial = 0
+        # Bumped by every set_a4(). Each NoteEvent carries the generation it
+        # was graded under.
+        self.a4_generation = 0
+        self._analysis_errors = 0
+        self._wake = threading.Event()
+        self._analysis_thread: Optional[threading.Thread] = None
+        self._analysis_stop: Optional[threading.Event] = None
 
         # ---- output side (audio-output foundation) -------------------------
         # Separate sd.OutputStream is the PRIMARY path (D5): it matches the
@@ -473,7 +595,7 @@ class AudioEngine:
 
         # ---- D3 mic-coordination --------------------------------------------
         # The coordinator is PURE policy (sax_coordination); the engine is its
-        # CONSUMER. Each detection hop the input callback runs one coordination
+        # CONSUMER. Each detection hop the analysis consumer runs one coordination
         # step: vote-exclude the output's sounding MIDIs from the incumbent
         # lock, and push the ducked gain target to the attached duck consumer
         # (the drone source). Inert until something pitched is sounding —
@@ -536,10 +658,10 @@ class AudioEngine:
 
     # ---- internal state helpers -------------------------------------------
     def _reset_filter_state(self) -> None:
-        self._recent: list[tuple[int, float]] = []
-        self._locked_midi: Optional[int] = None
-        self._hop_in_note: int = 0
-        self._pending: list[tuple[int, float, float]] = []
+        """Ask the analysis consumer to reset the detector before its next
+        hop (held note, vote window and pending readings are discarded).
+        Callers hold self._lock."""
+        self._reset_serial += 1
 
     def _set_state(self, state: AudioEngineState,
                    err: AudioEngineError = AudioEngineError.NONE,
@@ -574,10 +696,11 @@ class AudioEngine:
             return
         with self._lock:
             self.a4 = hz
+            self.a4_generation += 1
 
     def set_mic_gain(self, linear: float) -> None:
         """Set the mic input gain (linear multiplier). Applied to the
-        silence-gate + level meter only (see the input callback) — the signal
+        silence-gate + level meter only (see sax_detector) — the signal
         buffer is never scaled, so the cents readout is unchanged. Clamped to
         roughly +/-24 dB; non-finite / non-numeric input is ignored. Default
         1.0 is a no-op (byte-identical to the pre-feature behaviour)."""
@@ -595,8 +718,10 @@ class AudioEngine:
     def pause_emissions(self) -> None:
         """Drop incoming detections without stopping the stream.
 
-        Used by the GUI during A4 remapping so the callback can't slip a
-        measurement into the half-rebuilt ``self.stats``.
+        Used by the GUI during A4 remapping so the analysis consumer can't
+        slip a measurement into the half-rebuilt ``self.stats``. Readings
+        already queued to the GUI thread are not recalled; their A4
+        generation is what marks them stale (see NoteEvent).
         """
         with self._lock:
             self._emissions_paused = True
@@ -608,8 +733,8 @@ class AudioEngine:
             self._reset_filter_state()
 
     def get_buf_snapshot(self) -> np.ndarray:
-        """Return a copy of the current ring buffer. Safe for the GUI
-        thread to FFT/plot without racing the audio callback."""
+        """Return a copy of the last analysed detection window. Safe for the
+        GUI thread to FFT/plot without racing the analysis consumer."""
         with self._lock:
             return self._buf.copy()
 
@@ -1184,11 +1309,13 @@ class AudioEngine:
         if consumer is None or consumer is self._duck_consumer:
             self._duck_consumer = None
 
-    def coordination_step(self, detected_midi: Optional[int]) -> frozenset[int]:
+    def coordination_step(self, detected_midi: Optional[int],
+                          level: Optional[float] = None) -> frozenset[int]:
         """Run ONE D3 coordination hop and return the MIDIs to vote-exclude.
 
-        Called once per detection hop from the input callback — with the
-        detected incumbent MIDI, or ``None`` on silence/reject so the
+        Called once per detection hop by the analysis consumer — with the
+        detected MIDI and the hop's RMS ``level``, or ``None`` on
+        silence/reject so the
         coordinator's release ramp keeps advancing. Also the deterministic
         test injection point: a test calls it directly with a synthetic
         ``detected_midi`` (no mic audio needed) and asserts the duck/vote
@@ -1209,7 +1336,7 @@ class AudioEngine:
             try:
                 consumer.set_duck_target(decision.duck_level)
             except Exception:
-                # A misbehaving consumer must not break the audio callback.
+                # A misbehaving consumer must not break the analysis hop.
                 pass
         return decision.excluded_midis
 
@@ -1522,16 +1649,18 @@ class AudioEngine:
             if self._deck_armed:
                 self._deck_armed = False
                 self._deck_truncated_by_close = True
-        if stream is None:
-            return
-        try:
-            stream.stop()
-        except Exception:
-            pass
-        try:
-            stream.close()
-        except Exception:
-            pass
+        if stream is not None:
+            try:
+                stream.stop()
+            except Exception:
+                pass
+            try:
+                stream.close()
+            except Exception:
+                pass
+        # After the stream: no callback can wake the thread again once the
+        # stream has stopped.
+        self._stop_analysis_thread()
 
     def _resolve_candidates(self, sel: Optional[DeviceSelection],
                             devices: list[DeviceInfo]) -> list[DeviceInfo]:
@@ -1711,7 +1840,12 @@ class AudioEngine:
         # gap between those two steps can never be orphaned (backlog #7).
         hlock = threading.Lock()
 
-        cb = self._make_callback(samplerate)
+        # The stream's ring and rate are bound into its callback BEFORE the
+        # stream exists, so a callback that fires between start() and the
+        # install below already writes into this stream's own ring, sized and
+        # rated for it. Those samples are analysed once the ring is installed.
+        ring = _InputRing(block, hop, samplerate, inline=not ANALYSIS_IN_THREAD)
+        cb = self._make_callback(samplerate, ring)
 
         def worker() -> None:
             try:
@@ -1801,13 +1935,14 @@ class AudioEngine:
             self.samplerate = int(samplerate)
             self.block_size = int(block)
             self.hop_size = int(hop)
-            self._buf_ring = np.zeros(block, dtype=np.float32)
-            self._buf_head = 0
-            self._buf = np.zeros(block, dtype=np.float32)
+            self._ring = ring
+            self._buf = ring.window
             self._overflow_count = 0
             self._underflow_count = 0
             self._reset_filter_state()
             self.active_device = dev
+        if not ring.inline:
+            self._start_analysis_thread()
         self._set_state(AudioEngineState.RUNNING)
         return True, AudioEngineError.NONE, ''
 
@@ -1855,43 +1990,38 @@ class AudioEngine:
             return AudioEngineError.NO_DEVICE
         return AudioEngineError.HOSTAPI_FAILURE
 
-    # ---- pitch detection callback -----------------------------------------
-    def _make_callback(self, samplerate: int):
-        """Build a PortAudio input callback bound to a sample rate.
+    # ---- input callback (producer) ----------------------------------------
+    def _make_callback(self, samplerate: int, ring: Optional[_InputRing] = None):
+        """Build a PortAudio input callback bound to one stream's ring.
 
-        The body lives in :meth:`_on_input` (a real method) so tests can
-        feed synthetic frames with no device, and call it in a loop for
-        the non-scaling no-alloc gate. This wrapper only binds the
-        negotiated rate into the closure.
+        The body lives in :meth:`_on_input` (a real method) so tests can feed
+        synthetic frames with no device. ``samplerate`` is carried by the ring;
+        the argument is kept for the call sites that name the rate.
         """
-        sr = int(samplerate)
         engine = self
+        bound = ring if ring is not None else _InputRing(
+            DEFAULT_BLOCK_SIZE, DEFAULT_HOP_SIZE, samplerate)
 
         def cb(indata, frames, ti, st):
-            engine._on_input(indata, frames, ti, st, sr)
+            engine._on_input(indata, frames, ti, st, bound)
         return cb
 
-    def _on_input(self, indata, frames, ti, status, sr=None):
-        """PortAudio input hot path, extracted from the callback closure.
+    def _on_input(self, indata, frames, ti, status, ring=None):
+        """PortAudio input hot path: count xruns, feed the deck tap, append to
+        the ring, wake the analysis consumer. Never raises; never runs YIN
+        unless the ring is inline (no analysis thread).
 
-        Directly callable from tests: feed synthetic ``indata`` shaped
-        (frames, channels) float32 with no device, and call it in a loop
-        to lock "no unbounded alloc in the hot path". ``sr`` defaults to
-        the active negotiated rate. Acquires self._lock briefly but
-        releases it before YIN runs; like the callback it must never
-        raise. The deck tap lives at the TOP of the locked
-        section (before the emissions-pause gate) so an armed take
-        captures every mic frame even across a transient A4-remap pause.
+        ``ring`` defaults to the installed one (test feeds). The deck tap sits
+        before everything else and ignores the emissions pause, so an armed
+        take captures every mic frame even across an A4-remap pause.
         """
-        sr = int(sr) if sr is not None else int(self.samplerate)
         engine = self
         st = status
         try:
             if st is not None:
-                # v0.5.7.9: lock the counter increments. += is GIL-atomic
-                # against torn values but can still drop increments under
-                # contention with get_diagnostics() reads. Lock is held
-                # for microseconds — no audio glitch risk.
+                # Counter increments under the lock: += is GIL-atomic against
+                # torn values but can drop increments against a concurrent
+                # get_diagnostics(). Held for microseconds.
                 if getattr(st, 'input_overflow', False):
                     with engine._lock:
                         engine._overflow_count += 1
@@ -1899,218 +2029,164 @@ class AudioEngine:
                     with engine._lock:
                         engine._underflow_count += 1
             mono = indata[:, 0]
-            # Update the ring buffer + read filter snapshot under
-            # the lock. YIN runs outside the lock.
-            with engine._lock:
-                # ---- deck input-recording tap ---------------------------
-                # Capture EVERY mic frame while armed, BEFORE the
-                # emissions-pause gate below, so a transient A4-remap pause
-                # never punches a hole in the take. Bounded prealloc sink +
-                # slice-assign: no hot-path alloc. Overflow clamps at cap,
-                # marks the take full, and auto-disarms — the deck pump()
-                # reads is_input_recording()==False as "cap hit".
-                if engine._deck_armed and engine._deck_sink is not None:
-                    _dh = engine._deck_head
-                    _cap = engine._deck_sink.size
-                    if _dh >= _cap:
-                        engine._deck_full = True
-                        engine._deck_armed = False
-                    else:
-                        _dn = mono.shape[0]
-                        _dend = _dh + _dn
-                        if _dend <= _cap:
-                            engine._deck_sink[_dh:_dend] = mono
-                            engine._deck_head = _dend
-                        else:
-                            engine._deck_sink[_dh:_cap] = mono[:_cap - _dh]
-                            engine._deck_head = _cap
+            if engine._deck_armed:
+                with engine._lock:
+                    # ---- deck input-recording tap -----------------------
+                    # Bounded prealloc sink + slice-assign: no hot-path alloc.
+                    # Overflow clamps at cap, marks the take full, and
+                    # auto-disarms — the deck pump() reads
+                    # is_input_recording()==False as "cap hit".
+                    if engine._deck_armed and engine._deck_sink is not None:
+                        _dh = engine._deck_head
+                        _cap = engine._deck_sink.size
+                        if _dh >= _cap:
                             engine._deck_full = True
                             engine._deck_armed = False
-                if engine._emissions_paused:
-                    return
-                if engine._buf_ring is None or engine._buf_ring.size < frames:
-                    # Reallocate if a rebind happened mid-callback.
-                    new_size = max(DEFAULT_BLOCK_SIZE, frames * 8)
-                    engine._buf_ring = np.zeros(new_size, dtype=np.float32)
-                    engine._buf_head = 0
-                # Write incoming samples into the ring via at most two
-                # slice assignments (one if no wrap, two at the boundary).
-                n = mono.shape[0]
-                end = engine._buf_head + n
-                if end <= engine._buf_ring.size:
-                    engine._buf_ring[engine._buf_head:end] = mono
-                else:
-                    first = engine._buf_ring.size - engine._buf_head
-                    engine._buf_ring[engine._buf_head:] = mono[:first]
-                    engine._buf_ring[:n - first] = mono[first:]
-                engine._buf_head = (engine._buf_head + n) % engine._buf_ring.size
-                # Materialise a contiguous chronological view for YIN and for
-                # get_buf_snapshot() readers. Unroll the ring INTO a
-                # preallocated scratch (two slice-copies) rather than
-                # np.concatenate, which allocated a fresh ring-sized array
-                # (~64 KB) on EVERY callback — real-time-thread GC churn.
-                # Reuse is safe: PortAudio invokes this callback serially, and
-                # get_buf_snapshot copies _buf under this same lock, so no
-                # reader ever sees a half-written scratch. Resized only when the
-                # ring is (a rare device rebind).
-                h = engine._buf_head
-                ring = engine._buf_ring
-                unwrap = engine._buf_unwrap
-                if unwrap is None or unwrap.size != ring.size:
-                    unwrap = np.empty(ring.size, dtype=np.float32)
-                    engine._buf_unwrap = unwrap
-                tail = ring.size - h
-                unwrap[:tail] = ring[h:]
-                unwrap[tail:] = ring[:h]
-                engine._buf = unwrap
-                buf = unwrap
-                mode = engine.filter_mode
-                a4 = engine.a4
-            params = FILTER_PRESETS.get(mode, FILTER_PRESETS['normal'])
-
-            rms = math.sqrt(float(np.dot(buf, buf)) / buf.size)
-            # Guard against a corrupt/overflow PortAudio buffer that
-            # produces NaN — bail on the frame, resume clean on the next.
-            if not math.isfinite(rms):
-                return
-            # CPython GIL note: last_rms_db / last_ap / last_freq are
-            # written unlocked deliberately. Simple float assignments are
-            # atomic under the GIL, so get_diagnostics() reads either the
-            # old or new value — never a torn intermediate. Taking the
-            # lock here would cost a frame-rate acquire just to write
-            # three floats; the diagnostic readout tolerates one-frame
-            # staleness.
-            # Mic gain (linear; default 1.0 = no-op). Scales the silence-gate
-            # decision + the level meter ONLY — `buf` is never mutated, so the
-            # YIN normalization (sig = buf/rms below) stays scale-invariant and
-            # the tape-deck input tap records the raw mic. A >1 gain lets a
-            # quiet mic clear the rms_floor; <1 rejects more room noise.
-            rms_eff = rms * engine.mic_gain
-            engine.last_rms_db = 20.0 * math.log10(max(rms_eff, 1e-9))
-
-            if rms_eff < params['rms_floor']:
-                engine.last_ap = 1.0
-                engine.last_freq = 0.0
-                with engine._lock:
-                    engine.last_locked_midi = engine._locked_midi
-                    engine._on_silence(params)
-                engine.coordination_step(None)  # D3: advance release ramp on a no-pitch hop
-                return
-            sig = buf / (rms + 1e-9)
-            freq, ap = yin_pitch(sig, sr)
-            engine.last_ap = float(ap)
-            engine.last_freq = float(freq)
-            if ap > params['yin_thr'] or not (MIN_FREQ < freq < MAX_FREQ):
-                with engine._lock:
-                    engine.last_locked_midi = engine._locked_midi
-                    engine._on_silence(params)
-                engine.coordination_step(None)  # D3: advance release ramp on a no-pitch hop
-                return
-            mr, ct = cents_dev(freq, a4)
-            if not (engine._midi_min <= mr <= engine._midi_max):
-                with engine._lock:
-                    engine.last_locked_midi = engine._locked_midi
-                    engine._on_silence(params)
-                engine.coordination_step(None)  # D3: advance release ramp on a no-pitch hop
-                return
-
-            # D3: one coordination hop with the detected pitch. If the
-            # output (drone) is currently sounding this MIDI, vote-exclude
-            # it — the drone's mic-bleed must never win the incumbent lock.
-            # The readout stays LIVE (we don't gate it); we just refuse to
-            # let the drone's own note become the locked reading. Inert
-            # when no drone sounds (coordination_step returns empty).
-            if int(mr) in engine.coordination_step(int(mr)):
-                with engine._lock:
-                    engine.last_locked_midi = engine._locked_midi
-                    engine._on_silence(params)
-                return
-
-            # Mutate filter state under the lock.
-            emit_payload = None
-            with engine._lock:
-                engine.last_locked_midi = (
-                    engine._locked_midi if engine._locked_midi is not None
-                    else int(mr))
-                engine._recent.append((int(mr), float(freq)))
-                if len(engine._recent) > params['window']:
-                    engine._recent.pop(0)
-                if not engine._recent:
-                    return  # cleared mid-flight by set_filter_mode
-                latest_midi = engine._recent[-1][0]
-                matches = sum(1 for m, _f in engine._recent
-                              if m == latest_midi)
-                if matches < params['confirm']:
-                    return
-                if engine._locked_midi != latest_midi:
-                    engine._drop_pending_for_edge(params)
-                    # Flush survivors before relocking.
-                    while engine._pending:
-                        mi, fr, ce = engine._pending.pop(0)
-                        engine._enqueue_emit(mi, fr, ce)
-                    engine._locked_midi = latest_midi
-                    engine._hop_in_note = 0
-                engine._hop_in_note += 1
-                if engine._hop_in_note <= params['edge_hops']:
-                    return
-                same = [f for m, f in engine._recent
-                        if m == latest_midi]
-                if not same:
-                    return  # cleared mid-flight
-                median_freq = float(np.median(same))
-                _mr2, median_cents = cents_dev(median_freq, a4)
-                engine._pending.append(
-                    (latest_midi, median_freq, median_cents))
-                if len(engine._pending) > params['edge_hops']:
-                    emit_payload = engine._pending.pop(0)
-            # Emit outside the lock — Qt signal delivery shouldn't
-            # hold the audio mutex.
-            if emit_payload is not None:
-                engine._emit(*emit_payload)
+                        else:
+                            _dn = mono.shape[0]
+                            _dend = _dh + _dn
+                            if _dend <= _cap:
+                                engine._deck_sink[_dh:_dend] = mono
+                                engine._deck_head = _dend
+                            else:
+                                engine._deck_sink[_dh:_cap] = mono[:_cap - _dh]
+                                engine._deck_head = _cap
+                                engine._deck_full = True
+                                engine._deck_armed = False
+            if ring is None:
+                ring = engine._ring
+            ring.push(mono)
+            if not ring.inline:
+                engine._wake.set()
+            elif ring is engine._ring:
+                engine.process_pending()
         except Exception:
-            # Audio callback must never raise back into PortAudio.
+            # The audio callback must never raise back into PortAudio.
             pass
 
     def feed_input_frames(self, mono) -> None:
         """Test/diagnostic entry: feed a 1-D float32 mono block straight into
-        the input hot path, as if PortAudio delivered it.
+        the input path, as if PortAudio delivered it, and analyse it before
+        returning.
 
         Shapes the block to the (frames, 1) ``indata`` the callback expects
-        and uses a null status; ``sr`` falls back to the active rate. No
-        device needed. Fed a contiguous float32 1-D array it allocates
-        nothing, so it is safe in the no-alloc-gate loop.
+        and uses a null status. No device needed. Fed a contiguous float32 1-D
+        array the copy path allocates nothing, so it is safe in the no-alloc
+        gate loop.
         """
         arr = np.asarray(mono, dtype=np.float32).reshape(-1, 1)
         self._on_input(arr, arr.shape[0], None, None)
+        self.process_pending()
 
-    def _drop_pending_for_edge(self, params: dict) -> None:
-        keep = max(0, len(self._pending) - params['edge_hops'])
-        self._pending = self._pending[:keep]
+    # ---- analysis (consumer) ----------------------------------------------
+    def process_pending(self) -> int:
+        """Analyse every block the input has delivered and not yet analysed,
+        emitting the readings each one confirms. Returns the hops analysed.
 
-    def _enqueue_emit(self, midi: int, freq: float, cents: float) -> None:
-        """Used while flushing survivors after a relock — delegate to the
-        signal emit. Called *under* the lock; emit is cheap (queued Qt
-        signal delivery), so we accept the brief hold."""
-        self._emit(midi, freq, cents)
+        This is the analysis thread's whole job, and the synchronous entry for
+        tests and the headless harness. Safe from any thread: consumers take
+        _analysis_lock; the producer never does.
+        """
+        hops = 0
+        with self._analysis_lock:
+            ring = self._ring
+            while True:
+                end = ring.pop_mark()
+                if end is None:
+                    break
+                with self._lock:
+                    intact = ring.read_window(end)
+                    self._buf = ring.window
+                    paused = self._emissions_paused
+                    a4 = self.a4
+                    a4_gen = self.a4_generation
+                    serial = self._reset_serial
+                    mode = self.filter_mode
+                if not intact:
+                    ring.dropped_hops += 1
+                    continue
+                if paused:
+                    continue
+                try:
+                    self._analyse_hop(ring, a4, a4_gen, serial, mode)
+                except Exception:
+                    # A detector bug must not take the consumer down; count it
+                    # so it stays visible.
+                    self._analysis_errors += 1
+                hops += 1
+        return hops
 
-    def _emit(self, midi: int, freq: float, cents: float) -> None:
-        if self._emissions_paused:
-            return
-        if self.signals is None:
+    def _analyse_hop(self, ring: _InputRing, a4: float, a4_gen: int,
+                     serial: int, mode: str) -> None:
+        det = self._detector
+        if serial != self._detector_serial:
+            # A reset request or a mode change.
+            det.set_mode(mode)
+            det.midi_min, det.midi_max = self._midi_min, self._midi_max
+            self._detector_serial = serial
+        sr = ring.samplerate or int(self.samplerate)
+        events = det.process(ring.window, sr, a4, a4_gen, self.mic_gain,
+                             self.coordination_step)
+        # Diagnostics: bare float stores are GIL-atomic, so get_diagnostics()
+        # sees the old or the new value, never a torn one.
+        self.last_rms_db = det.rms_db
+        self.last_ap = det.ap
+        self.last_freq = det.freq
+        with self._lock:
+            self.last_locked_midi = det.shown_midi
+        for ev in events:
+            self._emit(ev)
+
+    def _emit(self, ev: NoteEvent) -> None:
+        if self._emissions_paused or self.signals is None:
             return
         try:
-            self.signals.note_detected.emit(int(midi), float(freq),
-                                            float(cents))
+            sig = getattr(self.signals, 'note_event', None)
+            if sig is not None:
+                sig.emit(ev)
+            self.signals.note_detected.emit(int(ev.midi), float(ev.freq),
+                                            float(ev.cents))
         except Exception:
             pass
 
-    def _on_silence(self, params: dict) -> None:
-        """End any held note cleanly. Caller must hold self._lock."""
-        if self._locked_midi is not None or self._pending or self._recent:
-            self._drop_pending_for_edge(params)
-            while self._pending:
-                mi, fr, ce = self._pending.pop(0)
-                self._enqueue_emit(mi, fr, ce)
-        self._recent.clear()
-        self._locked_midi = None
-        self._hop_in_note = 0
+    # ---- analysis thread ---------------------------------------------------
+    def _start_analysis_thread(self) -> None:
+        """Start the consumer thread for the installed ring (idempotent)."""
+        t = self._analysis_thread
+        if t is not None and t.is_alive():
+            return
+        stop = threading.Event()
+        wake = self._wake
+        # The thread holds the engine weakly, so an engine dropped without
+        # stop() (tests) is collected and its thread exits on the next wake.
+        ref = weakref.ref(self)
+
+        def run() -> None:
+            while not stop.is_set():
+                # The timeout only bounds how long a dropped engine keeps its
+                # thread; real wakes come from the callback once per hop.
+                wake.wait(0.5)
+                wake.clear()
+                if stop.is_set():
+                    break
+                eng = ref()
+                if eng is None:
+                    break
+                eng.process_pending()
+                del eng
+
+        t = threading.Thread(target=run, name='input-analysis', daemon=True)
+        self._analysis_stop = stop
+        self._analysis_thread = t
+        t.start()
+
+    def _stop_analysis_thread(self) -> None:
+        t, stop = self._analysis_thread, self._analysis_stop
+        self._analysis_thread = None
+        self._analysis_stop = None
+        if t is None or stop is None:
+            return
+        stop.set()
+        self._wake.set()
+        if t is not threading.current_thread():
+            t.join(timeout=1.0)
