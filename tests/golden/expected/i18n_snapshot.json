@@ -45,6 +45,7 @@
       "btn_start",
       "btn_stop",
       "btn_txt",
+      "chart_err_encode",
       "chart_filter",
       "chart_footer",
       "chart_no_data",
@@ -150,6 +151,12 @@
       "drone_unavailable",
       "drone_volume",
       "err_title",
+      "export_err_detail",
+      "export_err_locked",
+      "export_err_os",
+      "export_err_other",
+      "export_overwrite_body",
+      "export_overwrite_title",
       "export_title",
       "filter_fast",
       "filter_normal",
@@ -348,6 +355,10 @@
         "sign",
         "sign2"
       ],
+      "chart_err_encode": [
+        "fmt",
+        "name"
+      ],
       "chart_footer": [
         "notes",
         "total"
@@ -395,6 +406,22 @@
       ],
       "data_hotplug_value_never": [
         "interval"
+      ],
+      "export_err_detail": [
+        "detail"
+      ],
+      "export_err_locked": [
+        "name"
+      ],
+      "export_err_os": [
+        "name"
+      ],
+      "export_err_other": [
+        "name"
+      ],
+      "export_overwrite_body": [
+        "folder",
+        "name"
       ],
       "matrix_oct_label": [
         "n"
@@ -563,6 +590,7 @@
       "btn_start",
       "btn_stop",
       "btn_txt",
+      "chart_err_encode",
       "chart_filter",
       "chart_footer",
       "chart_no_data",
@@ -668,6 +696,12 @@
       "drone_unavailable",
       "drone_volume",
       "err_title",
+      "export_err_detail",
+      "export_err_locked",
+      "export_err_os",
+      "export_err_other",
+      "export_overwrite_body",
+      "export_overwrite_title",
       "export_title",
       "filter_fast",
       "filter_normal",
@@ -866,6 +900,10 @@
         "sign",
         "sign2"
       ],
+      "chart_err_encode": [
+        "fmt",
+        "name"
+      ],
       "chart_footer": [
         "notes",
         "total"
@@ -913,6 +951,22 @@
       ],
       "data_hotplug_value_never": [
         "interval"
+      ],
+      "export_err_detail": [
+        "detail"
+      ],
+      "export_err_locked": [
+        "name"
+      ],
+      "export_err_os": [
+        "name"
+      ],
+      "export_err_other": [
+        "name"
+      ],
+      "export_overwrite_body": [
+        "folder",
+        "name"
       ],
       "matrix_oct_label": [
         "n"

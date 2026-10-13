@@ -223,6 +223,20 @@ STRINGS = {
         'txt_model':       'Modell      : {model}',
         'pdf_maker':       'Hersteller: {maker}',
         'pdf_model':       'Modell: {model}',
+        # Export: Speichern und Fehler
+        'export_overwrite_title':  'Datei ersetzen?',
+        'export_overwrite_body':   '{name} gibt es in {folder} schon.\nErsetzen?',
+        'export_err_locked':       ('{name} konnte nicht gespeichert werden. Ist die Datei in einem '
+                                    'anderen Programm geöffnet oder der Ordner schreibgeschützt? '
+                                    'Schließ sie oder wähl einen anderen Namen.'),
+        'export_err_os':           ('{name} konnte nicht gespeichert werden. Prüf, ob der Ordner '
+                                    'noch da ist und das Laufwerk Platz hat, oder wähl einen '
+                                    'anderen Ordner.'),
+        'export_err_other':        '{name} konnte wegen eines unerwarteten Fehlers nicht gespeichert werden.',
+        'export_err_detail':       'Technische Angabe: {detail}',
+        'chart_err_encode':        ('{name} konnte nicht erstellt werden: Diese Installation kann '
+                                    'keine {fmt}-Bilder schreiben. Exportiere stattdessen einen '
+                                    'TXT- oder PDF-Bericht.'),
         # Instr long names (für Export)
         'instr_long_eb_alto':    'Eb-Saxophon  (Alt)',
         'instr_long_eb_bari':    'Eb-Saxophon  (Bariton)',
@@ -568,6 +582,17 @@ STRINGS = {
         'txt_model':       'Model       : {model}',
         'pdf_maker':       'Manufacturer: {maker}',
         'pdf_model':       'Model: {model}',
+        # Export: saving and errors
+        'export_overwrite_title':  'Replace file?',
+        'export_overwrite_body':   '{name} already exists in {folder}.\nReplace it?',
+        'export_err_locked':       ('{name} could not be saved. Is it open in another program, '
+                                    'or is the folder read-only? Close it or choose another name.'),
+        'export_err_os':           ('{name} could not be saved. Check that the folder still exists '
+                                    'and the drive has free space, or choose another folder.'),
+        'export_err_other':        '{name} could not be saved because of an unexpected error.',
+        'export_err_detail':       'Technical detail: {detail}',
+        'chart_err_encode':        ('{name} could not be created: this installation cannot write '
+                                    '{fmt} images. Export a TXT or PDF report instead.'),
         'instr_long_eb_alto':    'Eb Saxophone  (Alto)',
         'instr_long_eb_bari':    'Eb Saxophone  (Baritone)',
         'instr_long_bb_tenor':   'Bb Saxophone  (Tenor)',

@@ -144,8 +144,6 @@ def test_txt_export_says_there_is_nothing_to_export_before_i_play(app):
     assert app.dialogs.last_message().kind == "information"
 
 
-@pytest.mark.xfail(strict=True, reason="Frodo-18: a TXT or PDF name typed without an "
-                                       "extension is saved without one")
 def test_a_report_name_typed_without_extension_gets_one(app):
     """Typing 'my-table' in the save dialog gives me my-table.txt / my-table.pdf."""
     play_known_table(app)
@@ -167,8 +165,6 @@ def test_the_txt_report_and_the_chart_write_the_date_the_same_way(app):
     assert chart_date in txt
 
 
-@pytest.mark.xfail(strict=True, reason="Aragorn-7: '.png' is added after the save dialog, "
-                                       "so an existing chart is replaced without asking")
 def test_saving_a_chart_over_last_weeks_picture_asks_first(app):
     """I type 'my-chart'; my-chart.png already exists; I say No; it is still there."""
     play_known_table(app)
@@ -183,8 +179,6 @@ def test_saving_a_chart_over_last_weeks_picture_asks_first(app):
     assert existing.read_bytes() == b"last week's chart"
 
 
-@pytest.mark.xfail(strict=True, reason="Frodo-9: export errors show raw English OS / library "
-                                       "text in the German UI")
 def test_a_locked_folder_is_explained_in_german_for_every_export(make_app, tmp_path):
     """Saving into a folder I may not write to says so in my language, naming the file."""
     _locked_folder_skip()

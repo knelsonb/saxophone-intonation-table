@@ -72,6 +72,10 @@ the list below is the contract the rewrite must keep or update here:
       ``sax_report.render_intonation_chart`` (chart arguments: the pure
       chart renderer ``sax_report.render_chart`` hands its drawing to it),
       ``MeasurementLog.import_raw_csv`` / ``.export_csv`` (results).
+    * the save dialog is the static ``QFileDialog.getSaveFileName``; the app
+      completes a name typed without an extension itself and asks with
+      ``QMessageBox.question`` before replacing a file the dialog did not
+      confirm.
   i18n
     * ``sax_i18n.STRINGS`` = ``{lang: {key: format_string}}``.
 """

@@ -29,6 +29,8 @@
 from __future__ import annotations
 
 import datetime
+import errno
+from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
 from PyQt6.QtCore import Qt
@@ -45,12 +47,28 @@ from PyQt6.QtWidgets import (
 )
 
 import sax_report
+from sax_intonation_chart import ChartEncodeError
 from sax_intonation_log import MeasurementLog
 
 
 def _today() -> str:
     """Date stamp for default export file names."""
     return datetime.date.today().strftime('%Y%m%d')
+
+
+def _error_detail(exc: BaseException) -> str:
+    """A short technical line for a failed save: the exception type and the
+    errno / Windows error code, without the OS's English sentence, so the
+    message stays in the user's language and still tells support what
+    happened."""
+    if isinstance(exc, OSError):
+        parts = [errno.errorcode.get(exc.errno, '')] if exc.errno else []
+        winerror = getattr(exc, 'winerror', None)
+        if winerror:
+            parts.append(f'WinError {winerror}')
+        parts = [p for p in parts if p]
+        return type(exc).__name__ + (f" ({', '.join(parts)})" if parts else '')
+    return f'{type(exc).__name__}: {exc}'
 
 
 if TYPE_CHECKING:
@@ -93,11 +111,10 @@ class ExportController:
         if model_info is None:
             return   # Abgebrochen
         instrument = self._get_instrument_key()
-        path, _ = QFileDialog.getSaveFileName(
-            self._w, self._t('txt_save_title'),
-            f"intonation_{instrument}_{_today()}.txt",
-            self._t('txt_filter'))
-        if not path:
+        path = self._ask_save_path(
+            'txt_save_title', f"intonation_{instrument}_{_today()}.txt",
+            'txt_filter', '.txt')
+        if path is None:
             return
         snapshot = self._snapshot(*model_info)
         if self._write(path, lambda: sax_report.write_txt(
@@ -112,11 +129,10 @@ class ExportController:
         if model_info is None:
             return   # Abgebrochen
         instrument = self._get_instrument_key()
-        path, _ = QFileDialog.getSaveFileName(
-            self._w, self._t('pdf_save_title'),
-            f"intonation_{instrument}_{_today()}.pdf",
-            self._t('pdf_filter'))
-        if not path:
+        path = self._ask_save_path(
+            'pdf_save_title', f"intonation_{instrument}_{_today()}.pdf",
+            'pdf_filter', '.pdf')
+        if path is None:
             return
         snapshot = self._snapshot(*model_info)
         if self._write(path, lambda: sax_report.render_pdf(
@@ -149,11 +165,10 @@ class ExportController:
                                 self._t('csv_need_instr'))
             return
 
-        path, _ = QFileDialog.getSaveFileName(
-            w, self._t('csv_save_title'),
-            f"intonation_{sel['mode']}_{_today()}.csv",
-            self._t('csv_filter'))
-        if not path:
+        path = self._ask_save_path(
+            'csv_save_title', f"intonation_{sel['mode']}_{_today()}.csv",
+            'csv_filter', '.csv')
+        if path is None:
             return
 
         written = []
@@ -177,15 +192,11 @@ class ExportController:
         if model_info is None:
             return
         instrument = self._get_instrument_key()
-        path, _ = QFileDialog.getSaveFileName(
-            self._w, self._t('chart_save_title'),
-            f"intonation_chart_{instrument}_{_today()}.png",
-            self._t('chart_filter'))
-        if not path:
+        path = self._ask_save_path(
+            'chart_save_title', f"intonation_chart_{instrument}_{_today()}.png",
+            'chart_filter', '.png')
+        if path is None:
             return
-        # Ensure the file ends in .png so QPixmap picks the right encoder.
-        if not path.lower().endswith('.png'):
-            path += '.png'
         snapshot = self._snapshot(*model_info)
         if self._write(path, lambda: sax_report.render_chart(
                 snapshot, self._get_lang(), path)):
@@ -209,14 +220,59 @@ class ExportController:
             maker=maker, model=model,
             nickname=self._get_nickname().strip())
 
+    def _ask_save_path(self, title_key: str, default_name: str,
+                       filter_key: str, ext: str) -> str | None:
+        """Ask for a file name; None when the user cancels.
+
+        A name typed without the extension gets it here. The save dialog
+        only confirmed replacing the name it was given, so when that name
+        changed and the completed one already exists, ask again before
+        anything overwrites it.
+        """
+        path, _ = QFileDialog.getSaveFileName(
+            self._w, self._t(title_key), default_name, self._t(filter_key))
+        if not path:
+            return None
+        if path.lower().endswith(ext):
+            return path
+        path += ext
+        target = Path(path)
+        if target.exists():
+            answer = QMessageBox.question(
+                self._w, self._t('export_overwrite_title'),
+                self._t('export_overwrite_body',
+                        name=target.name, folder=str(target.parent)),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No)
+            if answer != QMessageBox.StandardButton.Yes:
+                return None
+        return path
+
     def _write(self, path: str, write: Callable[[], object]) -> bool:
-        """Run ``write``; on failure show the error and return False."""
+        """Run ``write``; on failure explain it in the user's language,
+        naming the file, and return False."""
+        name = Path(path).name
         try:
             write()
             return True
+        except PermissionError as e:
+            # Most often the old file is open in Excel or a PDF viewer
+            # (Windows refuses to replace it) or the folder is read-only.
+            text = self._t('export_err_locked', name=name)
+            detail = e
+        except OSError as e:
+            text = self._t('export_err_os', name=name)
+            detail = e
+        except ChartEncodeError as e:
+            text = self._t('chart_err_encode', name=name, fmt=e.fmt)
+            detail = e
         except Exception as e:
-            QMessageBox.critical(self._w, self._t('err_title'), str(e))
-            return False
+            text = self._t('export_err_other', name=name)
+            detail = e
+        QMessageBox.critical(
+            self._w, self._t('err_title'),
+            text + '\n\n' + self._t('export_err_detail', detail=_error_detail(detail)))
+        return False
 
     def _saved(self, text: str) -> None:
         QMessageBox.information(self._w, self._t('export_title'), text)

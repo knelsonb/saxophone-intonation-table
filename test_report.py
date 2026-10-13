@@ -1,14 +1,18 @@
 """Unit tests for sax_report: the pure TXT / PDF renderers over a SessionSnapshot.
 
 The acceptance suite drives the same renderers through the window; these
-pin the snapshot contract without a window.
+cover cases a scenario cannot reach cheaply (a write that fails
+halfway) and pin the snapshot contract.
 """
 from __future__ import annotations
 
 import datetime
 from collections import namedtuple
 
+import pytest
+
 import sax_report
+from sax_atomic import atomic_open
 from sax_i18n import STRINGS
 
 Stat = namedtuple("Stat", "mean std n")
@@ -41,6 +45,20 @@ def test_other_transpositions_keep_the_fingered_c_wording():
     assert _header_line(report) == STRINGS["en"]["txt_transp"].format(note="D#/Eb")
 
 
+def test_a_failed_txt_write_leaves_the_previous_report_and_no_temp_file(tmp_path, monkeypatch):
+    target = tmp_path / "report.txt"
+    target.write_text("last week\n", encoding="utf-8")
+
+    def boom(snapshot, lang):
+        raise RuntimeError("renderer failed")
+    monkeypatch.setattr(sax_report, "render_txt", boom)
+
+    with pytest.raises(RuntimeError):
+        sax_report.write_txt(_snapshot(), "en", target)
+    assert target.read_text(encoding="utf-8") == "last week\n"
+    assert [p.name for p in tmp_path.iterdir()] == ["report.txt"]
+
+
 def test_write_txt_replaces_an_existing_report(tmp_path):
     target = tmp_path / "report.txt"
     target.write_text("last week\n", encoding="utf-8")
@@ -49,3 +67,10 @@ def test_write_txt_replaces_an_existing_report(tmp_path):
     assert target.read_text(encoding="utf-8") == sax_report.render_txt(snap, "en")
     assert [p.name for p in tmp_path.iterdir()] == ["report.txt"]
 
+
+def test_atomic_open_reports_an_unwritable_folder(tmp_path):
+    missing = tmp_path / "no-such-folder" / "out.png"
+    with pytest.raises(OSError):
+        with atomic_open(missing, binary=True) as f:
+            f.write(b"x")
+    assert not missing.parent.exists()

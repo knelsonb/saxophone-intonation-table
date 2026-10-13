@@ -2,8 +2,9 @@
 PNG chart rendering for the intonation table.
 
 Uses QPainter to draw a shareable bar chart of mean cents deviation per note.
-No new dependencies — PyQt6 is already in. The result is written via
-QPixmap.save(), which is wired for PNG/JPEG/BMP by the bundled image plugins.
+No new dependencies — PyQt6 is already in. The image is encoded with
+QPixmap.save(), which is wired for PNG/JPEG/BMP by the bundled image plugins,
+and written with sax_atomic.atomic_open.
 
 The chart is intentionally simple: one bar per note, sorted by sounding MIDI,
 centered on a zero line, colored green/yellow/red by magnitude. Anyone the
@@ -13,8 +14,9 @@ file is shared with should be able to read it without a legend.
 from __future__ import annotations
 
 import math
+from pathlib import Path
 
-from PyQt6.QtCore import QPointF, QRectF, Qt
+from PyQt6.QtCore import QBuffer, QByteArray, QIODevice, QPointF, QRectF, Qt
 from PyQt6.QtGui import (
     QColor,
     QFont,
@@ -24,6 +26,7 @@ from PyQt6.QtGui import (
     QPolygonF,
 )
 
+from sax_atomic import atomic_open
 from sax_pitch import format_cents
 from sax_theme import IN_TUNE_CENTS, cents_band
 
@@ -102,8 +105,11 @@ def render_intonation_chart(
     can see at a glance which notes are out of the instrument's nominal
     band (overtones, altissimo, accidentals).
 
-    The image format is inferred from the file extension by QPixmap.save —
+    The image format follows the file extension (PNG when there is none);
     .png works without any extra plugins on the standard PyQt6 install.
+    The file is replaced atomically, so a failed save leaves an existing
+    picture untouched. Raises ``ChartEncodeError`` when Qt cannot encode the
+    image and ``OSError`` when the file cannot be written.
     """
     pix = QPixmap(_WIDTH, _HEIGHT)
     pix.fill(QColor(20, 20, 28))
@@ -127,13 +133,29 @@ def render_intonation_chart(
     finally:
         p.end()
 
-    # Returns False if PyQt6's image plugin chain refuses the format — for
-    # example a stripped-down conda build with no PNG plugin. Surface that
-    # instead of silently writing a 0-byte file.
-    if not pix.save(output_path):
-        raise RuntimeError(
-            f"Failed to save chart image to {output_path!r}. The image "
-            "format may not be supported by this PyQt6 install.")
+    # Encode in memory first: QPixmap.save(path) reports every failure as a
+    # bare False, so a locked folder and a missing image plugin would look
+    # the same. Writing the bytes ourselves keeps the OS error for the user.
+    fmt = Path(output_path).suffix.lstrip('.').upper() or 'PNG'
+    data = QByteArray()
+    buf = QBuffer(data)
+    buf.open(QIODevice.OpenModeFlag.WriteOnly)
+    # False when the image plugin chain refuses the format, for example a
+    # stripped-down conda build with no PNG plugin.
+    encoded = pix.save(buf, fmt)
+    buf.close()
+    if not encoded:
+        raise ChartEncodeError(fmt)
+    with atomic_open(output_path, binary=True) as f:
+        f.write(bytes(data))
+
+
+class ChartEncodeError(RuntimeError):
+    """Qt could not encode the chart in the requested image format."""
+
+    def __init__(self, fmt: str) -> None:
+        super().__init__(f"no {fmt} image writer in this PyQt6 install")
+        self.fmt = fmt
 
 
 def _make_in_range_fn(instrument: str | None):

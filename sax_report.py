@@ -6,7 +6,9 @@ of the renderers here. The renderers never open a dialog or read the window,
 so the same snapshot always gives the same file, and a renderer can be called
 from a test or a script without a MainWindow.
 
-Errors propagate to the caller, which reports them to the user.
+Every file is written through sax_atomic.atomic_open: a failed export leaves
+any previous file with that name untouched. Errors propagate to the caller,
+which explains them to the user.
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ from typing import Callable, Mapping
 from xml.sax.saxutils import escape as _xml_escape
 
 import sax_instruments
+from sax_atomic import atomic_open
 from sax_i18n import STRINGS
 from sax_intonation_chart import render_intonation_chart
 from sax_pitch import CHROMA, format_cents, midi_note_name
@@ -147,7 +150,7 @@ def render_txt(snapshot: SessionSnapshot, lang: str) -> str:
 
 
 def write_txt(snapshot: SessionSnapshot, lang: str, path: Path | str) -> None:
-    with open(path, 'w', encoding='utf-8') as f:
+    with atomic_open(path) as f:
         f.write(render_txt(snapshot, lang))
 
 
@@ -255,10 +258,11 @@ def render_pdf(snapshot: SessionSnapshot, lang: str, path: Path | str) -> None:
         tbl.setStyle(ts)
         story.append(tbl)
 
-    doc = SimpleDocTemplate(str(path), pagesize=RL_A4,
-                            leftMargin=20*mm, rightMargin=20*mm,
-                            topMargin=20*mm, bottomMargin=20*mm)
-    doc.build(story)
+    with atomic_open(path, binary=True) as f:
+        doc = SimpleDocTemplate(f, pagesize=RL_A4,
+                                leftMargin=20*mm, rightMargin=20*mm,
+                                topMargin=20*mm, bottomMargin=20*mm)
+        doc.build(story)
 
 
 def _make_bar_ascii(cents, w=16):
@@ -273,7 +277,8 @@ def _make_bar_ascii(cents, w=16):
 
 # ── Chart ──────────────────────────────────────────────────────────────────
 def render_chart(snapshot: SessionSnapshot, lang: str, path: Path | str) -> None:
-    """Write the PNG bar chart."""
+    """Write the PNG bar chart. Raises sax_intonation_chart.ChartEncodeError
+    when Qt cannot encode the image, OSError when the file cannot be written."""
     _t = translator(lang)
     s = snapshot
     disp_griff = (s.display == 'griff')
