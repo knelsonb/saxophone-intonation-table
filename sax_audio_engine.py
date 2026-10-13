@@ -66,6 +66,7 @@ from sax_detector import (  # noqa: F401  (re-exported)
     NoteEvent,
 )
 from sax_mixer import Mixer, TestToneSource
+from sax_pitch import A4_DEFAULT, cents_dev, freq_to_midi  # noqa: F401  (re-exported)
 from sax_yin import MAX_FREQ, MIN_FREQ, YIN_THRESHOLD, yin_pitch  # noqa: F401
 
 try:
@@ -109,9 +110,9 @@ DEFAULT_OUT_BLOCK = DEFAULT_HOP_SIZE        # 2048 frames at 44.1k
 SAMPLERATE_CANDIDATES = (48000, 44100, 96000, 88200, 192000)
 SAMPLERATE_PREF_VALUES = ('auto', '44100', '48000', '88200', '96000',
                           '192000')
-# MIN_FREQ / MAX_FREQ / YIN_THRESHOLD and yin_pitch live in sax_yin and are
-# re-exported above: callers and tests import them from the engine.
-A4_DEFAULT = 440.0
+# MIN_FREQ / MAX_FREQ / YIN_THRESHOLD and yin_pitch (sax_yin), and A4_DEFAULT,
+# freq_to_midi and cents_dev (sax_pitch), are re-exported above: callers and
+# tests import them from the engine.
 
 # FILTER_PRESETS (the fast / normal / slow response modes) and
 # FILTER_MODE_DEFAULT live with the state machine they tune, in sax_detector,
@@ -244,19 +245,6 @@ if QT_OK:
 else:  # pragma: no cover — only hit in pure unit-test contexts
     class AudioSignals:
         pass
-
-
-# ---------------------------------------------------------------------------
-# Music helpers
-# ---------------------------------------------------------------------------
-def freq_to_midi(f: float, a4: float = A4_DEFAULT) -> float:
-    return 69.0 + 12.0 * math.log2(f / a4)
-
-
-def cents_dev(f: float, a4: float = A4_DEFAULT) -> tuple[int, float]:
-    mf = freq_to_midi(f, a4)
-    mr = round(mf)
-    return mr, (mf - mr) * 100.0
 
 
 # ---------------------------------------------------------------------------
@@ -651,13 +639,13 @@ class AudioEngine:
         # resolve "the device the user picked last session" against the
         # current device list, which holds rotated PortAudio indices.
         self._preferred_hint: Optional[DeviceSelection] = None
-        # Range gate: see SAX_MIDI from the GUI module. Mirrored here so
+        # Range gate: see sax_pitch.SAX_MIDI. Mirrored here so
         # the engine can drop MIDI values outside the supported range
         # without round-tripping to Qt.
         self._midi_min = 21
         # v0.6: raised from 91 (G6) to 108 (C8) so piccolo / sopranino /
         # recorder / piano / banjo upper registers aren't silently dropped.
-        # Must stay in lock-step with SAX_MIDI in sax_intonation_gui.
+        # Must stay in lock-step with sax_pitch.SAX_MIDI.
         self._midi_max = 108
 
     # ---- internal state helpers -------------------------------------------

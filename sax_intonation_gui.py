@@ -150,7 +150,7 @@ class MainWindow(QMainWindow):
         self.instrument = 'bb_tenor'
         self.display    = 'griff'
         # Per-note statistics behind the table. Main-thread only: the engine's
-        # note_detected signal is delivered queued, so _on_note runs on the
+        # note_event signal is delivered queued, so _on_note runs on the
         # Qt thread like every other reader and writer, and needs no lock.
         self.stats: dict[int, NoteStats] = {}
         self._recording = True   # Aufnahme läuft beim Start
@@ -2740,8 +2740,10 @@ class MainWindow(QMainWindow):
         self._oor_banner_shown = False
         # _on_note runs on this (Qt) thread, so no reading can land in the
         # middle of the rebuild below. pause_emissions() stops the engine
-        # emitting while the reference changes; a reading it queued before
-        # the pause still arrives afterwards, measured against the old A4.
+        # emitting while the reference changes, and the new A4 starts a new A4
+        # generation: a reading queued before the pause still arrives
+        # afterwards, but carries the old generation and _on_note_event drops
+        # it, and the engine discards readings it was still holding back.
         self._engine.pause_emissions()
         try:
             self._push_a4(new_a4)

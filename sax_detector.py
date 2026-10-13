@@ -35,6 +35,7 @@ from typing import Callable, Optional
 
 import numpy as np
 
+from sax_pitch import cents_dev
 from sax_yin import MAX_FREQ, MIN_FREQ, yin_pitch
 
 __all__ = ["FILTER_MODE_DEFAULT", "FILTER_PRESETS", "Detector", "NoteEvent"]
@@ -81,14 +82,6 @@ class NoteEvent:
     cents: float
     a4: float = 440.0
     a4_generation: int = 0
-
-
-def _cents_dev(f: float, a4: float) -> tuple[int, float]:
-    # Same maths as sax_audio_engine.cents_dev; kept local so this module does
-    # not import the engine that owns it.
-    mf = 69.0 + 12.0 * math.log2(f / a4)
-    mr = round(mf)
-    return mr, (mf - mr) * 100.0
 
 
 class Detector:
@@ -149,7 +142,7 @@ class Detector:
         self.ap, self.freq = float(ap), float(freq)
         if ap > p['yin_thr'] or not (MIN_FREQ < freq < MAX_FREQ):
             return self._reject(coordinate)
-        midi, _cents = _cents_dev(freq, a4)
+        midi, _cents = cents_dev(freq, a4)
         if not (self.midi_min <= midi <= self.midi_max):
             return self._reject(coordinate)
         if coordinate is not None and midi in coordinate(midi):
@@ -205,7 +198,7 @@ class Detector:
         if self._hop_in_note <= p['edge_hops']:
             return out                    # attack edge
         median_freq = float(np.median([f for m, f in self._recent if m == latest]))
-        _m, median_cents = _cents_dev(median_freq, a4)
+        _m, median_cents = cents_dev(median_freq, a4)
         self._pending.append(NoteEvent(latest, median_freq, median_cents, a4, gen))
         if len(self._pending) > p['edge_hops']:
             out.append(self._pending.pop(0))

@@ -14,7 +14,7 @@ class NoteStats:
     contract locked by test_agg_stats.py.
 
     Thread-safety note: add() and the property readers are both called on
-    the Qt main thread (add via the engine.note_detected slot; readers via
+    the Qt main thread (add via the engine.note_event slot; readers via
     the table-refresh timer), so no lock is needed here.  The v0.5.7.3
     concurrent-clear NaN hazard is structurally gone: _mean and _m2 are
     plain Python floats updated by individual assignments; under CPython's

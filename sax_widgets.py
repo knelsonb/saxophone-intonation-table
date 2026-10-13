@@ -189,7 +189,7 @@ class SpectrumAnalyzerWidget(QWidget):
     in dBFS. A peak-hold envelope decays at a fixed rate so transient
     spikes stay readable for a few hundred ms before sliding back down.
 
-    The audio callback is never touched here — the timer reads `_buf`
+    The analysis thread is never touched here — the timer copies `_buf`
     cooperatively and tolerates a hop of staleness. Display only, never
     gates or feeds back into pitch detection.
     """
