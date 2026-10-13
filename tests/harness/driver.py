@@ -278,6 +278,16 @@ class AppDriver:
             self._restore_modules()
             if _ACTIVE is self:
                 _ACTIVE = None
+            # Tear the closed app down completely, now. Left to the cyclic
+            # garbage collector, its Qt objects were destroyed at some random
+            # point inside a later test, in the middle of that test's own Qt
+            # calls, and the process crashed now and then.
+            import gc
+
+            from PyQt6.QtCore import QEvent
+            for _ in range(2):
+                gc.collect()
+                self.qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
     # ======================================================== time / event loop
     def _virtualize_timers(self) -> None:
@@ -436,16 +446,24 @@ class AppDriver:
         return int(dlg.result()) == int(QDialog.DialogCode.Accepted)
 
     def _fill_welcome(self, dlg, answer: str, fields: dict) -> bool:
+        from PyQt6 import sip
+        from PyQt6.QtCore import QEvent
         from PyQt6.QtWidgets import QCheckBox, QPushButton
         if "language" in fields:
             label = fields["language"].upper()
-            for b in dlg.findChildren(QPushButton):
-                if b.text() == label:
-                    b.click()
+            # Click once and stop iterating: the click retranslates the dialog,
+            # which can delete sibling widgets still in the list; touching one
+            # of those afterwards dereferenced freed memory.
+            target = next((b for b in dlg.findChildren(QPushButton)
+                           if b.text() == label), None)
+            if target is not None:
+                target.click()
+            self.qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete)
             # Remembered for Welcome.language_buttons.
             self._welcome_lang_buttons = {b.text(): b.isChecked()
                                           for b in dlg.findChildren(QPushButton)
-                                          if b.text() in ("DE", "EN")}
+                                          if not sip.isdeleted(b)
+                                          and b.text() in ("DE", "EN")}
         if "history" in fields:
             dlg.findChildren(QCheckBox)[0].setChecked(bool(fields["history"]))
         return self._finish_form(dlg, answer)
