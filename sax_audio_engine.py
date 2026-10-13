@@ -50,6 +50,7 @@ import numpy as np
 
 from sax_coordination import OutputCoordinator
 from sax_mixer import Mixer, TestToneSource
+from sax_yin import MAX_FREQ, MIN_FREQ, YIN_THRESHOLD, yin_pitch  # noqa: F401
 
 try:
     import sounddevice as sd
@@ -92,24 +93,8 @@ DEFAULT_OUT_BLOCK = DEFAULT_HOP_SIZE        # 2048 frames at 44.1k
 SAMPLERATE_CANDIDATES = (48000, 44100, 96000, 88200, 192000)
 SAMPLERATE_PREF_VALUES = ('auto', '44100', '48000', '88200', '96000',
                           '192000')
-MIN_FREQ = 27.0
-# v0.6: raised from 1400 Hz to 4200 Hz so high-register instruments in the
-# catalog (piccolo MIDI 93 = 2349 Hz, recorder MIDI 100 = 2637 Hz, piano
-# MIDI 108 = 4186 Hz) aren't silently rejected by the post-YIN gate. The
-# YIN search range expands correspondingly (tmin = sr / fmax shrinks),
-# which is benign for clean signals — see test_yin_accuracy.py.
-#
-# v0.6.x: raised again 4200 -> 4500. 4200 cleared C8 (MIDI 108) only at A4=440
-# (4186 Hz) by 14 Hz, so at the top of the allowed A4 range (450 Hz -> C8 =
-# 4281 Hz) or for a C8 played sharp the post-YIN freq gate rejected a note the
-# MIDI-range gate (midi_max = 108) still accepts — the two gates disagreed and
-# the table's top note silently vanished. 4500 covers C8 + ~50 cents at A4=450
-# (the C8/C#8 rounding boundary is ~4409 Hz, and YIN can overshoot ~8 cents at
-# this ~10-sample period) with margin; the PRECISE upper bound stays the
-# MIDI-range gate (freq -> nearest MIDI must be <= midi_max). Still far below
-# Nyquist (22.05 kHz at 44.1 k).
-MAX_FREQ = 4500.0
-YIN_THRESHOLD = 0.12
+# MIN_FREQ / MAX_FREQ / YIN_THRESHOLD and yin_pitch live in sax_yin and are
+# re-exported above: callers and tests import them from the engine.
 A4_DEFAULT = 440.0
 
 # Filter-mode presets. Each callback fires every HOP_MS (~46 ms; the hop is
@@ -267,64 +252,6 @@ def cents_dev(f: float, a4: float = A4_DEFAULT) -> tuple[int, float]:
     mf = freq_to_midi(f, a4)
     mr = round(mf)
     return mr, (mf - mr) * 100.0
-
-
-def yin_pitch(sig: np.ndarray, sr: int,
-              fmin: float = MIN_FREQ, fmax: float = MAX_FREQ,
-              thr: float = YIN_THRESHOLD) -> tuple[float, float]:
-    """Sample-rate-agnostic YIN. Operates in lag space, returns (Hz, ap)."""
-    N = len(sig)
-    tmin = max(1, int(sr / fmax))
-    tmax = min(N // 2, int(sr / fmin))
-    if tmax <= tmin:
-        return 0.0, 1.0
-    x = sig.astype(np.float64)  # fp64 for stable cumulative-energy sums at large N
-    # Linear autocorrelation via FFT: zero-pad to next power of 2 >= 2N-1
-    # so the circular convolution gives the correct linear result on [0, tmax].
-    M = 1 << (2 * N - 1).bit_length()
-    X = np.fft.rfft(x, M)
-    r_full = np.fft.irfft(X * np.conj(X), M)
-    r = r_full[:tmax + 1]
-    # YIN difference function: d(τ) = E1(τ) + E2(τ) − 2·r(τ)
-    #   E1(τ) = Σ_{j∈[0,N-τ)} x[j]²  (energy of the left window)
-    #   E2(τ) = Σ_{j∈[τ,N)} x[j]²    (energy of the right window)
-    # The naive 2·(r0 − r) shortcut is biased for windowed signals.
-    xsq = x * x
-    S = np.concatenate(([0.0], np.cumsum(xsq)))  # prefix sums, length N+1
-    t = np.arange(tmax + 1)
-    E1 = S[N - t]
-    E2 = S[N] - S[t]
-    diff = E1 + E2 - 2.0 * r
-    cmnd = np.ones(tmax + 1)
-    run = 0.0
-    for t in range(1, tmax + 1):
-        run += diff[t]
-        cmnd[t] = diff[t] * t / run if run > 0 else 1.0
-    tau, mv = -1, 1.0
-    for t in range(tmin, tmax):
-        if cmnd[t] < thr:
-            while t + 1 < tmax and cmnd[t + 1] < cmnd[t]:
-                t += 1
-            tau, mv = t, cmnd[t]
-            break
-    if tau == -1:
-        tau = tmin + int(np.argmin(cmnd[tmin:tmax]))
-        mv = cmnd[tau]
-    if 1 < tau < tmax - 1:
-        # Parabolic interpolation: refine the integer lag to the sub-sample
-        # vertex of the parabola through (tau-1, tau, tau+1). Vertex offset is
-        # 0.5*(s0-s2)/(s0-2*s1+s2). The denominator SIGN is critical: inverting
-        # it (the pre-v0.11 bug, d = 2*s1-s0-s2) shifts the refined lag the
-        # WRONG way and reads ~+8 cents sharp across the whole mid/high range
-        # (A440 -> 441.99 Hz). See test_yin_accuracy, which pins it.
-        s0, s1, s2 = cmnd[tau - 1], cmnd[tau], cmnd[tau + 1]
-        d = s0 + s2 - 2 * s1
-        if d:
-            tau += 0.5 * (s0 - s2) / d
-    # Clamp tau >= 1 before the division so a degenerate near-flat peak can't
-    # inflate sr/tau into a nonsense high frequency; the threshold-pick loop
-    # only accepts tau >= tmin >= 1 to begin with anyway.
-    return (sr / tau if tau >= 1.0 else 0.0), mv
 
 
 # ---------------------------------------------------------------------------

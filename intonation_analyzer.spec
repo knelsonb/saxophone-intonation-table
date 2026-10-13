@@ -66,6 +66,7 @@ a = Analysis(
         'sax_config',
         'sax_flow_layout',
         'sax_audio_engine',
+        'sax_yin',
         # Audio output modules, listed explicitly so a later change that loads
         # one lazily cannot drop it from the binary (test_packaging checks that
         # every app module is either reached at import time or listed here).
