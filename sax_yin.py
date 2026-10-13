@@ -9,6 +9,12 @@ FFT is zero-padded only as far as a linear (non-circular) autocorrelation needs
 on the lags YIN reads, N + tmax, rounded up to a length with small prime
 factors. Padding to a power of two at or above 2N, as earlier versions did,
 roughly doubled the transform for no change in the result.
+
+The lag is interpolated on the raw difference function and, for short
+periods, refined over several periods (see REFINE_LAG); a dip whose minimum
+falls between two lags counts as below the threshold when its interpolated
+minimum is. Together these hold every note from A0 to C8 within 0.6 cents of
+a synthetic tone at 44.1 and 48 kHz.
 """
 from __future__ import annotations
 
@@ -24,6 +30,13 @@ MIN_FREQ = 25.5
 # few samples, where YIN has no resolution left.
 MAX_FREQ = 4500.0
 YIN_THRESHOLD = 0.12
+# Short periods are refined on the dip at the multiple of the period nearest
+# this many lags. Parabolic interpolation misplaces a dip by a roughly fixed
+# fraction of a lag whatever the period, so measuring k periods at once
+# divides the error by k: at C8 (about 10.5 lags at 44.1 kHz) the residual
+# falls from up to 7.5 cents to about 0.5. Periods longer than this keep their
+# first dip (k = 1), so the low and middle registers are unchanged.
+REFINE_LAG = 128.0
 
 
 def next_fast_len(n: int) -> int:
@@ -90,25 +103,61 @@ def yin_pitch(sig: np.ndarray, sr: int,
     # that dip to its local minimum. NaN compares false on both tests, which
     # stops the walk and skips the lag, as a scalar loop would.
     below = np.flatnonzero(cmnd[tmin:tmax] < thr)
+    tau = -1
     if below.size:
         tau = tmin + int(below[0])
         stops = np.flatnonzero(~(cmnd[tau + 1:tmax] < cmnd[tau:tmax - 1]))
         tau = tau + int(stops[0]) if stops.size else tmax - 1
-    else:
+    # At the top of the range a period is about ten lags, and a dip whose true
+    # minimum falls between two lags can sit above thr at both. The parabola
+    # through each local minimum estimates the value between the samples; the
+    # first dip whose estimate is below thr is the period, even ahead of the
+    # first lag that is below thr on its own (taking that later dip read C8 an
+    # octave low, or not at all).
+    lo = max(tmin, 1)
+    hi = tau if tau >= 0 else tmax - 1
+    if hi > lo:
+        s0, s1, s2 = cmnd[lo - 1:hi - 1], cmnd[lo:hi], cmnd[lo + 1:hi + 1]
+        curv = s0 + s2 - 2.0 * s1
+        dip = (s0 > s1) & (s2 >= s1) & (curv > 0)
+        vertex = s1 - (s0 - s2) ** 2 / (8.0 * np.where(dip, curv, 1.0))
+        early = np.flatnonzero(dip & (vertex < thr))
+        if early.size:
+            tau = lo + int(early[0])
+    if tau < 0:
         tau = tmin + int(np.argmin(cmnd[tmin:tmax]))
     mv = float(cmnd[tau])
     lag = float(tau)
     if 1 < tau < tmax - 1:
-        # Parabolic interpolation: refine the integer lag to the vertex of the
-        # parabola through (tau-1, tau, tau+1), offset 0.5*(s0-s2)/(s0-2*s1+s2).
-        # The denominator SIGN matters: inverting it (d = 2*s1-s0-s2, the
-        # pre-v0.11 bug) moves the lag the wrong way and reads about 8 cents
-        # sharp across the mid and high range (A440 -> 441.99 Hz).
-        # test_yin_accuracy pins it.
-        s0, s1, s2 = cmnd[tau - 1], cmnd[tau], cmnd[tau + 1]
+        # Parabolic interpolation of the raw difference function d(tau), as in
+        # the YIN paper. d'(tau) carries the factor tau / mean(d), which tilts
+        # its dip by a few percent per lag where the period is short, and its
+        # vertex read up to 10 cents sharp in the top octave.
+        # Offset 0.5*(s0-s2)/(s0-2*s1+s2). The denominator SIGN matters:
+        # inverting it (2*s1-s0-s2, the pre-v0.11 bug) moves the lag the wrong
+        # way and reads about 8 cents sharp across the mid and high range
+        # (A440 -> 441.99 Hz). test_yin_accuracy pins it.
+        s0, s1, s2 = diff[tau - 1], diff[tau], diff[tau + 1]
         d = s0 + s2 - 2 * s1
-        if d:
+        if d > 0:
             lag += 0.5 * (s0 - s2) / d
+        # Refine on the k-th period's dip (see REFINE_LAG). The first estimate
+        # is good to a few hundredths of a lag, so the k-th dip lies within a
+        # lag of k * lag; it is used only if it is a true local minimum there.
+        k = max(1, int(round(REFINE_LAG / lag)))
+        if k > 1 and k * lag + 3 < tmax:
+            c = int(round(k * lag))
+            j = c - 1 + int(np.argmin(diff[c - 1:c + 2]))
+            s0, s1, s2 = diff[j - 1], diff[j], diff[j + 1]
+            d = s0 + s2 - 2 * s1
+            if d > 0 and s1 <= s0 and s1 <= s2:
+                lag = (j + 0.5 * (s0 - s2) / d) / k
+        # Aperiodicity is the dip's minimum, interpolated the same way on
+        # d'(tau) and kept within [0, d'(tau)].
+        c0, c1, c2 = cmnd[tau - 1], cmnd[tau], cmnd[tau + 1]
+        cd = c0 + c2 - 2.0 * c1
+        if cd > 0:
+            mv = min(mv, max(0.0, float(c1 - (c0 - c2) ** 2 / (8.0 * cd))))
     # Clamp lag >= 1 before dividing, so a degenerate near-flat dip cannot turn
     # sr/lag into a nonsense high frequency.
     return (sr / lag if lag >= 1.0 else 0.0), mv

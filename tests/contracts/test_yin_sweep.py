@@ -34,7 +34,7 @@ TIMBRES = ('sine', 'sax', 'weak_fundamental')
 RATES = (44100, 48000)
 
 _ENGINE_CENTS_AGREEMENT = 0.05   # ct between the engine readout and our math
-_TOP_OCTAVE_CEILING_CT = 12.0    # regression ceiling; measured worst 10.17 ct
+_TOP_OCTAVE_CEILING_CT = 12.0    # regression ceiling; measured worst 0.53 ct (10.17 before)
 _OCTAVE_START = 97
 
 
@@ -46,28 +46,12 @@ def _tolerance_ct(midi: int) -> float:
     return 1.0 if midi <= 84 else 3.0
 
 
-# (timbre, sample rate) -> {midi: measured behaviour}. Measured on the engine as
-# of v1.2.1 with HOPS hops at A4=440. Above about 2.1 kHz the period is under
-# 21 samples at 44.1 kHz, so the integer-lag YIN loses sub-sample accuracy.
-KNOWN_TOP_OCTAVE: dict[tuple[str, int], dict[int, str]] = {
-    ('sine', 44100): {
-        102: '+3.35 ct', 103: '+4.33 ct', 104: '+4.44 ct',
-        106: '+4.39 ct', 107: '+6.95 ct'},
-    ('sax', 44100): {
-        103: '+4.80 ct', 104: '+7.49 ct', 107: '+10.17 ct',
-        108: 'no note confirmed'},
-    ('weak_fundamental', 44100): {
-        103: '+4.31 ct', 104: '+6.00 ct', 105: 'no note confirmed',
-        107: '+8.33 ct', 108: 'reads MIDI 96, an octave low (-1198 ct)'},
-    ('sine', 48000): {
-        102: '+3.12 ct', 103: '+3.09 ct', 106: '+4.16 ct', 107: '+5.87 ct'},
-    ('sax', 48000): {
-        100: '+3.48 ct', 101: '+3.92 ct', 102: '+4.58 ct', 103: '+5.15 ct',
-        104: '+3.41 ct', 107: '+8.18 ct', 108: '+5.09 ct'},
-    ('weak_fundamental', 48000): {
-        101: '+3.36 ct', 102: '+3.85 ct', 103: '+4.16 ct', 107: '+6.82 ct',
-        108: 'no note confirmed'},
-}
+# (timbre, sample rate) -> {midi: measured behaviour}. Empty: since the YIN
+# lag is interpolated on the raw difference function and refined over several
+# periods, every cell meets the contract (measured worst 0.53 ct in the top
+# octave at A4=440, against 10.17 ct before). Record a cell here, with its
+# measured numbers, only if the detector is knowingly made worse.
+KNOWN_TOP_OCTAVE: dict[tuple[str, int], dict[int, str]] = {}
 
 # Cells where the wrong note (or no note) comes out; inexact cells start with a
 # signed cents figure.
@@ -147,13 +131,10 @@ def test_known_failure_table_matches_the_sweep_range() -> None:
 # ---------------------------------------------------------------------------
 _A4_NOTES = (21, 33, 45, 69, 84, 93, 100, 108)
 
-# (a4, sr, midi) -> measured behaviour.
-KNOWN_A4_EDGES: dict[tuple[float, int, int], str] = {
-    (430.0, 44100, 100): '+3.60 ct',
-    (450.0, 44100, 100): '+4.02 ct',
-    (450.0, 44100, 108): '+13.99 ct',
-    (450.0, 48000, 108): '+10.92 ct',
-}
+# (a4, sr, midi) -> measured behaviour. Empty for the same reason as
+# KNOWN_TOP_OCTAVE (C8 at A4=450 read +13.99 ct before; A0 at A4=430 needed the
+# 25.5 Hz detection floor).
+KNOWN_A4_EDGES: dict[tuple[float, int, int], str] = {}
 
 
 def _a4_params():
