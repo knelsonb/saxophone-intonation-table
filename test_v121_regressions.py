@@ -19,6 +19,7 @@ import pytest
 
 import sax_config
 from sax_intonation_log import MeasurementLog
+from sax_paths import AppPaths
 
 _REPO = Path(__file__).resolve().parent
 _HAS_QT = importlib.util.find_spec("PyQt6") is not None
@@ -228,8 +229,8 @@ def test_matrix_span_follows_display_and_played_notes(tmp_path):
 def ranges_file(tmp_path, monkeypatch):
     import sax_instruments
     path = tmp_path / "instrument_ranges.json"
-    monkeypatch.setattr(sax_instruments, "_RANGES_FILE", path)
-    monkeypatch.setattr(sax_instruments, "_OVERRIDES", {})
+    monkeypatch.setattr(sax_instruments, "_active_overrides",
+                        sax_instruments.RangeOverrides(path))
     return path
 
 
@@ -351,9 +352,7 @@ def test_range_editor_stays_open_when_nothing_was_saved(tmp_path):
 @pytest.fixture()
 def isolated_config(tmp_path, monkeypatch):
     cfg_dir = tmp_path / ".intonation_analyzer"
-    monkeypatch.setattr(sax_config, "CONFIG_DIR", cfg_dir)
-    monkeypatch.setattr(sax_config, "CONFIG_PATH", cfg_dir / "config.json")
-    monkeypatch.setattr(sax_config, "_config_unreadable", False)
+    monkeypatch.setattr(sax_config, "_active", sax_config.ConfigStore(AppPaths(cfg_dir)))
     cfg_dir.mkdir(parents=True)
     return cfg_dir / "config.json"
 
@@ -605,7 +604,7 @@ def test_crash_log_is_capped_at_line_boundary(tmp_path):
 
 def test_excepthook_logs_and_reports(tmp_path, monkeypatch):
     import sax_crash
-    monkeypatch.setattr(sax_config, "CONFIG_DIR", tmp_path / "cfg")
+    monkeypatch.setattr(sax_crash, "_log_path", tmp_path / "cfg" / "crash.log")
     shown = []
     hook = sax_crash.make_excepthook(lambda path, details: shown.append(
         (path, details)))
@@ -622,7 +621,7 @@ def test_excepthook_survives_unwritable_log(tmp_path, monkeypatch):
     import sax_crash
     blocker = tmp_path / "not-a-dir"
     blocker.write_text("x", encoding="utf-8")
-    monkeypatch.setattr(sax_config, "CONFIG_DIR", blocker)
+    monkeypatch.setattr(sax_crash, "_log_path", blocker / "crash.log")
     shown = []
     hook = sax_crash.make_excepthook(lambda path, details: shown.append(path))
     try:

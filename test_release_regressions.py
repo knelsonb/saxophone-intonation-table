@@ -19,14 +19,13 @@ from sax_drone import _DEFAULT_PROGRAM, resolve_drone_voice
 from sax_intonation_log import Measurement, MeasurementLog, RunMeta, _read_csv_text
 from sax_metronome import MetronomeController
 from sax_mixer import Mixer
+from sax_paths import AppPaths
 
 
 @pytest.fixture()
 def isolated_config(tmp_path, monkeypatch):
     cfg_dir = tmp_path / ".intonation_analyzer"
-    monkeypatch.setattr(sax_config, "CONFIG_DIR", cfg_dir)
-    monkeypatch.setattr(sax_config, "CONFIG_PATH", cfg_dir / "config.json")
-    monkeypatch.setattr(sax_config, "CUSTOMS_PATH", cfg_dir / "custom_instruments.json")
+    monkeypatch.setattr(sax_config, "_active", sax_config.ConfigStore(AppPaths(cfg_dir)))
     cfg_dir.mkdir(parents=True)
     return cfg_dir
 

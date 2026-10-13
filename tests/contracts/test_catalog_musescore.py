@@ -204,9 +204,11 @@ def test_catalog_transposition_agrees_with_transp_map_without_customs(monkeypatc
     assert si.transp_map() == CATALOG_TRANSP
 
 
-def test_baked_range_ignores_user_overrides(monkeypatch) -> None:
+def test_baked_range_ignores_user_overrides(monkeypatch, tmp_path) -> None:
     """The contract tables read the baked ranges only; a user override must not
     leak into them, though fingered_range() follows it."""
-    monkeypatch.setattr(si, '_OVERRIDES', {'eb_alto': (1, 2)})
+    overrides = tmp_path / 'instrument_ranges.json'
+    overrides.write_text('{"version": 1, "ranges": {"eb_alto": [1, 2]}}', encoding='utf-8')
+    monkeypatch.setattr(si, '_active_overrides', si.RangeOverrides(overrides))
     assert si.fingered_range('eb_alto') == (1, 2)
     assert si.baked_fingered_range('eb_alto') == (57, 96)

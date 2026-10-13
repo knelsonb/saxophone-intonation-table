@@ -10,7 +10,6 @@ Starten:
 """
 
 import csv
-import os
 import sys
 from array import array
 
@@ -80,6 +79,7 @@ from PyQt6.QtWidgets import (
 )
 
 import sax_config
+import sax_crash
 import sax_instruments
 import sax_theme
 
@@ -119,6 +119,7 @@ from sax_instruments import (
     transp_map as build_transp_map,
 )
 from sax_intonation_log import MeasurementLog
+from sax_paths import AppPaths
 from sax_session_state import SessionStateController
 from sax_table import TableController
 from sax_theme import IN_TUNE_CENTS, cents_band
@@ -2209,7 +2210,7 @@ class RangeEditorDialog(QDialog):
 # Haupt-Fenster
 # =============================================================================
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, paths: AppPaths | None = None):
         super().__init__()
         # Pick the user's system language as the default. German-speaking
         # locales get the original DE strings; anyone else gets English.
@@ -2244,7 +2245,15 @@ class MainWindow(QMainWindow):
 
         # Load user config + previously-registered custom instruments before
         # building the UI so the catalog reflects them at first paint.
-        self._cfg = sax_config.load_config()
+        # Every file the app keeps is resolved once, here, and handed to the
+        # store that owns it.
+        self._paths = paths if paths is not None else AppPaths.from_environment()
+        self._settings = sax_config.ConfigStore(self._paths)
+        sax_config.use_store(self._settings)
+        sax_instruments.use_range_overrides(
+            sax_instruments.RangeOverrides(self._paths.ranges))
+        sax_crash.set_log_path(self._paths.crash_log)
+        self._cfg = self._settings.load()
         # Apply the saved theme before any widget is built, so the global
         # stylesheet (in _build_ui) and the custom-painted widgets all read the
         # right palette from first paint. Live switches go through _apply_theme.
@@ -2278,9 +2287,8 @@ class MainWindow(QMainWindow):
             bool(getattr(self._cfg, 'prefer_wdmks', False)))
         # Persistence comes from config (welcome dialog), with the env var
         # SAX_INTONATION_LOG_PATH as a power-user override that always wins.
-        env_path = os.environ.get('SAX_INTONATION_LOG_PATH')
-        log_path = env_path if env_path else self._cfg.effective_log_path()
-        self._log = MeasurementLog(path=log_path or None)
+        self._log = MeasurementLog(
+            path=self._paths.history(self._cfg.effective_log_path(self._paths)))
         # The first run opens after _restore_session_state below, so it is
         # stamped with the restored A4 and nickname.
         if AUDIO_OK:

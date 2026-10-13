@@ -17,9 +17,10 @@ the list below is the contract the rewrite must keep or update here:
       fake module is installed in ``sys.modules`` before that import;
     * ``sax_audio_engine.HOST_API_OPEN_TIMEOUT_S`` (the open timeout, patched
       to FakeAudioHost.OPEN_TIMEOUT_S so a hung device costs a quarter second);
-    * data directory ``~/.intonation_analyzer`` (resolved from HOME at import)
-      holding ``config.json``, ``custom_instruments.json``,
-      ``instrument_ranges.json``, ``log.jsonl``.
+    * data directory ``~/.intonation_analyzer`` (resolved from HOME when the
+      window is built, ``sax_paths.AppPaths.from_environment``) holding
+      ``config.json``, ``custom_instruments.json``, ``instrument_ranges.json``,
+      ``log.jsonl``.
   Time
     * QTimers on the window (``_device_poll``, ``_refresh_timer``,
       ``_deck_pump_timer``, ``_deck_pulse_timer``) and on the tuner widget are
@@ -235,9 +236,9 @@ class AppDriver:
     def _load_modules(self) -> None:
         """Give this app its own copy of every app module.
 
-        The app resolves its data directory from HOME at import time and keeps
-        module-level state (config-unreadable flag, active theme, instrument
-        registry), and some tests install their own fake ``sounddevice``. A fresh
+        The app keeps module-level state (the active settings store, active
+        theme, instrument registry), and some tests install their own fake
+        ``sounddevice``. A fresh
         import per app makes each launch a true process start: nothing leaks in
         from another test, and nothing leaks out.
         """

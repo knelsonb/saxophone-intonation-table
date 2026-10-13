@@ -13,8 +13,8 @@ Conventions (matching test_coerce_range_entry.py):
 * ``pytest.mark.parametrize`` for the per-field coercion tables, one named
   case per row.
 * Every assert carries an expected-vs-got failure message.
-* ``CONFIG_PATH`` / ``CONFIG_DIR`` are redirected into ``tmp_path`` via
-  monkeypatch so tests never touch the real user home directory.
+* The active ``ConfigStore`` is pointed at ``tmp_path`` via monkeypatch so
+  tests never touch the real user home directory.
 """
 from __future__ import annotations
 
@@ -24,20 +24,20 @@ import pytest
 
 import sax_config
 from sax_config import AppConfig, load_config, save_config
+from sax_paths import AppPaths
 
 
 # ---------------------------------------------------------------------------
-# Fixture: redirect the module-level CONFIG_PATH/CONFIG_DIR into a tmp dir so
-# save_config writes there and load_config reads it back. atomic_write_json
+# Fixture: point the active ConfigStore at a tmp dir so save_config writes
+# there and load_config reads it back. atomic_write_json
 # creates parents, so the dir need not pre-exist.
 # ---------------------------------------------------------------------------
 @pytest.fixture()
 def isolated_config(tmp_path, monkeypatch):
     cfg_dir = tmp_path / ".intonation_analyzer"
-    cfg_path = cfg_dir / "config.json"
-    monkeypatch.setattr(sax_config, "CONFIG_DIR", cfg_dir)
-    monkeypatch.setattr(sax_config, "CONFIG_PATH", cfg_path)
-    return cfg_path
+    store = sax_config.ConfigStore(AppPaths(cfg_dir))
+    monkeypatch.setattr(sax_config, "_active", store)
+    return store.paths.config
 
 
 # ---------------------------------------------------------------------------
@@ -541,9 +541,9 @@ def test_atomic_write_accepts_finite_payload(tmp_path):
 # ---------------------------------------------------------------------------
 @pytest.fixture()
 def isolated_customs(tmp_path, monkeypatch):
-    path = tmp_path / ".intonation_analyzer" / "custom_instruments.json"
-    monkeypatch.setattr(sax_config, "CUSTOMS_PATH", path)
-    return path
+    store = sax_config.ConfigStore(AppPaths(tmp_path / ".intonation_analyzer"))
+    monkeypatch.setattr(sax_config, "_active", store)
+    return store.paths.customs
 
 
 @pytest.mark.parametrize("payload", ["null", "42", "true", "3.14", '"abc"'],

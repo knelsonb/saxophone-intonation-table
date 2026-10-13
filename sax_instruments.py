@@ -18,6 +18,7 @@ import json
 from pathlib import Path
 
 from sax_atomic import atomic_write_json
+from sax_paths import AppPaths
 
 # (family_key, family_name_de, family_name_en,
 #   [(instrument_key, transp, name_de, name_en), ...])
@@ -299,7 +300,7 @@ def fingered_range(instrument_key: str) -> tuple[int, int]:
     Consults the user override DB first, then the baked MuseScore-sourced
     map, then a generic 2.5-octave middle range fallback for keys without
     an explicit entry (mainly user-defined custom instruments)."""
-    ov = _OVERRIDES.get(instrument_key)
+    ov = range_overrides().get(instrument_key)
     if ov is not None:
         return ov
     return _RANGES.get(instrument_key, (48, 79))
@@ -321,13 +322,11 @@ def has_baked_range(instrument_key: str) -> bool:
 # ---------------------------------------------------------------------------
 # Per-user range overrides
 # ---------------------------------------------------------------------------
-# Stored in ~/.intonation_analyzer/instrument_ranges.json. Loaded once at
-# import time; refreshed in-process whenever save/clear is called so the
-# next fingered_range() consult reflects the change without restart.
-_RANGES_FILE = (Path.home() / ".intonation_analyzer"
-                / "instrument_ranges.json")
+# Stored in instrument_ranges.json in the data directory. Read on first use
+# (never at import, so importing the catalog touches no file) and refreshed
+# in-process whenever save/clear is called, so the next fingered_range()
+# consult reflects the change without restart.
 _RANGES_SCHEMA_VERSION = 1
-_OVERRIDES: dict[str, tuple[int, int]] = {}
 
 
 def _coerce_range_entry(v) -> tuple[int, int] | None:
@@ -352,93 +351,138 @@ class RangeOverridesUnreadable(Exception):
     empty result and wipes every other instrument's override."""
 
 
-def load_range_overrides(strict: bool = False) -> dict[str, tuple[int, int]]:
-    """Read the overrides file into a fresh dict and refresh the in-process
-    cache.
+class RangeOverrides:
+    """The user's per-instrument range overrides in one JSON file."""
 
-    Tolerant by default: missing file, malformed JSON, wrong shape and bad
-    entries all degrade to {} or skip the offending key, because this runs
-    at import time and must never stop the app from starting.
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self._cache: dict[str, tuple[int, int]] | None = None
 
-    ``strict=True`` is for read-modify-write callers. A file that exists but
-    cannot be read (OSError) or parsed (ValueError, wrong shape) raises
-    RangeOverridesUnreadable and leaves the cache alone. Individual bad
-    entries are still skipped; they carry nothing worth keeping."""
-    global _OVERRIDES
-    out: dict[str, tuple[int, int]] = {}
-    if not _RANGES_FILE.exists():
-        _OVERRIDES = out
-        return out
-    try:
-        with _RANGES_FILE.open("r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, ValueError) as exc:
-        # ValueError covers JSONDecodeError and undecodable bytes.
-        if strict:
-            raise RangeOverridesUnreadable(str(exc)) from exc
-        _OVERRIDES = out
-        return out
-    ranges = data.get("ranges", {}) if isinstance(data, dict) else None
-    if not isinstance(ranges, dict):
-        if strict:
-            raise RangeOverridesUnreadable(
-                f"{_RANGES_FILE} does not hold a ranges object")
-        _OVERRIDES = out
-        return out
-    for key, val in ranges.items():
-        if not isinstance(key, str):
-            continue
-        coerced = _coerce_range_entry(val)
+    def get(self, key: str) -> tuple[int, int] | None:
+        if self._cache is None:
+            self.load()
+        return self._cache.get(key)
+
+    def load(self, strict: bool = False) -> dict[str, tuple[int, int]]:
+        """Read the file into a fresh dict and refresh the cache.
+
+        Tolerant by default: missing file, malformed JSON, wrong shape and
+        bad entries all degrade to {} or skip the offending key, because the
+        first read happens while the window is being built and must never
+        stop the app from starting.
+
+        ``strict=True`` is for read-modify-write callers. A file that exists
+        but cannot be read (OSError) or parsed (ValueError, wrong shape)
+        raises RangeOverridesUnreadable and leaves the cache alone.
+        Individual bad entries are still skipped; they carry nothing worth
+        keeping."""
+        out: dict[str, tuple[int, int]] = {}
+        if not self.path.exists():
+            self._cache = out
+            return {}
+        try:
+            with self.path.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError) as exc:
+            # ValueError covers JSONDecodeError and undecodable bytes.
+            if strict:
+                raise RangeOverridesUnreadable(str(exc)) from exc
+            self._cache = out
+            return {}
+        ranges = data.get("ranges", {}) if isinstance(data, dict) else None
+        if not isinstance(ranges, dict):
+            if strict:
+                raise RangeOverridesUnreadable(
+                    f"{self.path} does not hold a ranges object")
+            self._cache = out
+            return {}
+        for key, val in ranges.items():
+            if not isinstance(key, str):
+                continue
+            coerced = _coerce_range_entry(val)
+            if coerced is None:
+                continue
+            out[key] = coerced
+        self._cache = out
+        # A copy: read-modify-write callers edit it before the write, and
+        # the cache must keep matching the file if that write fails.
+        return dict(out)
+
+    def _write(self, current: dict[str, tuple[int, int]]) -> None:
+        """Write the full override table atomically (temp file + rename, so
+        a crashed write never leaves a half-baked file) and make it the
+        cache. Raises OSError when the write fails; the old file is left
+        intact."""
+        payload = {
+            "version": _RANGES_SCHEMA_VERSION,
+            "ranges": {k: list(v) for k, v in current.items()},
+        }
+        if not atomic_write_json(
+                self.path, payload, tmp_prefix=".instrument_ranges."):
+            raise OSError(f"could not write {self.path}")
+        self._cache = dict(current)
+
+    def save(self, key: str, lo: int, hi: int) -> None:
+        """Persist one override entry, preserving every other key in the
+        file.
+
+        Raises ValueError for a range outside 0..127 or with lo > hi,
+        RangeOverridesUnreadable when the existing file cannot be read (it
+        is left untouched), and OSError when the write fails. On success the
+        cache matches the file."""
+        coerced = _coerce_range_entry((lo, hi))
         if coerced is None:
-            continue
-        out[key] = coerced
-    _OVERRIDES = out
-    return out
+            raise ValueError(f"invalid range {lo}..{hi} for {key}")
+        # Re-read from disk so a parallel process's edits are kept.
+        current = self.load(strict=True)
+        current[key] = coerced
+        self._write(current)
+
+    def clear(self, key: str) -> None:
+        """Remove one override entry, if present. Same error contract as
+        save()."""
+        current = self.load(strict=True)
+        if key not in current:
+            return
+        del current[key]
+        self._write(current)
 
 
-def _write_overrides(current: dict[str, tuple[int, int]]) -> None:
-    """Write the full override table atomically (temp file + rename, so a
-    crashed write never leaves a half-baked file) and make it the cache.
-    Raises OSError when the write fails; the old file is left intact."""
-    global _OVERRIDES
-    payload = {
-        "version": _RANGES_SCHEMA_VERSION,
-        "ranges": {k: list(v) for k, v in current.items()},
-    }
-    if not atomic_write_json(
-            _RANGES_FILE, payload, tmp_prefix=".instrument_ranges."):
-        raise OSError(f"could not write {_RANGES_FILE}")
-    _OVERRIDES = dict(current)
+# The session's overrides. The window installs one for its data directory at
+# start-up; until then the first use resolves the current HOME.
+_active_overrides: RangeOverrides | None = None
+
+
+def range_overrides() -> RangeOverrides:
+    global _active_overrides
+    if _active_overrides is None:
+        _active_overrides = RangeOverrides(AppPaths.from_environment().ranges)
+    return _active_overrides
+
+
+def use_range_overrides(store: RangeOverrides | None) -> None:
+    global _active_overrides
+    _active_overrides = store
+
+
+def load_range_overrides(strict: bool = False) -> dict[str, tuple[int, int]]:
+    return range_overrides().load(strict)
 
 
 def save_range_override(key: str, lo: int, hi: int) -> None:
-    """Persist one override entry, preserving every other key in the file.
-
-    Raises ValueError for a range outside 0..127 or with lo > hi,
-    RangeOverridesUnreadable when the existing file cannot be read (it is
-    left untouched), and OSError when the write fails. On success the
-    in-process cache matches the file."""
-    coerced = _coerce_range_entry((lo, hi))
-    if coerced is None:
-        raise ValueError(f"invalid range {lo}..{hi} for {key}")
-    # Re-read from disk so a parallel process's edits are kept.
-    current = load_range_overrides(strict=True)
-    current[key] = coerced
-    _write_overrides(current)
+    range_overrides().save(key, lo, hi)
 
 
 def clear_range_override(key: str) -> None:
-    """Remove one override entry, if present. Same error contract as
-    save_range_override."""
-    current = load_range_overrides(strict=True)
-    if key not in current:
-        return
-    del current[key]
-    _write_overrides(current)
+    range_overrides().clear(key)
 
 
-# Prime the cache at import time.
-load_range_overrides()
+def __getattr__(name: str):
+    # The overrides file used to be a module constant resolved at import;
+    # it now follows the active store.
+    if name == "_RANGES_FILE":
+        return range_overrides().path
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def family_of(instrument_key: str) -> str | None:

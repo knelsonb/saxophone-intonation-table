@@ -4,9 +4,9 @@ With the default sys.excepthook, a Python exception that escapes a Qt slot
 either aborts the process (PyQt's qFatal path in older releases) or is only
 printed to stderr, which a windowed build does not show. Either way the user
 gets no explanation. install() replaces the hook: the traceback is appended
-to ~/.intonation_analyzer/crash.log and, when a QApplication is running, a
-translated message box tells the user where the log is. The app keeps
-running afterwards.
+to crash.log in the data directory (sax_paths) and, when a QApplication is
+running, a translated message box tells the user where the log is. The app
+keeps running afterwards.
 
 Everything here must work before QApplication exists and must never raise:
 a failure inside the hook would hide the original error.
@@ -23,10 +23,10 @@ import traceback
 from pathlib import Path
 from typing import Callable, Optional
 
-import sax_config
 from sax_i18n import STRINGS
+from sax_paths import CRASH_LOG_FILENAME, AppPaths
 
-CRASH_LOG_NAME = "crash.log"
+CRASH_LOG_NAME = CRASH_LOG_FILENAME
 # Large enough for dozens of tracebacks; older entries are dropped first.
 CRASH_LOG_MAX_BYTES = 256 * 1024
 
@@ -41,9 +41,20 @@ _lang_source: Callable[[], str] = _default_lang
 _dialog_open = False
 
 
+# Set by the window from its AppPaths. Until then (an error during start-up)
+# the path is resolved from the environment when the error happens.
+_log_path: Optional[Path] = None
+
+
+def set_log_path(path: Optional[Path]) -> None:
+    global _log_path
+    _log_path = path
+
+
 def crash_log_path() -> Path:
-    # Read at call time so a test (or a relocated config dir) is honoured.
-    return sax_config.CONFIG_DIR / CRASH_LOG_NAME
+    if _log_path is not None:
+        return _log_path
+    return AppPaths.from_environment().crash_log
 
 
 def append_crash_log(text: str, path: Optional[Path] = None,
