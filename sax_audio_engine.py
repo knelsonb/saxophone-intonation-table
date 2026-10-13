@@ -83,12 +83,13 @@ DEFAULT_BLOCK_SIZE = 16384
 OUT_BLOCK_MS = HOP_MS                       # ~46 ms; preserved across rates
 DEFAULT_OUT_BLOCK = DEFAULT_HOP_SIZE        # 2048 frames at 44.1k
 
-# v0.5.6: candidate sample rates probed highest-first when the user picks
-# "auto". Higher rates buy parabolic-interpolation precision (see
-# cent_precision_floor in sax_intonation_gui) — the engine tries them in
-# descending order so the user gets the best the device offers without
-# pinning a specific value.
-SAMPLERATE_CANDIDATES = (192000, 96000, 88200, 48000, 44100)
+# Candidate sample rates probed in this order when the user picks "auto".
+# 48k and 44.1k come first: pitch detection runs in the input callback and
+# its cost grows with the rate (about 2.4 ms per hop at 44.1k, 25 ms or more
+# at 192k, against a 46 ms hop), while the display shows whole cents, which
+# 44.1k already resolves. Higher rates remain as fallbacks for devices that
+# refuse both, and stay available as explicit choices.
+SAMPLERATE_CANDIDATES = (48000, 44100, 96000, 88200, 192000)
 SAMPLERATE_PREF_VALUES = ('auto', '44100', '48000', '88200', '96000',
                           '192000')
 MIN_FREQ = 27.0
@@ -210,8 +211,8 @@ class DeviceInfo:
 class DeviceSelection:
     """Persistence-friendly identifier for an audio input device.
 
-    ``samplerate=0`` means auto-negotiate (highest supported rate first:
-    192000, 96000, 88200, 48000, 44100). ``host_api`` may be empty if the saved selection
+    ``samplerate=0`` means auto-negotiate (SAMPLERATE_CANDIDATES order:
+    48000, 44100, 96000, 88200, 192000). ``host_api`` may be empty if the saved selection
     pre-dates the picker; resolution falls back to a system default in
     that case.
     """
@@ -459,7 +460,7 @@ class AudioEngine:
         self.instr_key = 'eb_alto'
         self.filter_mode = FILTER_MODE_DEFAULT
         self.prefer_wdmks = False
-        # 'auto' (probe 192k..44.1k highest-first) or a specific rate
+        # 'auto' (probe SAMPLERATE_CANDIDATES in order) or a specific rate
         # string from SAMPLERATE_PREF_VALUES. The GUI sets this from
         # cfg.audio_samplerate_pref before calling start/open_device.
         self.samplerate_pref: str = 'auto'
@@ -1364,7 +1365,7 @@ class AudioEngine:
     def _negotiate_output_sample_rate(self, dev: DeviceInfo) -> list[int]:
         """Output-side mirror of _negotiate_sample_rate, using
         check_output_settings. Honors a pinned rate; otherwise probes
-        SAMPLERATE_CANDIDATES highest-first then the device default."""
+        SAMPLERATE_CANDIDATES in order, then the device default."""
         pref = self.samplerate_pref or 'auto'
         if pref != 'auto':
             try:
@@ -1672,7 +1673,7 @@ class AudioEngine:
           UNSUPPORTED_RATE — we do NOT silently fall back when the user
           pinned a value.
         * If pref is ``'auto'``, the list is SAMPLERATE_CANDIDATES
-          (192k → 44.1k highest-first) filtered through PortAudio's
+          (48k, 44.1k, then the higher rates) filtered through PortAudio's
           ``check_input_settings`` so unsupported rates are skipped
           before we pay the cost of an InputStream open. The device's
           ``default_samplerate`` is appended at the bottom in case the
@@ -1734,7 +1735,7 @@ class AudioEngine:
                     last_msg = (
                         f'{dev.name} [{dev.host_api}]: device does not '
                         f'accept any standard sample rate '
-                        f'(tried 192k / 96k / 88.2k / 48k / 44.1k)')
+                        f'(tried 48k / 44.1k / 96k / 88.2k / 192k)')
                 continue
             for sr in sr_clean:
                 ok, err_kind, err_msg = self._try_open(dev, sr)

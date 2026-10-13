@@ -598,9 +598,18 @@ class SpectrumAnalyzerWidget(QWidget):
 
         self.setMinimumHeight(150)
 
+        # Runs only while the widget is visible (showEvent/hideEvent): each
+        # tick is a full FFT, and the diagnostics panel is hidden by default.
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
         self._timer.start(self.REFRESH_MS)
+
+    def hideEvent(self, event) -> None:
+        super().hideEvent(event)
+        self._timer.stop()
 
     def _rebuild_for(self, block_size: int, samplerate: int) -> None:
         """Regenerate window + bucket map for a new buffer size / rate.
@@ -811,11 +820,20 @@ class DataPanelWidget(QWidget):
             self._rows[key] = v_lbl
         self._grid.setColumnStretch(1, 1)
 
+        # Polls only while visible; see showEvent/hideEvent.
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._refresh)
-        self._timer.start(self.REFRESH_MS)
         self._refresh_static()
         self._refresh()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._refresh()
+        self._timer.start(self.REFRESH_MS)
+
+    def hideEvent(self, event) -> None:
+        super().hideEvent(event)
+        self._timer.stop()
 
     def retranslate(self, t_func) -> None:
         self._t = t_func

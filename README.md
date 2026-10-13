@@ -226,7 +226,7 @@ On the first start macOS asks whether Terminal may use the microphone; allow it.
 | `externally-managed-environment` error | Use a virtual environment (see above) |
 | `OSError: PortAudio library not found` (Linux) | `sudo apt install libportaudio2` |
 | Window does not open on Linux; the terminal mentions the `xcb` platform plugin | `sudo apt install libxcb-cursor0`. If the message names another missing library, install it too (for example `libxkbcommon-x11-0`). |
-| Wrong microphone is used | Click **AUDIO IN** in the toolbar and choose the device. The same dialog sets the sample rate; **Auto** tries 192, 96, 88.2, 48 and 44.1 kHz in that order and uses the first rate the device accepts, falling back to the device's own default rate. |
+| Wrong microphone is used | Click **AUDIO IN** in the toolbar and choose the device. The same dialog sets the sample rate; **Auto** tries 48, 44.1, 96, 88.2 and 192 kHz in that order and uses the first rate the device accepts, falling back to the device's own default rate. |
 | No notes detected | Check that **AUDIO IN** shows your microphone. Raise **Mic gain** in **SETUP**; it lowers the level at which playing counts as a note and leaves the cents readings unchanged. Play steadily at medium volume. |
 | Notes are detected but the table stays empty | The table hides notes with fewer readings than **Min measurements per note** (default 5). Hold the note a moment longer, or lower the value. |
 | The tuner ignores the note the drone or a pitch pipe is sounding | Intended; see "Drone, pitch pipes and the tuner" below. |
@@ -519,7 +519,7 @@ Beim ersten Start fragt macOS, ob das Terminal das Mikrofon nutzen darf; erlaube
 | `externally-managed-environment` | Virtuelle Umgebung verwenden (siehe oben) |
 | `OSError: PortAudio library not found` (Linux) | `sudo apt install libportaudio2` |
 | Fenster öffnet sich unter Linux nicht; im Terminal ist vom Plattform-Plugin `xcb` die Rede | `sudo apt install libxcb-cursor0`. Nennt die Meldung eine weitere fehlende Bibliothek, diese ebenfalls installieren (z. B. `libxkbcommon-x11-0`). |
-| Falsches Mikrofon wird verwendet | In der Werkzeugleiste auf **AUDIO-EINGANG** klicken und das Gerät wählen. Im selben Dialog lässt sich die Abtastrate einstellen; **Auto** probiert 192, 96, 88,2, 48 und 44,1 kHz in dieser Reihenfolge und nimmt die erste Rate, die das Gerät annimmt, ersatzweise die Standardrate des Geräts. |
+| Falsches Mikrofon wird verwendet | In der Werkzeugleiste auf **AUDIO-EINGANG** klicken und das Gerät wählen. Im selben Dialog lässt sich die Abtastrate einstellen; **Auto** probiert 48, 44,1, 96, 88,2 und 192 kHz in dieser Reihenfolge und nimmt die erste Rate, die das Gerät annimmt, ersatzweise die Standardrate des Geräts. |
 | Kein Ton erkannt | Prüfen, ob **AUDIO-EINGANG** das richtige Mikrofon zeigt. Unter **EINSTELLUNGEN** die **Mikrofon-Verstärkung** erhöhen; sie senkt die Schwelle, ab der Spielen als Ton zählt, und lässt die Cent-Werte unverändert. Mittelstark und gleichmäßig spielen. |
 | Töne werden erkannt, aber die Tabelle bleibt leer | Die Tabelle blendet Töne mit weniger Messungen als **Mindest-Messungen pro Ton** (Standard 5) aus. Den Ton etwas länger halten oder den Wert senken. |
 | Der Tuner ignoriert den Ton, den Bordun oder Stimmpfeife gerade spielen | So gewollt; siehe „Bordun, Stimmpfeifen und Tuner" unten. |

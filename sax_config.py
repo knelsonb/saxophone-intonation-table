@@ -76,7 +76,7 @@ class AppConfig:
     # 0 = auto-negotiate (try 44100 → device default → fallback list).
     audio_device_samplerate: int = 0
     # v0.5.6: user-facing sample rate policy. 'auto' walks
-    # SAMPLERATE_CANDIDATES highest-first; a specific value pins that
+    # SAMPLERATE_CANDIDATES in order (48k first); a specific value pins that
     # rate and surfaces UNSUPPORTED_RATE if the device refuses. Tolerant
     # default — see load_config below.
     audio_samplerate_pref: str = "auto"

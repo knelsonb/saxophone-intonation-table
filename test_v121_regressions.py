@@ -699,3 +699,67 @@ def test_exception_in_slot_shows_dialog_instead_of_aborting(tmp_path):
     assert "crash.log" in proc.stdout
     log = tmp_path / "home" / ".intonation_analyzer" / "crash.log"
     assert "boom-in-slot" in log.read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# 1.9  Auto rate prefers 48k/44.1k; hidden diagnostics stop their timers
+# ---------------------------------------------------------------------------
+class _AcceptAll:
+    @staticmethod
+    def check_input_settings(**kwargs):
+        return None
+
+    @staticmethod
+    def check_output_settings(**kwargs):
+        return None
+
+
+def _probe_engine(monkeypatch, pref):
+    import sax_audio_engine as E
+    monkeypatch.setattr(E, "sd", _AcceptAll, raising=False)
+    eng = E.AudioEngine()
+    eng.set_samplerate_pref(pref)
+    dev = E.DeviceInfo(index=0, name="Mic", host_api="ALSA",
+                       max_input_channels=1, default_samplerate=192000.0)
+    return eng, dev
+
+
+def test_auto_rate_tries_48k_then_44k_first(monkeypatch):
+    eng, dev = _probe_engine(monkeypatch, "auto")
+    assert eng._negotiate_sample_rate(dev)[:2] == [48000, 44100]
+    assert eng._negotiate_output_sample_rate(dev)[:2] == [48000, 44100]
+
+
+def test_pinned_rate_is_still_honoured(monkeypatch):
+    eng, dev = _probe_engine(monkeypatch, "192000")
+    assert eng._negotiate_sample_rate(dev) == [192000]
+
+
+@requires_qt
+def test_diagnostics_timers_run_only_while_visible(tmp_path):
+    out = _run_gui(tmp_path, '''
+        win.resize(1400, 900)
+        win.show()
+        app.processEvents()
+        def state():
+            return [win._spectro._timer.isActive(),
+                    win._data_panel._timer.isActive()]
+        out["hidden"] = state()
+        win._cb_diag.setChecked(True)
+        app.processEvents()
+        out["shown"] = state()
+        win._tabs.setCurrentIndex(win._tab_keys.index("setup"))
+        app.processEvents()
+        out["other_tab"] = state()
+        win._tabs.setCurrentIndex(win._tab_keys.index("tuner"))
+        app.processEvents()
+        out["back"] = state()
+        win._cb_diag.setChecked(False)
+        app.processEvents()
+        out["off"] = state()
+    ''', config={"show_diagnostics": False})
+    assert out["hidden"] == [False, False]
+    assert out["shown"] == [True, True]
+    assert out["other_tab"] == [False, False]
+    assert out["back"] == [True, True]
+    assert out["off"] == [False, False]
