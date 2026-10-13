@@ -43,7 +43,7 @@ tsf_binaries = collect_dynamic_libs('tinysoundfont')
 tsf_hidden = collect_submodules('tinysoundfont')
 
 a = Analysis(
-    [str(HERE / 'sax_intonation_gui.py')],
+    [str(HERE / 'main.py')],
     pathex=[str(HERE)],
     binaries=sd_binaries + tsf_binaries,
     datas=[
@@ -56,6 +56,10 @@ a = Analysis(
         *sd_datas,
     ],
     hiddenimports=[
+        # main.py imports the window module inside main(), after the crash
+        # handler is installed; declare it rather than rely on the analysis
+        # following a function-level import.
+        'sax_intonation_gui',
         'sax_intonation_log',
         'sax_intonation_chart',
         'sax_instruments',

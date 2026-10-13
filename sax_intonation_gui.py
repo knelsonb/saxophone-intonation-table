@@ -14,21 +14,16 @@ Starten:
     python3 main.py
 """
 
-import csv
 import sys
 
-# Launched as a script, this file runs as __main__; controllers that import
-# sax_intonation_gui would otherwise load a second copy with its own
-# TRANSP_MAP, and in-session custom instruments would never reach the window.
+# Launched as a script (`python sax_intonation_gui.py`): hand over to the
+# launcher before importing anything else, so its crash handler is installed
+# first and this module is loaded once, under its own name.
 if __name__ == '__main__':
-    sys.modules.setdefault('sax_intonation_gui', sys.modules[__name__])
+    import main
+    sys.exit(main.main())
 
-# Install the crash handler before anything else is imported, so even a
-# failing import or an error before QApplication exists is logged.
-if __name__ == '__main__':
-    import sax_crash
-    sax_crash.install()
-
+import csv
 import datetime
 import math
 import threading
@@ -1245,7 +1240,6 @@ class MainWindow(QMainWindow):
         Without this they default to the dark Base and read as black blocks on
         the light theme (the matrix viewport + header row)."""
         from PyQt6.QtGui import QPalette
-        from PyQt6.QtWidgets import QApplication
         app = QApplication.instance()
         if app is None:
             return
@@ -3249,7 +3243,7 @@ class MainWindow(QMainWindow):
 
 
 # =============================================================================
-def _load_app_icon() -> QIcon | None:
+def load_app_icon() -> QIcon | None:
     """Locate the bundled application icon. Returns None if it can't be
     found — never crashes startup over a missing asset."""
     candidates = [
@@ -3267,23 +3261,3 @@ def _load_app_icon() -> QIcon | None:
             if not icon.isNull():
                 return icon
     return None
-
-
-if __name__ == '__main__':
-    # Until the window exists the crash dialog follows the system locale, as
-    # the window's own first-launch default does.
-    sax_crash.set_lang_source(
-        lambda: 'de' if QLocale.system().name().startswith('de') else 'en')
-    app = QApplication(sys.argv)
-    app.setApplicationName(APP_NAME)
-    app.setApplicationDisplayName(APP_NAME)
-    app.setApplicationVersion(APP_VERSION)
-    icon = _load_app_icon()
-    if icon is not None:
-        app.setWindowIcon(icon)
-    win = MainWindow()
-    sax_crash.set_lang_source(lambda: win.lang)
-    if icon is not None:
-        win.setWindowIcon(icon)
-    win.show()
-    sys.exit(app.exec())

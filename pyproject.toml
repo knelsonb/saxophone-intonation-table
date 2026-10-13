@@ -1,5 +1,5 @@
 # Project metadata and tool configuration. The app runs from a source checkout
-# (`python sax_intonation_gui.py`) or from the PyInstaller release binaries; it
+# (`python main.py`) or from the PyInstaller release binaries; it
 # is not packaged as an installable wheel, so there is no [build-system] table.
 
 [project]
