@@ -11,7 +11,7 @@ requires-python = ">=3.10"
 # Licensing is mixed (GPL-3.0-or-later for this fork, unlicensed upstream
 # code); NOTICE.md explains it, so no single SPDX expression is declared.
 license-files = ["LICENSE", "NOTICE.md", "THIRD_PARTY_NOTICES.md"]
-authors = [{ name = "Repro" }]
+authors = [{ name = "knelsonb" }]
 dependencies = [
     "PyQt6~=6.7",
     "numpy~=2.0",
