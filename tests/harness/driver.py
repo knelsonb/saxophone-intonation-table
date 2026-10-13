@@ -1058,7 +1058,16 @@ class AppDriver:
         explicitly hidden are skipped; pages of a tab widget count even when
         another tab is in front, since one click shows them.
         Internals: ``_tabs`` / ``_tab_keys`` and Qt widget classes.
+
+        The scan asks Qt (isAncestorOf / isVisibleTo) where a widget sits
+        instead of walking parentWidget() in Python. Walking the chain wrapped
+        Qt's private container widgets, and a stale wrapper there crashed the
+        interpreter now and then. Garbage collection is paused during the scan
+        so no Qt object from an earlier app instance is destroyed under it.
         """
+        import gc
+
+        from PyQt6.QtCore import QCoreApplication, QEvent
         from PyQt6.QtWidgets import (
             QAbstractButton,
             QComboBox,
@@ -1066,55 +1075,57 @@ class AppDriver:
             QGroupBox,
             QLabel,
             QLineEdit,
-            QStackedWidget,
             QTabBar,
-            QWidget,
         )
+        gc.collect()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
         w = self.win
-        pages = {}
         tabs = getattr(w, "_tabs", None)
+        pages = []
         if tabs is not None:
-            for i, key in enumerate(w._tab_keys):
-                pages[tabs.widget(i)] = key
+            pages = [(tabs.widget(i), key) for i, key in enumerate(w._tab_keys)]
+        dialogs = [d for d in w.findChildren(QDialog) if not d.isHidden()]
 
         def placement(widget):
             """(area, reachable) for ``widget``."""
-            area = "window"
-            node = widget
-            while node is not None and node is not w:
-                parent = node.parentWidget()
-                if node in pages:
-                    area = pages[node] if area == "window" else area
-                elif isinstance(node, QDialog):
-                    if node.isHidden():
-                        return area, False
-                    area = f"dialog:{node.windowTitle()}"
-                elif node.isHidden() and not isinstance(parent, QStackedWidget):
-                    return area, False
-                node = parent
-            return area, True
+            for dlg in dialogs:
+                if dlg is widget or dlg.isAncestorOf(widget):
+                    return f"dialog:{dlg.windowTitle()}", widget.isVisibleTo(dlg) or dlg is widget
+            for page, key in pages:
+                if page.isAncestorOf(widget):
+                    return key, widget.isVisibleTo(page)
+            if any(d.isAncestorOf(widget) for d in w.findChildren(QDialog)):
+                return "window", False   # inside a closed dialog
+            return "window", not widget.isHidden() and widget.isVisibleTo(w) or w.isHidden()
 
         out = [("window", "title", w.windowTitle())]
-        for widget in w.findChildren(QWidget):
-            area, reachable = placement(widget)
-            if not reachable:
-                continue
-            if isinstance(widget, QDialog):
-                out.append((area, "title", widget.windowTitle()))
-            if isinstance(widget, QTabBar):
-                for i in range(widget.count()):
-                    out.append((area, "tab", widget.tabText(i)))
-                    out.append((area, "tab_tip", widget.tabToolTip(i)))
-            elif isinstance(widget, (QLabel, QAbstractButton)):
-                out.append((area, "text", widget.text()))
-            elif isinstance(widget, QGroupBox):
-                out.append((area, "title", widget.title()))
-            elif isinstance(widget, QComboBox):
-                for i in range(widget.count()):
-                    out.append((area, "item", widget.itemText(i)))
-            if isinstance(widget, QLineEdit):
-                out.append((area, "placeholder", widget.placeholderText()))
-            out.append((area, "tooltip", widget.toolTip()))
+        gc_was_enabled = gc.isenabled()
+        gc.disable()
+        try:
+            for dlg in dialogs:
+                out.append((f"dialog:{dlg.windowTitle()}", "title", dlg.windowTitle()))
+            for cls in (QTabBar, QLabel, QAbstractButton, QGroupBox, QComboBox, QLineEdit):
+                for widget in w.findChildren(cls):
+                    area, reachable = placement(widget)
+                    if not reachable:
+                        continue
+                    if cls is QTabBar:
+                        for i in range(widget.count()):
+                            out.append((area, "tab", widget.tabText(i)))
+                            out.append((area, "tab_tip", widget.tabToolTip(i)))
+                    elif cls in (QLabel, QAbstractButton):
+                        out.append((area, "text", widget.text()))
+                    elif cls is QGroupBox:
+                        out.append((area, "title", widget.title()))
+                    elif cls is QComboBox:
+                        for i in range(widget.count()):
+                            out.append((area, "item", widget.itemText(i)))
+                    elif cls is QLineEdit:
+                        out.append((area, "placeholder", widget.placeholderText()))
+                    out.append((area, "tooltip", widget.toolTip()))
+        finally:
+            if gc_was_enabled:
+                gc.enable()
         return [(a, r, t) for a, r, t in out if t and t.strip()]
 
 
