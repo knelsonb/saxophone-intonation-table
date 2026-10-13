@@ -1,0 +1,18 @@
+INTONATION ANALYZER
+======================================================
+Instrument : Eb Saxophone  (Alto)
+Manufacturer: Selmer
+Model       : Mark VI
+Transpos.  : fingered C sounds as D#/Eb
+Concert pitch: A = 440 Hz
+Date       : <DD.MM.YYYY HH:MM>
+
+Fingered     Sounding       Ø (ct)   σ (ct)      N  Tendency
+--------------------------------------------------------------
+A4           C4                +0        0     23              │            
+C#/Db5       E4               -15        0     23  ░░░░░░░░████│            
+E5           G4                +8        0     23              │██░░░░░░░░░░
+F#/Gb5       A4               +30        0     23              │█████████░░░
+A5           C5                -3        0     23  ░░░░░░░░░░░░│            
+
+Total: 115 measurements  |  5 notes

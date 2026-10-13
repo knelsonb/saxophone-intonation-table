@@ -1,0 +1,18 @@
+INTONATIONS-ANALYSATOR
+======================================================
+Instrument : Eb-Saxophon  (Alt)
+Hersteller  : Müller & Söhne
+Modell      : <Mark VI> #2
+Transpos.  : gegriffenes C klingt D#/Eb
+Kammerton   : A = 440 Hz
+Datum      : <DD.MM.YYYY HH:MM>
+
+Gegriffen    Klingend       Ø (ct)   σ (ct)      N  Tendenz
+--------------------------------------------------------------
+A4           C4                +0        0     23              │            
+C#/Db5       E4               -15        0     23  ░░░░░░░░████│            
+E5           G4                +8        0     23              │██░░░░░░░░░░
+F#/Gb5       A4               +30        0     23              │█████████░░░
+A5           C5                -3        0     23  ░░░░░░░░░░░░│            
+
+Gesamt: 115 Messungen  |  5 Töne

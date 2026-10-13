@@ -1,0 +1,1036 @@
+{
+  "de": {
+    "keys": [
+      "allow_oor",
+      "allow_oor_tip",
+      "audio_banner_busy",
+      "audio_banner_disconnect",
+      "audio_banner_interface_appeared",
+      "audio_banner_no_device",
+      "audio_banner_pick",
+      "audio_banner_retry",
+      "audio_banner_unknown",
+      "audio_banner_unsupported_rate",
+      "audio_chip_label",
+      "audio_chip_none",
+      "audio_chip_opening",
+      "audio_chip_tip",
+      "audio_disabled",
+      "audio_error",
+      "audio_error_title",
+      "audio_picker_apis_more",
+      "audio_picker_cancel",
+      "audio_picker_current",
+      "audio_picker_no_devices",
+      "audio_picker_prefer_ks",
+      "audio_picker_rescan",
+      "audio_picker_row_meta",
+      "audio_picker_show_all",
+      "audio_picker_title",
+      "audio_picker_use",
+      "audio_sr_notice",
+      "audio_toast_dismiss",
+      "audio_toast_interface",
+      "audio_toast_switch",
+      "autotune_clamp",
+      "autotune_confirm",
+      "autotune_nodata",
+      "autotune_nodata_progress",
+      "autotune_result",
+      "autotune_title",
+      "btn_autotune",
+      "btn_chart",
+      "btn_csv",
+      "btn_import",
+      "btn_pdf",
+      "btn_reset",
+      "btn_start",
+      "btn_stop",
+      "btn_txt",
+      "chart_filter",
+      "chart_footer",
+      "chart_no_data",
+      "chart_save_title",
+      "chart_saved",
+      "chart_subtitle",
+      "chart_subtitle_id",
+      "chart_title",
+      "col_fingered",
+      "col_mean",
+      "col_n",
+      "col_sounding",
+      "col_std",
+      "col_tendency",
+      "csv_all_instruments",
+      "csv_all_nicks",
+      "csv_all_runs",
+      "csv_dialog_info",
+      "csv_dialog_title",
+      "csv_filter",
+      "csv_import_badhdr",
+      "csv_import_confirm_body",
+      "csv_import_confirm_title",
+      "csv_import_empty",
+      "csv_import_saved",
+      "csv_import_title",
+      "csv_instr_label",
+      "csv_mode_instrument_avg",
+      "csv_mode_label",
+      "csv_mode_overall_per_note",
+      "csv_mode_per_instrument_note",
+      "csv_mode_per_nickname_note",
+      "csv_mode_per_run_note",
+      "csv_mode_raw",
+      "csv_need_instr",
+      "csv_nick_label",
+      "csv_no_data",
+      "csv_run_label",
+      "csv_save_title",
+      "csv_saved",
+      "csv_summary",
+      "ctx_discard",
+      "ctx_discard_confirm",
+      "custom_dlg_info",
+      "custom_dlg_title",
+      "custom_err_chars",
+      "custom_err_name",
+      "custom_label",
+      "custom_lbl_name",
+      "custom_lbl_transp",
+      "data_a4",
+      "data_aperiodicity",
+      "data_block_hop",
+      "data_blocksize",
+      "data_device",
+      "data_filter_mode",
+      "data_filter_params",
+      "data_freq",
+      "data_freqrange",
+      "data_halfcent_floor",
+      "data_hopsize",
+      "data_hotplug_poller",
+      "data_hotplug_value",
+      "data_hotplug_value_never",
+      "data_midi",
+      "data_notes_count",
+      "data_panel_title",
+      "data_rate_negotiated",
+      "data_rate_requested",
+      "data_rms",
+      "data_samplerate",
+      "deck_export",
+      "deck_export_done",
+      "deck_export_fail",
+      "deck_export_filter",
+      "deck_export_tip",
+      "deck_export_title",
+      "deck_group",
+      "deck_hint",
+      "deck_play",
+      "deck_play_tip",
+      "deck_play_unavailable",
+      "deck_record",
+      "deck_record_tip",
+      "deck_replay",
+      "deck_status_empty",
+      "deck_status_have_take",
+      "deck_status_playing",
+      "deck_status_recording",
+      "deck_stop",
+      "deck_unavailable",
+      "disp_griff",
+      "disp_klingend",
+      "drone_group",
+      "drone_on_tip",
+      "drone_semitone",
+      "drone_semitone_down_tip",
+      "drone_semitone_up_tip",
+      "drone_sine_fallback",
+      "drone_unavailable",
+      "drone_volume",
+      "err_title",
+      "export_title",
+      "filter_fast",
+      "filter_normal",
+      "filter_slow",
+      "filter_tip",
+      "gear_tip",
+      "grp_a4",
+      "grp_display",
+      "grp_family",
+      "grp_filter",
+      "grp_instrument",
+      "grp_language",
+      "grp_layout",
+      "grp_nickname",
+      "grp_subinstrument",
+      "instr_bb_bass",
+      "instr_bb_soprano",
+      "instr_bb_tenor",
+      "instr_c",
+      "instr_eb_alto",
+      "instr_eb_bari",
+      "instr_long_bb_bass",
+      "instr_long_bb_soprano",
+      "instr_long_bb_tenor",
+      "instr_long_c",
+      "instr_long_eb_alto",
+      "instr_long_eb_bari",
+      "layout_auto",
+      "layout_matrix",
+      "layout_single",
+      "matrix_oct_center",
+      "matrix_oct_label",
+      "matrix_oct_rel_label",
+      "metro_bpm",
+      "metro_nudge_down_tip",
+      "metro_nudge_up_tip",
+      "metro_start",
+      "metro_stop",
+      "metro_tap",
+      "metro_tap_tip",
+      "metro_timesig",
+      "metro_unavailable",
+      "metro_volume",
+      "min_n_label",
+      "min_n_tip",
+      "model_dialog_info",
+      "model_dialog_title",
+      "model_label_maker",
+      "model_label_model",
+      "model_placeholder_maker",
+      "model_placeholder_model",
+      "nav_deck_recording",
+      "nav_metro_running",
+      "nav_tab_deck",
+      "nav_tab_deck_tip",
+      "nav_tab_metro",
+      "nav_tab_metro_tip",
+      "nav_tab_setup",
+      "nav_tab_setup_tip",
+      "nav_tab_tuner",
+      "nav_tab_tuner_tip",
+      "nickname_tip",
+      "no_signal",
+      "pdf_a4",
+      "pdf_col_finger",
+      "pdf_col_mean",
+      "pdf_col_n",
+      "pdf_col_sound",
+      "pdf_col_std",
+      "pdf_col_tend",
+      "pdf_created",
+      "pdf_filter",
+      "pdf_maker",
+      "pdf_model",
+      "pdf_no_data",
+      "pdf_no_transp",
+      "pdf_save_title",
+      "pdf_saved",
+      "pdf_summary",
+      "pdf_title",
+      "pdf_transp",
+      "pipes_launch",
+      "pipes_tip",
+      "pipes_title",
+      "pipes_unavailable",
+      "range_cancel",
+      "range_editor_title",
+      "range_hi_label",
+      "range_hi_label_sounding",
+      "range_invalid",
+      "range_lo_label",
+      "range_lo_label_sounding",
+      "range_mode_note_griff",
+      "range_mode_note_sound",
+      "range_note_name_hint",
+      "range_note_name_invalid",
+      "range_preview_fmt",
+      "range_restore_default",
+      "range_restore_fallback",
+      "range_save",
+      "reportlab_err",
+      "reset_msg",
+      "reset_title",
+      "samplerate_auto",
+      "samplerate_label",
+      "samplerate_unsupported",
+      "setup_appearance_group",
+      "setup_drone_voice",
+      "setup_drone_voice_group",
+      "setup_instrument_group",
+      "setup_mic_gain",
+      "setup_mic_gain_boost",
+      "setup_mic_gain_cut",
+      "setup_mic_gain_off",
+      "setup_mic_gain_tip",
+      "setup_output_default",
+      "setup_output_device",
+      "setup_output_group",
+      "setup_output_none",
+      "setup_output_pick",
+      "setup_prefer_duplex",
+      "setup_prefer_duplex_tip",
+      "setup_range_edit",
+      "setup_testtone_failed",
+      "setup_testtone_group",
+      "setup_testtone_play",
+      "setup_testtone_stop",
+      "setup_testtone_tip",
+      "setup_theme",
+      "setup_title",
+      "show_diagnostics",
+      "show_diagnostics_tip",
+      "spectro_title",
+      "status_fmt",
+      "table_empty_hint",
+      "table_matrix_title",
+      "table_summary",
+      "table_title",
+      "theme_dark",
+      "theme_light",
+      "theme_night",
+      "transp_info_bb",
+      "transp_info_c",
+      "transp_info_eb",
+      "txt_a4",
+      "txt_col_header",
+      "txt_col_mean",
+      "txt_col_std",
+      "txt_date",
+      "txt_filter",
+      "txt_header",
+      "txt_instr",
+      "txt_maker",
+      "txt_model",
+      "txt_no_transp",
+      "txt_save_title",
+      "txt_saved",
+      "txt_total",
+      "txt_transp",
+      "welcome_continue",
+      "welcome_info",
+      "welcome_path",
+      "welcome_persist",
+      "welcome_skip",
+      "welcome_title",
+      "window_title",
+      "wrong_instrument_banner_body"
+    ],
+    "placeholders": {
+      "audio_banner_busy": [
+        "name"
+      ],
+      "audio_banner_disconnect": [
+        "name"
+      ],
+      "audio_banner_interface_appeared": [
+        "name"
+      ],
+      "audio_banner_unknown": [
+        "msg"
+      ],
+      "audio_picker_apis_more": [
+        "n"
+      ],
+      "audio_picker_row_meta": [
+        "api",
+        "ch",
+        "sr"
+      ],
+      "audio_sr_notice": [
+        "sr"
+      ],
+      "audio_toast_interface": [
+        "name"
+      ],
+      "autotune_clamp": [
+        "clamped",
+        "rounded"
+      ],
+      "autotune_confirm": [
+        "clamped"
+      ],
+      "autotune_nodata_progress": [
+        "qualified",
+        "touched"
+      ],
+      "autotune_result": [
+        "current",
+        "mean",
+        "notes",
+        "offset",
+        "optimal",
+        "rounded",
+        "sign",
+        "sign2"
+      ],
+      "chart_footer": [
+        "notes",
+        "total"
+      ],
+      "chart_saved": [
+        "path"
+      ],
+      "chart_subtitle": [
+        "a4",
+        "dt",
+        "instr"
+      ],
+      "chart_subtitle_id": [
+        "a4",
+        "dt",
+        "instr",
+        "maker",
+        "model"
+      ],
+      "csv_import_confirm_body": [
+        "filename"
+      ],
+      "csv_import_saved": [
+        "meas",
+        "runs",
+        "skipped"
+      ],
+      "csv_saved": [
+        "path",
+        "rows"
+      ],
+      "csv_summary": [
+        "n",
+        "runs"
+      ],
+      "ctx_discard_confirm": [
+        "note"
+      ],
+      "data_hotplug_value": [
+        "interval",
+        "when"
+      ],
+      "data_hotplug_value_never": [
+        "interval"
+      ],
+      "matrix_oct_label": [
+        "n"
+      ],
+      "matrix_oct_rel_label": [
+        "n"
+      ],
+      "pdf_a4": [
+        "hz"
+      ],
+      "pdf_created": [
+        "dt"
+      ],
+      "pdf_maker": [
+        "maker"
+      ],
+      "pdf_model": [
+        "model"
+      ],
+      "pdf_saved": [
+        "path"
+      ],
+      "pdf_summary": [
+        "notes",
+        "total"
+      ],
+      "pdf_transp": [
+        "n",
+        "note"
+      ],
+      "range_editor_title": [
+        "name"
+      ],
+      "range_preview_fmt": [
+        "hi_name",
+        "lo_name",
+        "octs",
+        "semis"
+      ],
+      "range_restore_fallback": [
+        "hi",
+        "lo"
+      ],
+      "samplerate_unsupported": [
+        "rate"
+      ],
+      "setup_mic_gain_boost": [
+        "db"
+      ],
+      "setup_mic_gain_cut": [
+        "db"
+      ],
+      "status_fmt": [
+        "a4",
+        "cents_str",
+        "fingered",
+        "freq",
+        "sounding"
+      ],
+      "table_matrix_title": [
+        "played",
+        "total"
+      ],
+      "table_summary": [
+        "notes",
+        "total"
+      ],
+      "txt_a4": [
+        "hz"
+      ],
+      "txt_col_header": [
+        "fingered",
+        "mean",
+        "n",
+        "sounding",
+        "std"
+      ],
+      "txt_date": [
+        "dt"
+      ],
+      "txt_instr": [
+        "name"
+      ],
+      "txt_maker": [
+        "maker"
+      ],
+      "txt_model": [
+        "model"
+      ],
+      "txt_saved": [
+        "path"
+      ],
+      "txt_total": [
+        "notes",
+        "total"
+      ],
+      "txt_transp": [
+        "note"
+      ],
+      "welcome_path": [
+        "path"
+      ],
+      "wrong_instrument_banner_body": [
+        "instrument"
+      ]
+    }
+  },
+  "en": {
+    "keys": [
+      "allow_oor",
+      "allow_oor_tip",
+      "audio_banner_busy",
+      "audio_banner_disconnect",
+      "audio_banner_interface_appeared",
+      "audio_banner_no_device",
+      "audio_banner_pick",
+      "audio_banner_retry",
+      "audio_banner_unknown",
+      "audio_banner_unsupported_rate",
+      "audio_chip_label",
+      "audio_chip_none",
+      "audio_chip_opening",
+      "audio_chip_tip",
+      "audio_disabled",
+      "audio_error",
+      "audio_error_title",
+      "audio_picker_apis_more",
+      "audio_picker_cancel",
+      "audio_picker_current",
+      "audio_picker_no_devices",
+      "audio_picker_prefer_ks",
+      "audio_picker_rescan",
+      "audio_picker_row_meta",
+      "audio_picker_show_all",
+      "audio_picker_title",
+      "audio_picker_use",
+      "audio_sr_notice",
+      "audio_toast_dismiss",
+      "audio_toast_interface",
+      "audio_toast_switch",
+      "autotune_clamp",
+      "autotune_confirm",
+      "autotune_nodata",
+      "autotune_nodata_progress",
+      "autotune_result",
+      "autotune_title",
+      "btn_autotune",
+      "btn_chart",
+      "btn_csv",
+      "btn_import",
+      "btn_pdf",
+      "btn_reset",
+      "btn_start",
+      "btn_stop",
+      "btn_txt",
+      "chart_filter",
+      "chart_footer",
+      "chart_no_data",
+      "chart_save_title",
+      "chart_saved",
+      "chart_subtitle",
+      "chart_subtitle_id",
+      "chart_title",
+      "col_fingered",
+      "col_mean",
+      "col_n",
+      "col_sounding",
+      "col_std",
+      "col_tendency",
+      "csv_all_instruments",
+      "csv_all_nicks",
+      "csv_all_runs",
+      "csv_dialog_info",
+      "csv_dialog_title",
+      "csv_filter",
+      "csv_import_badhdr",
+      "csv_import_confirm_body",
+      "csv_import_confirm_title",
+      "csv_import_empty",
+      "csv_import_saved",
+      "csv_import_title",
+      "csv_instr_label",
+      "csv_mode_instrument_avg",
+      "csv_mode_label",
+      "csv_mode_overall_per_note",
+      "csv_mode_per_instrument_note",
+      "csv_mode_per_nickname_note",
+      "csv_mode_per_run_note",
+      "csv_mode_raw",
+      "csv_need_instr",
+      "csv_nick_label",
+      "csv_no_data",
+      "csv_run_label",
+      "csv_save_title",
+      "csv_saved",
+      "csv_summary",
+      "ctx_discard",
+      "ctx_discard_confirm",
+      "custom_dlg_info",
+      "custom_dlg_title",
+      "custom_err_chars",
+      "custom_err_name",
+      "custom_label",
+      "custom_lbl_name",
+      "custom_lbl_transp",
+      "data_a4",
+      "data_aperiodicity",
+      "data_block_hop",
+      "data_blocksize",
+      "data_device",
+      "data_filter_mode",
+      "data_filter_params",
+      "data_freq",
+      "data_freqrange",
+      "data_halfcent_floor",
+      "data_hopsize",
+      "data_hotplug_poller",
+      "data_hotplug_value",
+      "data_hotplug_value_never",
+      "data_midi",
+      "data_notes_count",
+      "data_panel_title",
+      "data_rate_negotiated",
+      "data_rate_requested",
+      "data_rms",
+      "data_samplerate",
+      "deck_export",
+      "deck_export_done",
+      "deck_export_fail",
+      "deck_export_filter",
+      "deck_export_tip",
+      "deck_export_title",
+      "deck_group",
+      "deck_hint",
+      "deck_play",
+      "deck_play_tip",
+      "deck_play_unavailable",
+      "deck_record",
+      "deck_record_tip",
+      "deck_replay",
+      "deck_status_empty",
+      "deck_status_have_take",
+      "deck_status_playing",
+      "deck_status_recording",
+      "deck_stop",
+      "deck_unavailable",
+      "disp_griff",
+      "disp_klingend",
+      "drone_group",
+      "drone_on_tip",
+      "drone_semitone",
+      "drone_semitone_down_tip",
+      "drone_semitone_up_tip",
+      "drone_sine_fallback",
+      "drone_unavailable",
+      "drone_volume",
+      "err_title",
+      "export_title",
+      "filter_fast",
+      "filter_normal",
+      "filter_slow",
+      "filter_tip",
+      "gear_tip",
+      "grp_a4",
+      "grp_display",
+      "grp_family",
+      "grp_filter",
+      "grp_instrument",
+      "grp_language",
+      "grp_layout",
+      "grp_nickname",
+      "grp_subinstrument",
+      "instr_bb_bass",
+      "instr_bb_soprano",
+      "instr_bb_tenor",
+      "instr_c",
+      "instr_eb_alto",
+      "instr_eb_bari",
+      "instr_long_bb_bass",
+      "instr_long_bb_soprano",
+      "instr_long_bb_tenor",
+      "instr_long_c",
+      "instr_long_eb_alto",
+      "instr_long_eb_bari",
+      "layout_auto",
+      "layout_matrix",
+      "layout_single",
+      "matrix_oct_center",
+      "matrix_oct_label",
+      "matrix_oct_rel_label",
+      "metro_bpm",
+      "metro_nudge_down_tip",
+      "metro_nudge_up_tip",
+      "metro_start",
+      "metro_stop",
+      "metro_tap",
+      "metro_tap_tip",
+      "metro_timesig",
+      "metro_unavailable",
+      "metro_volume",
+      "min_n_label",
+      "min_n_tip",
+      "model_dialog_info",
+      "model_dialog_title",
+      "model_label_maker",
+      "model_label_model",
+      "model_placeholder_maker",
+      "model_placeholder_model",
+      "nav_deck_recording",
+      "nav_metro_running",
+      "nav_tab_deck",
+      "nav_tab_deck_tip",
+      "nav_tab_metro",
+      "nav_tab_metro_tip",
+      "nav_tab_setup",
+      "nav_tab_setup_tip",
+      "nav_tab_tuner",
+      "nav_tab_tuner_tip",
+      "nickname_tip",
+      "no_signal",
+      "pdf_a4",
+      "pdf_col_finger",
+      "pdf_col_mean",
+      "pdf_col_n",
+      "pdf_col_sound",
+      "pdf_col_std",
+      "pdf_col_tend",
+      "pdf_created",
+      "pdf_filter",
+      "pdf_maker",
+      "pdf_model",
+      "pdf_no_data",
+      "pdf_no_transp",
+      "pdf_save_title",
+      "pdf_saved",
+      "pdf_summary",
+      "pdf_title",
+      "pdf_transp",
+      "pipes_launch",
+      "pipes_tip",
+      "pipes_title",
+      "pipes_unavailable",
+      "range_cancel",
+      "range_editor_title",
+      "range_hi_label",
+      "range_hi_label_sounding",
+      "range_invalid",
+      "range_lo_label",
+      "range_lo_label_sounding",
+      "range_mode_note_griff",
+      "range_mode_note_sound",
+      "range_note_name_hint",
+      "range_note_name_invalid",
+      "range_preview_fmt",
+      "range_restore_default",
+      "range_restore_fallback",
+      "range_save",
+      "reportlab_err",
+      "reset_msg",
+      "reset_title",
+      "samplerate_auto",
+      "samplerate_label",
+      "samplerate_unsupported",
+      "setup_appearance_group",
+      "setup_drone_voice",
+      "setup_drone_voice_group",
+      "setup_instrument_group",
+      "setup_mic_gain",
+      "setup_mic_gain_boost",
+      "setup_mic_gain_cut",
+      "setup_mic_gain_off",
+      "setup_mic_gain_tip",
+      "setup_output_default",
+      "setup_output_device",
+      "setup_output_group",
+      "setup_output_none",
+      "setup_output_pick",
+      "setup_prefer_duplex",
+      "setup_prefer_duplex_tip",
+      "setup_range_edit",
+      "setup_testtone_failed",
+      "setup_testtone_group",
+      "setup_testtone_play",
+      "setup_testtone_stop",
+      "setup_testtone_tip",
+      "setup_theme",
+      "setup_title",
+      "show_diagnostics",
+      "show_diagnostics_tip",
+      "spectro_title",
+      "status_fmt",
+      "table_empty_hint",
+      "table_matrix_title",
+      "table_summary",
+      "table_title",
+      "theme_dark",
+      "theme_light",
+      "theme_night",
+      "transp_info_bb",
+      "transp_info_c",
+      "transp_info_eb",
+      "txt_a4",
+      "txt_col_header",
+      "txt_col_mean",
+      "txt_col_std",
+      "txt_date",
+      "txt_filter",
+      "txt_header",
+      "txt_instr",
+      "txt_maker",
+      "txt_model",
+      "txt_no_transp",
+      "txt_save_title",
+      "txt_saved",
+      "txt_total",
+      "txt_transp",
+      "welcome_continue",
+      "welcome_info",
+      "welcome_path",
+      "welcome_persist",
+      "welcome_skip",
+      "welcome_title",
+      "window_title",
+      "wrong_instrument_banner_body"
+    ],
+    "placeholders": {
+      "audio_banner_busy": [
+        "name"
+      ],
+      "audio_banner_disconnect": [
+        "name"
+      ],
+      "audio_banner_interface_appeared": [
+        "name"
+      ],
+      "audio_banner_unknown": [
+        "msg"
+      ],
+      "audio_picker_apis_more": [
+        "n"
+      ],
+      "audio_picker_row_meta": [
+        "api",
+        "ch",
+        "sr"
+      ],
+      "audio_sr_notice": [
+        "sr"
+      ],
+      "audio_toast_interface": [
+        "name"
+      ],
+      "autotune_clamp": [
+        "clamped",
+        "rounded"
+      ],
+      "autotune_confirm": [
+        "clamped"
+      ],
+      "autotune_nodata_progress": [
+        "qualified",
+        "touched"
+      ],
+      "autotune_result": [
+        "current",
+        "mean",
+        "notes",
+        "offset",
+        "optimal",
+        "rounded",
+        "sign",
+        "sign2"
+      ],
+      "chart_footer": [
+        "notes",
+        "total"
+      ],
+      "chart_saved": [
+        "path"
+      ],
+      "chart_subtitle": [
+        "a4",
+        "dt",
+        "instr"
+      ],
+      "chart_subtitle_id": [
+        "a4",
+        "dt",
+        "instr",
+        "maker",
+        "model"
+      ],
+      "csv_import_confirm_body": [
+        "filename"
+      ],
+      "csv_import_saved": [
+        "meas",
+        "runs",
+        "skipped"
+      ],
+      "csv_saved": [
+        "path",
+        "rows"
+      ],
+      "csv_summary": [
+        "n",
+        "runs"
+      ],
+      "ctx_discard_confirm": [
+        "note"
+      ],
+      "data_hotplug_value": [
+        "interval",
+        "when"
+      ],
+      "data_hotplug_value_never": [
+        "interval"
+      ],
+      "matrix_oct_label": [
+        "n"
+      ],
+      "matrix_oct_rel_label": [
+        "n"
+      ],
+      "pdf_a4": [
+        "hz"
+      ],
+      "pdf_created": [
+        "dt"
+      ],
+      "pdf_maker": [
+        "maker"
+      ],
+      "pdf_model": [
+        "model"
+      ],
+      "pdf_saved": [
+        "path"
+      ],
+      "pdf_summary": [
+        "notes",
+        "total"
+      ],
+      "pdf_transp": [
+        "n",
+        "note"
+      ],
+      "range_editor_title": [
+        "name"
+      ],
+      "range_preview_fmt": [
+        "hi_name",
+        "lo_name",
+        "octs",
+        "semis"
+      ],
+      "range_restore_fallback": [
+        "hi",
+        "lo"
+      ],
+      "samplerate_unsupported": [
+        "rate"
+      ],
+      "setup_mic_gain_boost": [
+        "db"
+      ],
+      "setup_mic_gain_cut": [
+        "db"
+      ],
+      "status_fmt": [
+        "a4",
+        "cents_str",
+        "fingered",
+        "freq",
+        "sounding"
+      ],
+      "table_matrix_title": [
+        "played",
+        "total"
+      ],
+      "table_summary": [
+        "notes",
+        "total"
+      ],
+      "txt_a4": [
+        "hz"
+      ],
+      "txt_col_header": [
+        "fingered",
+        "mean",
+        "n",
+        "sounding",
+        "std"
+      ],
+      "txt_date": [
+        "dt"
+      ],
+      "txt_instr": [
+        "name"
+      ],
+      "txt_maker": [
+        "maker"
+      ],
+      "txt_model": [
+        "model"
+      ],
+      "txt_saved": [
+        "path"
+      ],
+      "txt_total": [
+        "notes",
+        "total"
+      ],
+      "txt_transp": [
+        "note"
+      ],
+      "welcome_path": [
+        "path"
+      ],
+      "wrong_instrument_banner_body": [
+        "instrument"
+      ]
+    }
+  }
+}

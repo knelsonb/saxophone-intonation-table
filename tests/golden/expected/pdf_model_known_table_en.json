@@ -1,0 +1,104 @@
+{
+  "flowables": [
+    {
+      "paragraph": "Intonation Analyzer",
+      "plain": "Intonation Analyzer"
+    },
+    {
+      "paragraph": "Eb Saxophone (Alto)",
+      "plain": "Eb Saxophone (Alto)"
+    },
+    {
+      "paragraph": "Manufacturer: Selmer",
+      "plain": "Manufacturer: Selmer"
+    },
+    {
+      "paragraph": "Model: Mark VI",
+      "plain": "Model: Mark VI"
+    },
+    {
+      "paragraph": "Transposition: fingered C sounds as D#/Eb (-9 semitones)",
+      "plain": "Transposition: fingered C sounds as D#/Eb (-9 semitones)"
+    },
+    {
+      "paragraph": "Concert pitch: A = 440 Hz",
+      "plain": "Concert pitch: A = 440 Hz"
+    },
+    {
+      "paragraph": "Created: <DD.MM.YYYY HH:MM>",
+      "plain": "Created: <DD.MM.YYYY HH:MM>"
+    },
+    {
+      "spacer": 28.3
+    },
+    {
+      "paragraph": "5 notes | 115 measurements total",
+      "plain": "5 notes | 115 measurements total"
+    },
+    {
+      "table": [
+        [
+          "Fingered",
+          "Sounding",
+          "Ø Dev. (ct)",
+          "σ (ct)",
+          "N",
+          "Tendency"
+        ],
+        [
+          "A4",
+          "C4",
+          "+0",
+          "±0",
+          "23",
+          "        |        "
+        ],
+        [
+          "C#/Db5",
+          "E4",
+          "-15",
+          "±0",
+          "23",
+          "......##|        "
+        ],
+        [
+          "E5",
+          "G4",
+          "+8",
+          "±0",
+          "23",
+          "        |#......."
+        ],
+        [
+          "F#/Gb5",
+          "A4",
+          "+30",
+          "±0",
+          "23",
+          "        |######.."
+        ],
+        [
+          "A5",
+          "C5",
+          "-3",
+          "±0",
+          "23",
+          "........|        "
+        ]
+      ],
+      "text_colours": {
+        "0,0": "#ffffff",
+        "0,1": "#ffffff",
+        "0,2": "#ffffff",
+        "0,3": "#ffffff",
+        "0,4": "#ffffff",
+        "0,5": "#ffffff",
+        "1,2": "#1b5e20",
+        "2,2": "#b71c1c",
+        "3,2": "#e65100",
+        "4,2": "#b71c1c",
+        "5,2": "#1b5e20"
+      }
+    }
+  ]
+}

@@ -1,0 +1,54 @@
+{
+  "footer": "Current session: 5 notes, 115 measurements  ·  Bars: mean, whiskers: ±1σ",
+  "instrument": "eb_alto",
+  "notes": [
+    [
+      "A4",
+      0.1,
+      0.1,
+      23,
+      261.6,
+      69,
+      true
+    ],
+    [
+      "C#/Db5",
+      -14.9,
+      0.1,
+      23,
+      329.6,
+      73,
+      true
+    ],
+    [
+      "E5",
+      8.2,
+      0.1,
+      23,
+      392.0,
+      76,
+      true
+    ],
+    [
+      "F#/Gb5",
+      30.1,
+      0.1,
+      23,
+      440.0,
+      78,
+      true
+    ],
+    [
+      "A5",
+      -2.9,
+      0.1,
+      23,
+      523.3,
+      81,
+      true
+    ]
+  ],
+  "sample_rate": 44100,
+  "subtitle": "Eb Saxophone  (Alto)  ·  Selmer Mark VI  ·  A = 440 Hz  ·  <YYYY-MM-DD HH:MM>",
+  "title": "Intonation Analysis"
+}

@@ -1,0 +1,19 @@
+instrument,nicknames,midi_sounding,sounding_note,fingered_note,runs,n,mean_cents,std_cents,min_cents,max_cents
+bb_tenor,Yamaha YTS-62,54,F#/Gb3,G#/Ab4,1,4,1.500,5.590,-6.000,9.000
+bb_tenor,Yamaha YTS-62,55,G3,A4,1,5,-1.400,9.728,-15.000,11.000
+bb_tenor,Yamaha YTS-62,56,G#/Ab3,A#/Bb4,1,3,2.667,11.264,-13.000,13.000
+bb_tenor,Yamaha YTS-62,57,A3,B4,1,4,-0.750,9.756,-11.000,15.000
+bb_tenor,Yamaha YTS-62,58,A#/Bb3,C5,1,5,1.000,7.071,-9.000,11.000
+bb_tenor,Yamaha YTS-62,59,B3,C#/Db5,1,3,3.000,4.082,-2.000,8.000
+bb_tenor,Yamaha YTS-62,60,C4,D5,1,4,4.750,9.756,-11.000,15.000
+bb_tenor,Yamaha YTS-62,61,C#/Db4,D#/Eb5,1,5,-2.800,8.931,-14.000,12.000
+eb_alto,Selmer Mark VI,63,D#/Eb4,C5,1,3,-3.000,4.082,-8.000,2.000
+eb_alto,Müller Bariton;Selmer Mark VI,64,E4,C#/Db5,2,7,8.000,5.292,-1.000,15.000
+eb_alto,Müller Bariton;Selmer Mark VI,65,F4,D5,2,9,-3.111,9.758,-15.000,12.000
+eb_alto,Müller Bariton;Selmer Mark VI,66,F#/Gb4,D#/Eb5,2,8,-2.250,8.885,-13.000,13.000
+eb_alto,Müller Bariton;Selmer Mark VI,67,G4,E5,2,7,-2.000,5.292,-11.000,5.000
+eb_alto,Müller Bariton;Selmer Mark VI,68,G#/Ab4,F5,2,9,0.667,9.357,-15.000,12.000
+eb_alto,Müller Bariton;Selmer Mark VI,69,A4,F#/Gb5,2,8,3.250,8.885,-12.000,14.000
+eb_alto,Selmer Mark VI,70,A#/Bb4,G5,1,4,2.000,10.794,-11.000,15.000
+eb_alto,Selmer Mark VI,71,B4,G#/Ab5,1,5,-4.000,7.071,-14.000,6.000
+eb_alto,Selmer Mark VI,72,C5,A5,1,3,-2.000,4.082,-7.000,3.000

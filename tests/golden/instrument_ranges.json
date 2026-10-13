@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "ranges": {
+    "eb_alto": [49, 81],
+    "bb_tenor": [44, 76],
+    "custom_mezzo_soprano": [60, 90],
+    "bb_soprano": [80, 40],
+    "clar_bb": [200, 210],
+    "eb_bari": "not a range"
+  }
+}

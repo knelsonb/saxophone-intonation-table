@@ -1,0 +1,6 @@
+[
+  {"key": "custom_mezzo_soprano", "transp": 3, "name_de": "Mezzosopran in Es", "name_en": "Eb Mezzo-Soprano", "nickname": ""},
+  {"key": "custom_old_style", "transp": -2, "name": "Legacy single-name entry"},
+  {"key": "custom_broken", "transp": "not a number", "name_en": "Skipped: transposition is not a number"},
+  {"transp": 5, "name_en": "Skipped: no key"}
+]

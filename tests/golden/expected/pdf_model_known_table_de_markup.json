@@ -1,0 +1,104 @@
+{
+  "flowables": [
+    {
+      "paragraph": "Intonations-Analysator",
+      "plain": "Intonations-Analysator"
+    },
+    {
+      "paragraph": "Eb-Saxophon (Alt)",
+      "plain": "Eb-Saxophon (Alt)"
+    },
+    {
+      "paragraph": "Hersteller: Müller &amp; Söhne",
+      "plain": "Hersteller: Müller & Söhne"
+    },
+    {
+      "paragraph": "Modell: &lt;b&gt;Mark VI&lt;/b&gt;",
+      "plain": "Modell: <b>Mark VI</b>"
+    },
+    {
+      "paragraph": "Transposition: gegriffenes C klingt D#/Eb (-9 Halbtöne)",
+      "plain": "Transposition: gegriffenes C klingt D#/Eb (-9 Halbtöne)"
+    },
+    {
+      "paragraph": "Kammerton: A = 440 Hz",
+      "plain": "Kammerton: A = 440 Hz"
+    },
+    {
+      "paragraph": "Erstellt: <DD.MM.YYYY HH:MM>",
+      "plain": "Erstellt: <DD.MM.YYYY HH:MM>"
+    },
+    {
+      "spacer": 28.3
+    },
+    {
+      "paragraph": "5 Töne | 115 Messungen gesamt",
+      "plain": "5 Töne | 115 Messungen gesamt"
+    },
+    {
+      "table": [
+        [
+          "Gegriffen",
+          "Klingend",
+          "Ø Abw. (ct)",
+          "σ (ct)",
+          "N",
+          "Tendenz"
+        ],
+        [
+          "A4",
+          "C4",
+          "+0",
+          "±0",
+          "23",
+          "        |        "
+        ],
+        [
+          "C#/Db5",
+          "E4",
+          "-15",
+          "±0",
+          "23",
+          "......##|        "
+        ],
+        [
+          "E5",
+          "G4",
+          "+8",
+          "±0",
+          "23",
+          "        |#......."
+        ],
+        [
+          "F#/Gb5",
+          "A4",
+          "+30",
+          "±0",
+          "23",
+          "        |######.."
+        ],
+        [
+          "A5",
+          "C5",
+          "-3",
+          "±0",
+          "23",
+          "........|        "
+        ]
+      ],
+      "text_colours": {
+        "0,0": "#ffffff",
+        "0,1": "#ffffff",
+        "0,2": "#ffffff",
+        "0,3": "#ffffff",
+        "0,4": "#ffffff",
+        "0,5": "#ffffff",
+        "1,2": "#1b5e20",
+        "2,2": "#b71c1c",
+        "3,2": "#e65100",
+        "4,2": "#b71c1c",
+        "5,2": "#1b5e20"
+      }
+    }
+  ]
+}

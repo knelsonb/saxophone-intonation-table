@@ -1,0 +1,29 @@
+{
+  "welcome_shown": true,
+  "persistence_enabled": true,
+  "log_path": "",
+  "allow_out_of_range": false,
+  "matrix_extra_octaves": 0,
+  "layout_mode_preference": "auto",
+  "filter_mode": "slow",
+  "min_n_visible": 3,
+  "show_diagnostics": false,
+  "audio_device_name": "Microphone (FIIO DSP Audio)",
+  "audio_device_host_api": "Windows WASAPI",
+  "audio_device_samplerate": 48000,
+  "audio_samplerate_pref": "auto",
+  "audio_sr_notice_shown": false,
+  "show_all_host_apis": false,
+  "prefer_wdmks": false,
+  "window_geometry": "",
+  "window_state": "",
+  "splitter_sizes": [
+    420,
+    620
+  ],
+  "last_instrument_key": "bb_tenor",
+  "last_nickname": "Selmer Mark VI",
+  "last_display_mode": "klingend",
+  "last_a4_hz": 443,
+  "last_lang": "de"
+}
