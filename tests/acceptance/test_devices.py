@@ -541,9 +541,6 @@ def _old_history(months: int = 3, per_month: int = 40) -> str:
     return "\n".join(lines) + "\n"
 
 
-@pytest.mark.xfail(strict=True, reason="Legolas-5/Aragorn-6: the history log is never "
-                                       "rotated; the live file should hold the current "
-                                       "month only, so start-up cost stays bounded")
 def test_last_years_history_is_moved_out_of_the_live_log(make_app):
     """The expected bound: the live history file holds the current month,
     and older months are kept beside it rather than re-read on every start."""

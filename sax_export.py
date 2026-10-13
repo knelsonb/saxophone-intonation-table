@@ -281,7 +281,7 @@ class ExportController:
     def export_csv(self) -> None:
         from sax_intonation_gui import _today
         w = self._w
-        if not self._log.measurements():
+        if not self._log.has_measurements():
             QMessageBox.information(w, self._t('export_title'),
                                     self._t('csv_no_data'))
             return
@@ -550,7 +550,7 @@ class ExportController:
             if nick_combo.itemData(0) is None:
                 nick_combo.setItemText(0, self._t('csv_all_nicks'))
             summary.setText(self._t('csv_summary',
-                                     n=len(self._log.measurements()),
+                                     n=self._log.measurement_count(),
                                      runs=len(self._log.runs())))
 
         w._add_dialog_lang_toggle(dlg, layout, on_change=relabel_slice_dialog)
@@ -598,7 +598,7 @@ class ExportController:
 
         layout.addLayout(form)
 
-        n = len(self._log.measurements())
+        n = self._log.measurement_count()
         r = len(self._log.runs())
         summary = QLabel(self._t('csv_summary', n=n, runs=r))
         summary.setStyleSheet('color: #888; font-size: 11px;')

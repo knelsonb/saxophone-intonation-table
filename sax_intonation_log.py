@@ -1,14 +1,20 @@
 """
 Measurement logging and CSV export for the Saxophone Intonation Analyzer.
 
-Every detected note is recorded as one row in an in-memory log. The GUI can
-then export filtered/aggregated subsets as CSV.
+Every detected note is recorded as one row in the measurement log. The GUI
+can then export filtered/aggregated subsets as CSV.
 
 Persistence is OPT-IN. If a `path` is passed to `MeasurementLog`, every run
 and measurement is also appended as a JSON Lines record so history can
 survive between sessions. The default is in-memory only — the GUI enables
 persistence when the user opts in on the welcome dialog, or when the
 environment variable `SAX_INTONATION_LOG_PATH` names a file.
+
+On disk the history is split by month (see `HistoryFiles`): the live file
+holds this month's runs and earlier months sit beside it as
+`log-YYYY-MM.jsonl`. Earlier sessions are read on demand by exports and
+imports, streamed record by record, so start-up cost does not grow with the
+history. Every record read back is validated; a damaged one is skipped.
 
 Run semantics
 -------------
@@ -32,12 +38,14 @@ import datetime
 import io
 import json
 import math
+import os
 import re
+import tempfile
 import threading
 import uuid
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
-from typing import Optional
+from typing import Iterable, Iterator, Optional
 
 _CHROMA = ['C', 'C#/Db', 'D', 'D#/Eb', 'E', 'F',
            'F#/Gb', 'G', 'G#/Ab', 'A', 'A#/Bb', 'B']
@@ -123,15 +131,352 @@ def _read_csv_text(path: Path) -> str:
     except UnicodeDecodeError:
         return raw.decode("cp1252", errors="replace")
 
-class MeasurementLog:
-    """Thread-safe in-memory log with optional JSONL persistence.
+# ---------------------------------------------------------------------------
+# Record validation
+# ---------------------------------------------------------------------------
+# A transposition is sounding minus fingered MIDI. One wider than the whole
+# MIDI range is not an instrument, so it marks a damaged record. Fingered
+# notes themselves may leave 0..127: a contrabass sounding high is fingered
+# above 127, and those readings are real.
+_MAX_TRANSPOSITION = 127
 
-    The audio callback runs on a non-Qt thread; `add_measurement` is the only
-    method called from there. Everything else is invoked from the UI thread.
+
+def plausible_reading(a4_hz: float, midi_sounding: int, midi_fingered: int,
+                      cents: float, freq_hz: float) -> bool:
+    """The numeric rules every stored reading meets, whether it comes from the
+    history file or from a CSV import. float() happily parses 'inf', 'nan' and
+    '1e400', and int() any magnitude, so a damaged or crafted record could
+    poison the log: a non-finite cents makes a run's mean NaN, an impossible
+    MIDI number breaks note naming. Every comparison with NaN is False, so the
+    range tests also reject non-finite values."""
+    return (1.0 <= a4_hz <= 20000.0             # plausible concert A4
+            and 1.0 <= freq_hz <= 20000.0       # audible, finite
+            and -100000.0 <= cents <= 100000.0  # finite deviation
+            and 0 <= midi_sounding <= 127
+            and abs(midi_sounding - midi_fingered) <= _MAX_TRANSPOSITION)
+
+
+def _json_number(v) -> Optional[float]:
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    try:
+        return float(v)
+    except OverflowError:       # an int too large for a float
+        return None
+
+
+def _json_midi(v) -> Optional[int]:
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, int):
+        return v
+    if isinstance(v, float) and v.is_integer():
+        return int(v)
+    return None
+
+
+def _run_from_record(obj: dict) -> Optional[RunMeta]:
+    texts = [obj.get(k) for k in ("run_id", "started_at", "instrument")]
+    texts += [obj.get(k, "") for k in ("maker", "model", "label")]
+    if not all(isinstance(t, str) for t in texts):
+        return None
+    a4_hz = _json_number(obj.get("a4_hz"))
+    if a4_hz is None or not (1.0 <= a4_hz <= 20000.0):
+        return None
+    run_id, started_at, instrument, maker, model, label = texts
+    return RunMeta(run_id=run_id, started_at=started_at, instrument=instrument,
+                   a4_hz=a4_hz, maker=maker, model=model, label=label)
+
+
+def _measurement_from_record(obj: dict) -> Optional[Measurement]:
+    texts = [obj.get(k) for k in ("run_id", "timestamp", "instrument")]
+    if not all(isinstance(t, str) for t in texts):
+        return None
+    a4_hz, cents, freq_hz = (_json_number(obj.get(k))
+                             for k in ("a4_hz", "cents", "freq_hz"))
+    midi_sounding, midi_fingered = (_json_midi(obj.get(k))
+                                    for k in ("midi_sounding", "midi_fingered"))
+    if None in (a4_hz, cents, freq_hz, midi_sounding, midi_fingered):
+        return None
+    if not plausible_reading(a4_hz, midi_sounding, midi_fingered, cents, freq_hz):
+        return None
+    run_id, timestamp, instrument = texts
+    return Measurement(run_id=run_id, timestamp=timestamp, instrument=instrument,
+                       a4_hz=a4_hz, midi_sounding=midi_sounding,
+                       midi_fingered=midi_fingered, cents=cents, freq_hz=freq_hz)
+
+
+def _json_object(line: str | bytes) -> Optional[dict]:
+    """The JSON object on one history line, or None for blank, torn, foreign
+    or undecodable lines; those are skipped, never fatal."""
+    if isinstance(line, bytes):
+        # A stray non-UTF-8 byte damages its own line only.
+        line = line.decode("utf-8", errors="replace")
+    line = line.strip()
+    if not line:
+        return None
+    try:
+        obj = json.loads(line)
+    except (ValueError, RecursionError):
+        return None
+    return obj if isinstance(obj, dict) else None
+
+
+def parse_record(line: str | bytes) -> RunMeta | Measurement | None:
+    """One history line as a validated record, or None when it is not one."""
+    obj = _json_object(line)
+    if obj is None:
+        return None
+    kind = obj.get("kind")
+    if kind == "run":
+        return _run_from_record(obj)
+    if kind == "measurement":
+        return _measurement_from_record(obj)
+    return None
+
+
+# ---------------------------------------------------------------------------
+# History files
+# ---------------------------------------------------------------------------
+_MONTH_PREFIX = re.compile(r"\d{4}-\d{2}")
+
+
+def _month_of(stamp) -> Optional[str]:
+    """'YYYY-MM' of an ISO-8601 timestamp, or None."""
+    if isinstance(stamp, str) and _MONTH_PREFIX.match(stamp):
+        return stamp[:7]
+    return None
+
+
+def current_month() -> str:
+    # Records carry local time, so the month boundary is local too.
+    return datetime.date.today().strftime("%Y-%m")
+
+
+def _ends_with_newline(path: Path) -> bool:
+    with path.open("rb") as f:
+        f.seek(0, 2)
+        if f.tell() == 0:
+            return True
+        f.seek(-1, 2)
+        return f.read(1) == b"\n"
+
+
+class HistoryFiles:
+    """The history on disk, one JSON record per line.
+
+    The live file (``log.jsonl`` by default) holds the runs started in the
+    current month. When the app starts in a new month, the runs of earlier
+    months move to ``<stem>-YYYY-MM<suffix>`` beside it (``log-2026-03.jsonl``),
+    so the live file, which is the only one written during a session, stays
+    small. Lines are copied byte for byte; the record format does not change.
+    Readers go through every file, oldest month first, so the split is
+    invisible to exports and imports.
+
+    Appends go through one handle that stays open for the session and is
+    flushed after every write, so the UI thread never opens or closes the file
+    per reading, and a crash loses nothing that was already reported."""
+
+    def __init__(self, live: Path) -> None:
+        self.live = Path(live)
+        self._month_name = re.compile(
+            re.escape(self.live.stem) + r"-(\d{4}-\d{2})" + re.escape(self.live.suffix))
+        self._handle = None
+        self._lock = threading.Lock()
+
+    def month_file(self, month: str) -> Path:
+        return self.live.with_name(f"{self.live.stem}-{month}{self.live.suffix}")
+
+    def files(self) -> list[Path]:
+        """Every history file, oldest month first and the live file last."""
+        try:
+            entries = list(self.live.parent.iterdir())
+        except OSError:
+            entries = []
+        months = sorted(p for p in entries
+                        if self._month_name.fullmatch(p.name) and p.is_file())
+        return months + ([self.live] if self.live.is_file() else [])
+
+    def lines(self) -> Iterator[bytes]:
+        """Every line of every history file. A file that cannot be read is
+        skipped: history is best-effort and must never stop an export."""
+        for path in self.files():
+            try:
+                with path.open("rb") as f:
+                    yield from f
+            except OSError:
+                continue
+
+    # -- writing --------------------------------------------------------------
+    def append(self, lines: list[str]) -> bool:
+        """Append records to the live file. Returns False if the disk refused;
+        the next append tries again with a fresh handle."""
+        with self._lock:
+            try:
+                if self._handle is None:
+                    self._handle = self._open_live()
+                self._handle.write("".join(line + "\n" for line in lines))
+                self._handle.flush()
+                return True
+            except OSError:
+                self._close_handle()
+                return False
+
+    def _open_live(self):
+        self.live.parent.mkdir(parents=True, exist_ok=True)
+        torn = self.live.is_file() and not _ends_with_newline(self.live)
+        handle = self.live.open("a", encoding="utf-8")
+        if torn:
+            # The last write of an earlier session was cut off; start on a
+            # fresh line so the next record is not glued onto the torn one.
+            handle.write("\n")
+        return handle
+
+    def append_to_month(self, month: str, lines: list[str]) -> bool:
+        """Append records of an earlier month straight to that month's file
+        (used by imports, so the live file keeps holding this month only)."""
+        target = self.month_file(month)
+        try:
+            with target.open("a", encoding="utf-8") as f:
+                f.write("".join(line + "\n" for line in lines))
+            return True
+        except OSError:
+            return False
+
+    def _close_handle(self) -> None:
+        if self._handle is not None:
+            try:
+                self._handle.close()
+            except OSError:
+                pass
+            self._handle = None
+
+    def close(self) -> None:
+        with self._lock:
+            self._close_handle()
+
+    # -- monthly rotation ---------------------------------------------------
+    def rotate(self, month: str) -> None:
+        """Move every run started before ``month`` out of the live file.
+
+        Only the first record of the live file is read to decide: the live
+        file is written in time order and imports of earlier months go to
+        their month files, so if the first record is from this month, all of
+        them are. A full split happens once per month."""
+        with self._lock:
+            if self._handle is not None or not self._first_record_before(month):
+                return
+            try:
+                with self.live.open("rb") as f:
+                    lines = f.readlines()
+            except OSError:
+                return
+            keep, moved = self._split(lines, month)
+            if moved:
+                self._move(keep, moved)
+
+    def _first_record_before(self, month: str) -> bool:
+        try:
+            with self.live.open("rb") as f:
+                # A damaged head is skipped, but a file of nothing but damage
+                # must not be scanned to the end on every start.
+                for _, line in zip(range(1000), f):
+                    obj = _json_object(line)
+                    if obj is None:
+                        continue
+                    first = _month_of(obj.get("started_at") or obj.get("timestamp"))
+                    if first is not None:
+                        return first < month
+        except OSError:
+            pass
+        return False
+
+    @staticmethod
+    def _split(lines: list[bytes], month: str
+               ) -> tuple[list[bytes], dict[str, list[bytes]]]:
+        """Group lines by the month their run started. A measurement follows
+        its run; one whose run record is missing goes by its own timestamp.
+        Lines that are not records stay next to the line before them."""
+        run_month: dict[str, str] = {}
+        keep: list[bytes] = []
+        moved: dict[str, list[bytes]] = {}
+        here = month
+        for line in lines:
+            if not line.endswith(b"\n"):
+                line += b"\n"
+            obj = _json_object(line)
+            if obj is not None:
+                run_id = obj.get("run_id")
+                if obj.get("kind") == "run":
+                    found = _month_of(obj.get("started_at"))
+                    if found is not None and isinstance(run_id, str):
+                        run_month[run_id] = found
+                else:
+                    found = (run_month.get(run_id) if isinstance(run_id, str) else None) \
+                        or _month_of(obj.get("timestamp"))
+                if found is not None:
+                    here = found
+            if here < month:
+                moved.setdefault(here, []).append(line)
+            else:
+                keep.append(line)
+        return keep, moved
+
+    def _move(self, keep: list[bytes], moved: dict[str, list[bytes]]) -> None:
+        """Append the old lines to their month files, then replace the live
+        file with what stays. If the replace fails, the appends are undone,
+        so no reading is ever stored twice or lost."""
+        grown: dict[Path, Optional[int]] = {}
+        tmp: Optional[str] = None
+        try:
+            for old_month, chunk in sorted(moved.items()):
+                target = self.month_file(old_month)
+                size = target.stat().st_size if target.is_file() else None
+                grown[target] = size
+                with target.open("ab") as f:
+                    if size and not _ends_with_newline(target):
+                        f.write(b"\n")
+                    f.writelines(chunk)
+            fd, tmp = tempfile.mkstemp(prefix=".history.", suffix=".tmp",
+                                       dir=str(self.live.parent))
+            with os.fdopen(fd, "wb") as f:
+                f.writelines(keep)
+            os.replace(tmp, self.live)
+            tmp = None
+        except OSError:
+            for target, size in grown.items():
+                try:
+                    if size is None:
+                        target.unlink()
+                    else:
+                        os.truncate(target, size)
+                except OSError:
+                    pass
+        finally:
+            if tmp is not None:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+
+
+class MeasurementLog:
+    """The measurement history: this session's runs in memory, earlier
+    sessions on disk.
+
+    Without a ``path`` everything stays in memory. With one, every run and
+    measurement is also appended to the history files (see HistoryFiles), and
+    the history of earlier sessions is read from them on demand, by exports
+    and imports, never at start-up.
+
+    All methods run on the UI thread. The lock keeps the in-memory state
+    consistent should a reading ever arrive from another thread.
     """
 
     def __init__(self, path: Optional[Path | str] = None):
         self._lock = threading.Lock()
+        # This session's runs (started or imported here) and measurements.
+        # Records of earlier sessions stay on disk.
         self._runs: dict[str, RunMeta] = {}
         self._measurements: list[Measurement] = []
         self._current_run_id: Optional[str] = None
@@ -143,56 +488,58 @@ class MeasurementLog:
         # on disk.
         self._persisted_runs: set[str] = set()
         self._path = Path(path) if path else None
-        self._load()
+        self._files = HistoryFiles(self._path) if self._path else None
+        if self._files is not None:
+            self._files.rotate(current_month())
 
-    # -- persistence ------------------------------------------------------
-    def _load(self) -> None:
-        if not self._path or not self._path.exists():
-            return
-        try:
-            # errors="replace": one stray non-UTF-8 byte must not make the
-            # whole log (and app start-up) fail; the damaged line simply
-            # fails to parse and is skipped below.
-            with self._path.open("r", encoding="utf-8", errors="replace") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        obj = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if not isinstance(obj, dict):
-                        continue
-                    kind = obj.pop("kind", None)
-                    if kind == "run":
-                        try:
-                            run = RunMeta(**obj)
-                        except TypeError:
-                            continue
-                        self._runs[run.run_id] = run
-                        # Already on disk — don't re-write it next time a
-                        # measurement for this run is added in-session.
-                        self._persisted_runs.add(run.run_id)
-                    elif kind == "measurement":
-                        try:
-                            m = Measurement(**obj)
-                        except TypeError:
-                            continue
-                        self._measurements.append(m)
-        except OSError:
-            # Logging is best-effort; never block the app on disk issues.
-            pass
+    @property
+    def path(self) -> Optional[Path]:
+        """The live history file, or None when the history is in memory only."""
+        return self._path
 
-    def _append_line(self, line: str) -> None:
-        if not self._path:
+    def close(self) -> None:
+        """Release the history file. Safe to call more than once; a later
+        append reopens it."""
+        if self._files is not None:
+            self._files.close()
+
+    # -- reading the history ---------------------------------------------
+    def _disk_records(self, skip_runs: set[str], runs_only: bool = False):
+        """Validated records of earlier sessions, oldest first. Records of
+        ``skip_runs`` (this session's runs, which are kept in memory and may
+        carry newer metadata) are left out."""
+        if self._files is None:
             return
-        try:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            with self._path.open("a", encoding="utf-8") as f:
-                f.write(line + "\n")
-        except OSError:
-            pass
+        for line in self._files.lines():
+            # Measurement lines vastly outnumber run lines; a run scan skips
+            # them before parsing. Every run record contains this token.
+            if runs_only and b'"run"' not in line:
+                continue
+            rec = parse_record(line)
+            if rec is None or rec.run_id in skip_runs:
+                continue
+            if runs_only and not isinstance(rec, RunMeta):
+                continue
+            yield rec
+
+    def _session(self) -> tuple[dict[str, RunMeta], list[Measurement]]:
+        with self._lock:
+            return dict(self._runs), list(self._measurements)
+
+    def _all_runs(self) -> dict[str, RunMeta]:
+        session_runs, _ = self._session()
+        runs: dict[str, RunMeta] = {}
+        for run in self._disk_records(set(session_runs), runs_only=True):
+            runs[run.run_id] = run
+        runs.update(session_runs)
+        return runs
+
+    def _all_measurements(self) -> Iterator[Measurement]:
+        session_runs, session_measurements = self._session()
+        for rec in self._disk_records(set(session_runs)):
+            if isinstance(rec, Measurement):
+                yield rec
+        yield from session_measurements
 
     # -- run management ---------------------------------------------------
     def start_run(self, instrument: str, a4_hz: float,
@@ -274,11 +621,8 @@ class MeasurementLog:
         # Snapshot the run + measurement JSONL strings inside the lock so a
         # concurrent set_current_run_metadata() can't mutate maker/model/
         # label between the snapshot and the disk write. File IO stays
-        # outside the lock to keep the audio callback non-blocking on slow
-        # disks. (Wave-2 race fix: previously `run` was captured under the
-        # lock but `run.to_jsonl()` ran without the lock, so a metadata
-        # write landing in between produced an on-disk record with the
-        # new fields but the timing of the old run-open.)
+        # outside the lock so a slow disk never holds up a reader of the
+        # in-memory state.
         with self._lock:
             run_id = self._current_run_id
             if run_id is None or run_id not in self._runs:
@@ -306,25 +650,30 @@ class MeasurementLog:
             measurement_line = m.to_jsonl()
         # Append the run record on the first measurement so coalesced empty
         # runs leave no disk footprint.
-        if run_line is not None:
-            self._append_line(run_line)
-        self._append_line(measurement_line)
+        if self._files is not None:
+            self._files.append([run_line, measurement_line] if run_line is not None
+                               else [measurement_line])
 
     # -- inspection -------------------------------------------------------
+    # These read the whole history from disk on every call; they serve
+    # exports and dialogs, never the per-reading path.
     def runs(self) -> list[RunMeta]:
-        with self._lock:
-            return sorted(self._runs.values(),
-                          key=lambda r: r.started_at, reverse=True)
+        return sorted(self._all_runs().values(),
+                      key=lambda r: r.started_at, reverse=True)
 
     def instruments(self) -> list[str]:
-        with self._lock:
-            seen = {r.instrument for r in self._runs.values()}
-            seen.update(m.instrument for m in self._measurements)
+        seen = {r.instrument for r in self._all_runs().values()}
+        seen.update(m.instrument for m in self._all_measurements())
         return sorted(seen)
 
     def measurements(self) -> list[Measurement]:
-        with self._lock:
-            return list(self._measurements)
+        return list(self._all_measurements())
+
+    def measurement_count(self) -> int:
+        return sum(1 for _ in self._all_measurements())
+
+    def has_measurements(self) -> bool:
+        return next(self._all_measurements(), None) is not None
 
     # -- import -----------------------------------------------------------
     # Caps to prevent a malicious or accidental gigabyte CSV from blowing
@@ -398,8 +747,7 @@ class MeasurementLog:
                     "CSV header does not match a known raw export format. "
                     f"Got {header!r}.")
 
-            with self._lock:
-                existing_runs = set(self._runs.keys())
+            existing_runs = set(self._all_runs())
 
             new_runs: dict[str, RunMeta] = {}
             new_measurements: list[Measurement] = []
@@ -444,22 +792,8 @@ class MeasurementLog:
                     skipped += 1
                     continue
 
-                # Validate numeric ranges. float() happily parses 'inf' / 'nan'
-                # / '1e400', and int() any magnitude, so a corrupt or crafted
-                # CSV could poison the log: a non-finite cents makes the run's
-                # mean/sigma NaN, and an out-of-range MIDI breaks note naming +
-                # table-cell indexing. Each range test also rejects NaN/inf (all
-                # comparisons against them are False), so it's a single guard.
-                if not (1.0 <= a4_hz <= 20000.0):          # plausible concert A4
-                    skipped += 1
-                    continue
-                if not (1.0 <= freq_hz <= 20000.0):        # audible, finite
-                    skipped += 1
-                    continue
-                if not (-100000.0 <= cents <= 100000.0):   # finite deviation
-                    skipped += 1
-                    continue
-                if not (0 <= midi_sounding <= 127 and 0 <= midi_fingered <= 127):
+                if not plausible_reading(a4_hz, midi_sounding, midi_fingered,
+                                         cents, freq_hz):
                     skipped += 1
                     continue
 
@@ -501,19 +835,30 @@ class MeasurementLog:
                 self._runs[run.run_id] = run
                 self._persisted_runs.add(run.run_id)
             self._measurements.extend(new_measurements)
-        # Bulk-append: a 50k-row import opening the JSONL 50k times is wasteful
-        # and slow on Windows. One open() covers the whole batch.
-        if self._path and (new_runs or new_measurements):
-            try:
-                self._path.parent.mkdir(parents=True, exist_ok=True)
-                with self._path.open("a", encoding="utf-8") as f:
-                    for run in new_runs.values():
-                        f.write(run.to_jsonl() + "\n")
-                    for m in new_measurements:
-                        f.write(m.to_jsonl() + "\n")
-            except OSError:
-                pass
+        if self._files is not None and new_runs:
+            self._persist_imported(new_runs, new_measurements)
         return (len(new_runs), len(new_measurements), skipped)
+
+    def _persist_imported(self, runs: dict[str, RunMeta],
+                          measurements: list[Measurement]) -> None:
+        """Write imported runs to the file of the month each started in, so
+        the live file keeps holding this month only. One write per file: a
+        50k-row import must not open the history 50k times."""
+        this_month = current_month()
+        by_month: dict[str, list[str]] = {}
+        month_of_run: dict[str, str] = {}
+        for run in runs.values():
+            month = _month_of(run.started_at) or this_month
+            month = month if month < this_month else this_month
+            month_of_run[run.run_id] = month
+            by_month.setdefault(month, []).append(run.to_jsonl())
+        for m in measurements:
+            by_month[month_of_run[m.run_id]].append(m.to_jsonl())
+        for month, lines in sorted(by_month.items()):
+            if month == this_month:
+                self._files.append(lines)
+            else:
+                self._files.append_to_month(month, lines)
 
     # -- export -----------------------------------------------------------
     SLICE_MODES = (
@@ -539,38 +884,55 @@ class MeasurementLog:
         if mode == "instrument_avg" and not instrument:
             raise ValueError("instrument_avg mode requires an instrument")
 
-        with self._lock:
-            measurements = list(self._measurements)
-            runs = dict(self._runs)
-
+        # The history is streamed: the writers make one pass over the
+        # measurements, and only the aggregates are held in memory.
+        runs = self._all_runs()
+        measurements: Iterable[Measurement] = self._all_measurements()
         if run_id is not None:
-            measurements = [m for m in measurements if m.run_id == run_id]
+            measurements = (m for m in measurements if m.run_id == run_id)
         if instrument is not None:
-            measurements = [m for m in measurements
-                            if m.instrument == instrument]
+            measurements = (m for m in measurements
+                            if m.instrument == instrument)
         if nickname is not None:
             keep_ids = {rid for rid, r in runs.items() if r.label == nickname}
-            measurements = [m for m in measurements if m.run_id in keep_ids]
+            measurements = (m for m in measurements if m.run_id in keep_ids)
 
         path = Path(path)
-        with path.open("w", encoding="utf-8", newline="") as f:
-            w = csv.writer(f)
-            if mode == "raw":
-                return _write_raw(w, measurements, runs)
-            if mode == "per_run_note":
-                return _write_per_run_note(w, measurements, runs)
-            if mode == "per_instrument_note":
-                return _write_per_instrument_note(w, measurements, runs)
-            if mode == "per_nickname_note":
-                return _write_per_nickname_note(w, measurements, runs)
-            if mode == "instrument_avg":
-                return _write_instrument_avg(w, measurements, instrument)
-            return _write_overall(w, measurements)
+        # Written beside the target and renamed over it, so an export that
+        # fails halfway leaves the previous file as it was. Opened with "x"
+        # rather than mkstemp so the file gets the user's normal permissions.
+        tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex[:8]}.tmp")
+        try:
+            with tmp.open("x", encoding="utf-8", newline="") as f:
+                n = _write_slice(csv.writer(f), mode, measurements, runs, instrument)
+            os.replace(tmp, path)
+        except BaseException:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+            raise
+        return n
 
 
 # ---------------------------------------------------------------------------
 # Writers
 # ---------------------------------------------------------------------------
+def _write_slice(w, mode: str, measurements: Iterable[Measurement],
+                 runs: dict[str, RunMeta], instrument: Optional[str]) -> int:
+    if mode == "raw":
+        return _write_raw(w, measurements, runs)
+    if mode == "per_run_note":
+        return _write_per_run_note(w, measurements, runs)
+    if mode == "per_instrument_note":
+        return _write_per_instrument_note(w, measurements, runs)
+    if mode == "per_nickname_note":
+        return _write_per_nickname_note(w, measurements, runs)
+    if mode == "instrument_avg":
+        return _write_instrument_avg(w, measurements, instrument)
+    return _write_overall(w, measurements)
+
+
 def _agg_stats(values: list[float]) -> tuple[float, float, float, float]:
     n = len(values)
     if n == 0:
@@ -584,7 +946,7 @@ def _agg_stats(values: list[float]) -> tuple[float, float, float, float]:
     return mean, std, min(values), max(values)
 
 
-def _write_raw(w, measurements: list[Measurement],
+def _write_raw(w, measurements: Iterable[Measurement],
                runs: dict[str, RunMeta]) -> int:
     w.writerow([
         "timestamp", "run_id", "run_started_at", "instrument", "nickname",
@@ -610,7 +972,7 @@ def _write_raw(w, measurements: list[Measurement],
     return n
 
 
-def _write_per_run_note(w, measurements: list[Measurement],
+def _write_per_run_note(w, measurements: Iterable[Measurement],
                          runs: dict[str, RunMeta]) -> int:
     w.writerow([
         "run_id", "run_started_at", "instrument", "nickname", "a4_hz",
@@ -650,7 +1012,7 @@ def _write_per_run_note(w, measurements: list[Measurement],
     return n_rows
 
 
-def _write_per_instrument_note(w, measurements: list[Measurement],
+def _write_per_instrument_note(w, measurements: Iterable[Measurement],
                                  runs: dict[str, RunMeta]) -> int:
     w.writerow([
         "instrument", "nicknames", "midi_sounding", "sounding_note",
@@ -685,7 +1047,7 @@ def _write_per_instrument_note(w, measurements: list[Measurement],
     return n_rows
 
 
-def _write_per_nickname_note(w, measurements: list[Measurement],
+def _write_per_nickname_note(w, measurements: Iterable[Measurement],
                               runs: dict[str, RunMeta]) -> int:
     """One row per (nickname, note). Runs without a nickname are bucketed
     under an empty-string nickname so they're still visible."""
@@ -721,7 +1083,7 @@ def _write_per_nickname_note(w, measurements: list[Measurement],
     return n_rows
 
 
-def _write_instrument_avg(w, measurements: list[Measurement],
+def _write_instrument_avg(w, measurements: Iterable[Measurement],
                            instrument: str) -> int:
     w.writerow([
         "instrument", "midi_sounding", "sounding_note", "fingered_note",
@@ -749,7 +1111,7 @@ def _write_instrument_avg(w, measurements: list[Measurement],
     return n_rows
 
 
-def _write_overall(w, measurements: list[Measurement]) -> int:
+def _write_overall(w, measurements: Iterable[Measurement]) -> int:
     w.writerow([
         "midi_sounding", "sounding_note",
         "instruments", "runs", "n",

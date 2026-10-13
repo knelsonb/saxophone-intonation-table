@@ -20,7 +20,8 @@ the list below is the contract the rewrite must keep or update here:
     * data directory ``~/.intonation_analyzer`` (resolved from HOME when the
       window is built, ``sax_paths.AppPaths.from_environment``) holding
       ``config.json``, ``custom_instruments.json``, ``instrument_ranges.json``,
-      ``log.jsonl``.
+      ``log.jsonl`` (this month's history; earlier months beside it as
+      ``log-YYYY-MM.jsonl``); ``MeasurementLog.path`` is the live history file.
   Time
     * QTimers on the window (``_device_poll``, ``_refresh_timer``,
       ``_deck_pump_timer``, ``_deck_pulse_timer``) and on the tuner widget are
@@ -772,7 +773,7 @@ class AppDriver:
         return len({m.run_id for m in meas}), len(meas)
 
     def history_path(self) -> Optional[Path]:
-        p = self.win._log._path
+        p = self.win._log.path
         return Path(p) if p else None
 
     # ================================================================== metronome

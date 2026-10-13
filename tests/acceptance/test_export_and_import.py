@@ -309,8 +309,6 @@ def test_one_stray_byte_does_not_garble_the_names_in_the_rest_of_the_file(
         assert "Müller Bariton" in nicknames
 
 
-@pytest.mark.xfail(strict=True, reason="Sauron-12: readings whose fingered note is above "
-                                       "MIDI 127 are exported but skipped on import")
 def test_every_reading_from_a_custom_horn_survives_export_and_import(make_app, tmp_path,
                                                                      host, clock):
     """A custom instrument three octaves down: what I export is what I get back."""
@@ -516,8 +514,6 @@ def test_a_damaged_history_log_still_loads_every_good_line(make_app):
     assert app.history_counts == (runs, measured)
 
 
-@pytest.mark.xfail(strict=True, reason="Aragorn-5: history records with mistyped fields "
-                                       "load and then crash the CSV export")
 def test_history_records_with_wrong_field_types_are_skipped_not_fatal(make_app):
     """A run with no start time and a reading whose cents is text are dropped; the rest
     of my history exports exactly as before."""
@@ -533,8 +529,6 @@ def test_history_records_with_wrong_field_types_are_skipped_not_fatal(make_app):
     assert_golden(app.export.csv("raw"), "expected/csv_raw.csv")
 
 
-@pytest.mark.xfail(strict=True, reason="Aragorn-7: CSV export truncates the target first, "
-                                       "so a failure halfway destroys the previous file")
 def test_a_csv_export_that_fails_halfway_leaves_my_previous_file_intact(make_app):
     """Saving over last week's export: either the new file is complete or the old one
     is untouched, never half of the new one."""

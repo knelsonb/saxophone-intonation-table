@@ -5318,6 +5318,7 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         self._engine.stop()
+        self._log.close()
         ev.accept()
 
     def _save_session_state(self) -> None:
