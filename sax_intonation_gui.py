@@ -9,6 +9,7 @@ Starten:
     python3 sax_intonation_gui.py
 """
 
+import csv
 import os
 import sys
 import math
@@ -2996,6 +2997,25 @@ class MainWindow(QMainWindow):
                 pass
         return bool(getattr(self._engine, 'output_running', False))
 
+    def _sync_output_rate_consumers(self) -> None:
+        """Push the open output stream's rate and block size to the drone and
+        pitch pipes. Both synthesise at a rate fixed when their sources are
+        built; a mismatch with the stream shifts their pitch by
+        12*log2(stream/source) semitones."""
+        sr = int(getattr(self._engine, 'output_samplerate', 0) or 0)
+        if sr <= 0:
+            return
+        mixer = getattr(self._engine, 'mixer', None)
+        mb = int(getattr(mixer, 'max_block', 0) or 0) or None
+        for ctrl, method, args in (
+                (getattr(self, '_drone_ctrl', None), 'set_samplerate', (sr,)),
+                (getattr(self, '_pipes_ctrl', None), 'set_output', (sr, mb))):
+            if ctrl is not None and hasattr(ctrl, method):
+                try:
+                    getattr(ctrl, method)(*args)
+                except Exception:
+                    pass
+
     def _reopen_output_bracketed(self, sel: 'DeviceSelection') -> None:
         """Open a (different) output device, keeping a running metronome PHASE-
         CORRECT across the switch (Option B). open_output_device() calls
@@ -3015,6 +3035,8 @@ class MainWindow(QMainWindow):
                 self._engine.open_output_device(sel)   # calls mixer.reset_clock()
             except Exception:
                 pass
+        if getattr(self._engine, 'output_running', False):
+            self._sync_output_rate_consumers()
         if not was_running:
             return
         sr = int(getattr(self._engine, 'output_samplerate', 0) or 0)
@@ -4107,6 +4129,7 @@ class MainWindow(QMainWindow):
             self._sync_pipe_btns()
             return
         self._pipes_status.setVisible(False)
+        self._sync_output_rate_consumers()
         self._pipes_ctrl.toggle(midi)          # fires on_pipes_state_changed
 
     def _stop_pitch_pipes(self) -> None:
@@ -5065,7 +5088,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, self._t('err_title'),
                                 self._t('csv_import_badhdr'))
             return
-        except OSError as e:
+        except (OSError, csv.Error) as e:
             QMessageBox.critical(self, self._t('err_title'), str(e))
             return
 

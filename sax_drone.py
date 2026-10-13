@@ -153,7 +153,7 @@ def resolve_drone_voice(voice_id) -> int:
                 return n
         except ValueError:
             pass
-    if s.isdigit():
+    if s.isdecimal():
         n = int(s)
         if 0 <= n <= 127:
             return n

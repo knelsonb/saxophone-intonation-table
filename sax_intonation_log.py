@@ -26,6 +26,7 @@ GUI knows; callers therefore supply both MIDI numbers to `add_measurement`.
 from __future__ import annotations
 
 import csv
+import io
 import datetime
 import json
 import math
@@ -79,6 +80,17 @@ class Measurement:
 # ---------------------------------------------------------------------------
 # Log
 # ---------------------------------------------------------------------------
+
+def _read_csv_text(path: Path) -> str:
+    """Decode an import file. UTF-8 (with or without the BOM Excel adds) is
+    tried first; a file that is not valid UTF-8 is read as Windows-1252, the
+    encoding Excel uses for "CSV" on Western-European Windows."""
+    raw = path.read_bytes()
+    try:
+        return raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return raw.decode("cp1252", errors="replace")
+
 class MeasurementLog:
     """Thread-safe in-memory log with optional JSONL persistence.
 
@@ -106,7 +118,10 @@ class MeasurementLog:
         if not self._path or not self._path.exists():
             return
         try:
-            with self._path.open("r", encoding="utf-8") as f:
+            # errors="replace": one stray non-UTF-8 byte must not make the
+            # whole log (and app start-up) fail; the damaged line simply
+            # fails to parse and is skipped below.
+            with self._path.open("r", encoding="utf-8", errors="replace") as f:
                 for line in f:
                     line = line.strip()
                     if not line:
@@ -114,6 +129,8 @@ class MeasurementLog:
                     try:
                         obj = json.loads(line)
                     except json.JSONDecodeError:
+                        continue
+                    if not isinstance(obj, dict):
                         continue
                     kind = obj.pop("kind", None)
                     if kind == "run":
@@ -328,7 +345,7 @@ class MeasurementLog:
         # and the header-match check raises. Symmetric: export still
         # writes plain utf-8 (no BOM) -- be conservative in what we
         # send, liberal in what we accept.
-        with path.open("r", encoding="utf-8-sig", newline="") as f:
+        with io.StringIO(_read_csv_text(path), newline="") as f:
             reader = csv.reader(f)
             try:
                 header = tuple(next(reader))

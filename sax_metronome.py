@@ -302,6 +302,10 @@ class MetronomeController:
         self._on_state_changed = on_state_changed
 
         self._click = ClickSource(self._samplerate, self.volume)
+        # Bumped on every start/stop. A beat event scheduled by an earlier run
+        # checks it and does nothing, so a quick stop/start cannot leave the old
+        # run's pending beat firing into (and doubling) the new chain.
+        self._run_gen = 0
         self._running = False
         self._taps: List[float] = []
 
@@ -384,6 +388,7 @@ class MetronomeController:
         if self._running:
             return
         self._running = True
+        self._run_gen += 1
         self._click.arm()              # clear any pending stop before re-register
         self._mixer.register(self._click)
         self._anchor = int(self._mixer.clock)
@@ -397,6 +402,7 @@ class MetronomeController:
         if not self._running:
             return
         self._running = False
+        self._run_gen += 1
         # Don't hard-unregister: that truncates an in-flight click burst (a
         # pop, up to ~0.5 amplitude mid-decay). Request stop instead — the burst
         # plays out, then the Mixer reaps the source once it reports finished.
@@ -446,9 +452,10 @@ class MetronomeController:
         onset = self._onset(beat_index)
         accent = self.is_accent(beat_index)
 
-        def event(offset: int, bi: int = beat_index, ac: bool = accent) -> None:
+        def event(offset: int, bi: int = beat_index, ac: bool = accent,
+                  gen: int = self._run_gen) -> None:
             # Fires on the render thread at the click's intra-block offset.
-            if not self._running:
+            if not self._running or gen != self._run_gen:
                 return
             self._beat = bi            # remember where we are for resync()
             self._click.trigger(ac, offset)

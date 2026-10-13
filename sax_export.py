@@ -33,6 +33,7 @@
 from __future__ import annotations
 
 import datetime
+from xml.sax.saxutils import escape as _xml_escape
 from typing import TYPE_CHECKING, Callable
 
 from PyQt6.QtCore import Qt
@@ -126,7 +127,9 @@ class ExportController:
             '-' * 62,
         ]
         with w._lock:
-            items = sorted(self._get_stats().items())
+            # Rows seeded for the instrument range have n == 0 until played;
+            # exports list measured notes only.
+            items = sorted((k, st) for k, st in self._get_stats().items() if st.n > 0)
         sr_now = w._engine_sample_rate()
         a4 = self._engine.a4
         for midi_kl, st in items:
@@ -187,9 +190,9 @@ class ExportController:
         story.append(Paragraph(self._t('pdf_title'), ts_title))
         story.append(Paragraph(self._t(f'instr_long_{instrument}'), ts_sub))
         if maker:
-            story.append(Paragraph(self._t('pdf_maker', maker=maker), ts_sub))
+            story.append(Paragraph(self._t('pdf_maker', maker=_xml_escape(maker)), ts_sub))
         if model:
-            story.append(Paragraph(self._t('pdf_model', model=model), ts_sub))
+            story.append(Paragraph(self._t('pdf_model', model=_xml_escape(model)), ts_sub))
         story.append(Paragraph(
             (self._t('pdf_transp', note=CHROMA[transp % 12], n=transp)
              if transp else self._t('pdf_no_transp')), ts_sub))
@@ -199,7 +202,9 @@ class ExportController:
         story.append(Spacer(1, 10*mm))
 
         with w._lock:
-            items = sorted(self._get_stats().items())
+            # Rows seeded for the instrument range have n == 0 until played;
+            # exports list measured notes only.
+            items = sorted((k, st) for k, st in self._get_stats().items() if st.n > 0)
 
         if not items:
             story.append(Paragraph(self._t('pdf_no_data'), styles['Normal']))
@@ -308,7 +313,9 @@ class ExportController:
         )
         w = self._w
         with w._lock:
-            items = sorted(self._get_stats().items())
+            # Rows seeded for the instrument range have n == 0 until played;
+            # exports list measured notes only.
+            items = sorted((k, st) for k, st in self._get_stats().items() if st.n > 0)
 
         if not items:
             QMessageBox.information(w, self._t('export_title'),

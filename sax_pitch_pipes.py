@@ -191,6 +191,25 @@ class PitchPipesController:
         # midi -> live source (sounding or releasing).
         self._pads: Dict[int, PitchPipeSource] = {}
 
+    def set_output(self, samplerate: int, max_block: Optional[int] = None) -> None:
+        """Adopt the current output stream's rate and block size.
+
+        Pads bind both at construction, and the controller is created before
+        any output stream exists, so the GUI calls this once the stream is open
+        (and after a device switch). A change releases sounding pads at once:
+        a pad built for the old rate would play at the wrong pitch."""
+        sr = int(samplerate)
+        mb = int(max_block) if max_block else int(
+            getattr(self._mixer, "max_block", self._max_block))
+        if sr <= 0 or (sr == self._samplerate and mb == self._max_block):
+            return
+        self._samplerate, self._max_block = sr, mb
+        if self._pads:
+            for src in self._pads.values():
+                self._mixer.unregister(src)
+            self._pads.clear()
+            self._emit()
+
     def _emit(self) -> None:
         cb = self._on_state_changed
         if cb is not None:

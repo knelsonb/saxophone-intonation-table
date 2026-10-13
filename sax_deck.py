@@ -594,7 +594,11 @@ class DeckController:
         try:
             os.makedirs(self._scratch_dir, exist_ok=True)
             path = os.path.join(self._scratch_dir, "last_take.wav")
-            write_wav(path, self._take, self._take_sr)
+            # Write beside the target, then swap in: a failed write leaves
+            # the previous take intact instead of a truncated file.
+            tmp = path + ".tmp"
+            write_wav(tmp, self._take, self._take_sr)
+            os.replace(tmp, path)
             self._last_take_path = path
         except Exception:
             pass

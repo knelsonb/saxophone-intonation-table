@@ -241,12 +241,18 @@ class InstrumentController:
             suffix += 1
         register_custom(key, transp, name, name)
         _rebuild_transp_map()
-        # Persist for next session.
-        customs = sax_config.load_customs()
-        customs = [c for c in customs if c.key != key]
-        customs.append(sax_config.CustomInstrument(
-            key=key, transp=transp, name_de=name, name_en=name))
-        sax_config.save_customs(customs)
+        # Persist for next session. Strict load: if the existing file can't be
+        # read right now, keep the instrument for this session only rather
+        # than rewriting the file from an empty list.
+        try:
+            customs = sax_config.load_customs(strict=True)
+        except OSError:
+            customs = None
+        if customs is not None:
+            customs = [c for c in customs if c.key != key]
+            customs.append(sax_config.CustomInstrument(
+                key=key, transp=transp, name_de=name, name_en=name))
+            sax_config.save_customs(customs)
         # Refresh combos and select the new instrument.
         lang = self._get_lang()
         self._family_combo.blockSignals(True)

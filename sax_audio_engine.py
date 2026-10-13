@@ -1436,6 +1436,11 @@ class AudioEngine:
         out_block = max(256, int(round(samplerate * OUT_BLOCK_MS / 1000.0)))
         # Size the mixer to the actual block so its zero-alloc fast path is
         # armed, and restart the sample clock for the new stream.
+        # A registered test tone was built for the previous stream's rate and
+        # block size; it would play at the wrong pitch on the new one.
+        if self._test_tone_handle is not None:
+            self.mixer.unregister(self._test_tone_handle)
+            self._test_tone_handle = None
         self.mixer.resize(out_block)
         self.mixer.reset_clock(0)
         result: dict = {'stream': None, 'err_kind': None, 'err_msg': '',

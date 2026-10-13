@@ -307,13 +307,26 @@ def _as_str(v, default: str) -> str:
 # ---------------------------------------------------------------------------
 # Config load / save
 # ---------------------------------------------------------------------------
+# Set when config.json exists but could not be READ (permissions, a Windows
+# sharing lock). save_config() then leaves the file alone, so a transient read
+# failure cannot replace the user's settings with defaults on close. Corrupt
+# content is different: it is unrecoverable, so defaults are saved over it.
+_config_unreadable = False
+
+
 def load_config() -> AppConfig:
+    global _config_unreadable
+    _config_unreadable = False
     if not CONFIG_PATH.exists():
         return AppConfig()
     try:
         with CONFIG_PATH.open("r", encoding="utf-8") as f:
             data = json.load(f)
-    except (OSError, json.JSONDecodeError):
+    except OSError:
+        _config_unreadable = True
+        return AppConfig()
+    except ValueError:
+        # JSONDecodeError and UnicodeDecodeError are both ValueErrors.
         return AppConfig()
     if not isinstance(data, dict):
         return AppConfig()
@@ -323,7 +336,9 @@ def load_config() -> AppConfig:
         persistence_enabled=_as_bool(data.get("persistence_enabled"), False),
         log_path=_as_str(data.get("log_path"), ""),
         allow_out_of_range=_as_bool(data.get("allow_out_of_range"), True),
-        matrix_extra_octaves=_as_int(data.get("matrix_extra_octaves"), 0),
+        # Upper bound keeps a hand-edited value from allocating millions of
+        # table cells; 4 extra octaves already exceeds any instrument.
+        matrix_extra_octaves=max(0, min(4, _as_int(data.get("matrix_extra_octaves"), 0))),
         layout_mode_preference=_as_str(
             data.get("layout_mode_preference"), "auto"),
         filter_mode=_as_str(data.get("filter_mode"), "normal"),
@@ -375,13 +390,21 @@ def save_config(cfg: AppConfig) -> None:
     so two app instances racing on shutdown can't leave a half-written
     JSON file behind. The temp file is created in CONFIG_DIR so
     os.replace stays a same-volume rename on Windows."""
+    if _config_unreadable:
+        return
     atomic_write_json(CONFIG_PATH, asdict(cfg), tmp_prefix=".config.")
 
 
 # ---------------------------------------------------------------------------
 # Custom instruments
 # ---------------------------------------------------------------------------
-def load_customs() -> list[CustomInstrument]:
+def load_customs(strict: bool = False) -> list[CustomInstrument]:
+    """Load saved custom instruments.
+
+    With ``strict=True`` a read failure (OSError) is raised instead of
+    returning ``[]``. Callers that rewrite the file from the loaded list must
+    use strict mode, otherwise one failed read followed by a save would delete
+    every saved instrument."""
     if not CUSTOMS_PATH.exists():
         return []
     try:
@@ -403,10 +426,15 @@ def load_customs() -> list[CustomInstrument]:
                     name_en=str(entry.get("name_en", entry.get("name", entry["key"]))),
                     nickname=str(entry.get("nickname", "")),
                 ))
-            except (KeyError, TypeError, ValueError):
+            except (KeyError, TypeError, ValueError, OverflowError):
                 continue
         return out
-    except (OSError, json.JSONDecodeError):
+    except OSError:
+        if strict:
+            raise
+        return []
+    except ValueError:
+        # Corrupt JSON or undecodable bytes: nothing recoverable to keep.
         return []
 
 
