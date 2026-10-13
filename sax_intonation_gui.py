@@ -4445,13 +4445,6 @@ class MainWindow(QMainWindow):
             self._table_ctrl.configure_for_mode(desired)
         self._table_ctrl.refresh()
 
-    def _matrix_octave_range(self) -> tuple[int, int]:
-        """Wrapper kept so the table context-menu code keeps a single
-        call site for resolving the matrix's current octave range.
-        Delegates to TableController, where the real implementation
-        and the half-step-beyond logic now live."""
-        return self._table_ctrl._matrix_octave_range()
-
     def _desired_layout_mode(self) -> str:
         """User-preference first; falls back to a width-driven auto pick.
         In auto mode, matrix is used as long as the viewport can fit at
@@ -5059,13 +5052,15 @@ class MainWindow(QMainWindow):
 
         if self._layout_mode == 'matrix':
             # Matrix mode: map (row, col) to the sounding MIDI for the
-            # clicked cell. Row = chroma index (0..11), col = octave from
-            # the current octave range.
+            # clicked cell. Row = chroma index (0..11), col = octave within
+            # the span the columns were painted for.
             col = self._table.columnAt(pos.x())
             if col < 0:
                 return
-            lo_oct, _hi_oct = self._matrix_octave_range()
+            lo_oct, hi_oct = self._table_ctrl.painted_octave_span()
             oct_ = lo_oct + col
+            if oct_ > hi_oct:
+                return
             midi_visible = (oct_ + 1) * 12 + row
             if self.display == 'griff':
                 midi_kl = midi_visible + transp

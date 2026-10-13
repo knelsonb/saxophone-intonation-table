@@ -90,12 +90,11 @@ class TableController:
         # bails silently in that window so a stray pre-configure tick
         # never crashes.
         self._current_mode: str | None = None
-        # Matrix mode also caches the resolved octave range that
-        # configure_for_mode() set up.  refresh_matrix() reads it back
-        # rather than recomputing — and a range change between configure
-        # and refresh would mean the cell cache is stale anyway, which
-        # the caller (MainWindow._refresh_table) handles by reconfiguring
-        # whenever the layout flips.
+        # Matrix mode also caches the octave span configure_for_mode() laid
+        # the columns out for. refresh() compares it with the live span on
+        # every tick and reconfigures when they differ (display toggle,
+        # instrument or range change, a played note outside the span), so
+        # the paint and the right-click mapping always use the painted span.
         self._matrix_lo_oct: int = 0
         self._matrix_hi_oct: int = -1
 
@@ -185,9 +184,18 @@ class TableController:
         if self._current_mode is None:
             return
         if self._current_mode == 'matrix':
+            if self._matrix_octave_range() != self.painted_octave_span():
+                self.configure_for_mode('matrix')
             self._refresh_matrix()
         else:
             self._refresh_single()
+
+    def painted_octave_span(self) -> tuple[int, int]:
+        """(lo_octave, hi_octave) the matrix columns are currently laid out
+        for. Column ``c`` shows octave ``lo_octave + c``. Code that maps a
+        clicked column back to a note must use this span, which is the one
+        on screen, rather than the live range."""
+        return (self._matrix_lo_oct, self._matrix_hi_oct)
 
     # -------------------------------------------------------------------------
     # Matrix range helpers — public on the controller so MainWindow's
@@ -403,10 +411,9 @@ class TableController:
         transp = TRANSP_MAP.get(instrument, 0)
         disp_griff = (display == 'griff')
         lo_f, hi_f = sax_instruments.fingered_range(instrument)
-        # Use the range cached by configure_for_mode so the cell layout
-        # and the per-cell math line up.  If the range has drifted
-        # (e.g. a played-note expansion), the next layout-mode tick on
-        # MainWindow's side will reconfigure and the cache will refresh.
+        # Use the span cached by configure_for_mode so the cell layout and
+        # the per-cell math line up. refresh() has already reconfigured if
+        # the live span moved away from it.
         lo_oct = self._matrix_lo_oct
         hi_oct = self._matrix_hi_oct
         if hi_oct < lo_oct:
