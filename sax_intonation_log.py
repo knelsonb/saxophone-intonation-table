@@ -14,10 +14,11 @@ Run semantics
 -------------
 A "run" is a contiguous span of recording with one instrument and one concert
 pitch A. The GUI opens a new run on app start, on instrument change, on A4
-change, and when recording resumes from a pause. Each run records its
-instrument and A4 at the moment it opens; measurements added to that run
-inherit those values, so an in-flight audio callback arriving milliseconds
-after a UI change still attributes to the run that was active when it fired.
+change, on nickname change, and when recording resumes from a pause. Each run
+records its instrument, A4 and nickname at the moment it opens; measurements
+added to that run inherit those values, so an in-flight audio callback arriving
+milliseconds after a UI change still attributes to the run that was active when
+it fired.
 
 Note names are universal music theory and live in this module. Mapping from
 sounding to fingered MIDI requires per-instrument transposition, which the
@@ -33,7 +34,7 @@ import json
 import math
 import threading
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Optional
 
@@ -200,8 +201,13 @@ class MeasurementLog:
             self._current_run_count = 0
 
     def set_current_run_metadata(self, *, maker: str = "",
-                                  model: str = "", label: str = "") -> None:
+                                  model: str = "",
+                                  label: Optional[str] = None) -> None:
         """Stamp maker/model/label onto the currently-active run, in memory.
+
+        An empty maker or model leaves the stored value alone. ``label`` uses
+        ``None`` for "leave alone" so that an empty string can clear it: a
+        user who deletes the nickname expects the run to lose its label.
 
         Persistence is deliberately not re-issued (the original `run` record
         is already on disk). The in-memory copy is what feeds CSV export, so
@@ -216,8 +222,14 @@ class MeasurementLog:
                 run.maker = maker
             if model:
                 run.model = model
-            if label:
+            if label is not None:
                 run.label = label
+
+    def current_run(self) -> Optional[RunMeta]:
+        """A copy of the active run's metadata, or None when no run is open."""
+        with self._lock:
+            run = self._runs.get(self._current_run_id or "")
+            return replace(run) if run is not None else None
 
     # -- measurement intake ----------------------------------------------
     def add_measurement(self, midi_sounding: int, midi_fingered: int,

@@ -2219,9 +2219,9 @@ class MainWindow(QMainWindow):
         env_path = os.environ.get('SAX_INTONATION_LOG_PATH')
         log_path = env_path if env_path else self._cfg.effective_log_path()
         self._log = MeasurementLog(path=log_path or None)
+        # The first run opens after _restore_session_state below, so it is
+        # stamped with the restored A4 and nickname.
         if AUDIO_OK:
-            self._log.start_run(instrument=self.instrument,
-                                a4_hz=self._engine.a4)
             self._engine.signals.note_detected.connect(self._on_note)
             self._engine.signals.state_changed.connect(self._on_engine_state)
             self._engine.signals.devices_changed.connect(
@@ -2244,6 +2244,7 @@ class MainWindow(QMainWindow):
             disp_combo=self._disp_combo,
             a4_combo=self._a4_combo,
             lang_combo=self._lang_combo,
+            apply_a4=self._apply_a4,
         )
         # TXT / PDF / CSV / PNG-chart export flows and
         # their helper dialogs live on ExportController. Live values
@@ -2294,6 +2295,10 @@ class MainWindow(QMainWindow):
         # without the controller reaching into table or stats territory.
         self._restore_session_state()
         self._seed_expected_notes()
+        if AUDIO_OK:
+            self._log.start_run(instrument=self.instrument,
+                                a4_hz=self._engine.a4,
+                                label=self._nick_edit.text().strip())
         self._update_record_btn_style()
 
         # Audio-device picker open,
@@ -4537,7 +4542,7 @@ class MainWindow(QMainWindow):
         """Called by InstrumentController after the autotune flow has
         applied a new A4. The autotune body already cleared self.stats
         under the lock; here we refresh the table so the new baseline
-        paints, and retune the drone and pitch pipes to the new A4."""
+        paints. The drone and pitch pipes were retuned by _instr_set_a4."""
         a4 = float(getattr(self._engine, 'a4', 0.0) or 0.0)
         self._seed_expected_notes()
         # New run at the new A4, as _apply_a4 does, so later measurements are
@@ -4546,20 +4551,13 @@ class MainWindow(QMainWindow):
             self._log.start_run(instrument=self.instrument, a4_hz=a4,
                                 label=self._nick_edit.text().strip())
         self._refresh_table()
-        for _c in (getattr(self, '_drone_ctrl', None),
-                   getattr(self, '_pipes_ctrl', None)):
-            if a4 > 0 and _c is not None and hasattr(_c, 'set_a4'):
-                try:
-                    _c.set_a4(a4)
-                except Exception:
-                    pass
 
     def _instr_set_a4(self, hz: float) -> None:
         """Setter callback used by InstrumentController's autotune flow.
         Mirrors the v0.5.x in-line sequence: block the combo's signal so
         _on_a4_changed does NOT fire (the autotune flow does its own
-        stats reset + refresh via on_a4_changed), set the index, set the
-        engine A4."""
+        stats reset + refresh via on_a4_changed), set the index, then push
+        the new A4 to the engine, drone and pitch pipes."""
         hz_int = int(hz)
         _target = hz_int - 430
         for _combo in (getattr(self, '_a4_combo', None),
@@ -4569,7 +4567,21 @@ class MainWindow(QMainWindow):
             _combo.blockSignals(True)
             _combo.setCurrentIndex(_target)
             _combo.blockSignals(False)
-        self._engine.a4 = float(hz_int)
+        self._push_a4(float(hz_int))
+
+    def _push_a4(self, a4: float) -> None:
+        """Hand a concert-pitch value to everything that measures or sounds
+        against it: the detection engine, the drone and the pitch pipes.
+        Every A4 change (toolbar, SETUP, autotune, start-up restore) ends
+        here, so the three can never disagree about the reference."""
+        self._engine.set_a4(a4)
+        for _c in (getattr(self, '_drone_ctrl', None),
+                   getattr(self, '_pipes_ctrl', None)):
+            if _c is not None and hasattr(_c, 'set_a4'):
+                try:
+                    _c.set_a4(a4)
+                except Exception:
+                    pass
 
     def _seed_expected_notes(self) -> None:
         """Populate self.stats with empty NoteStats for the current
@@ -4969,7 +4981,7 @@ class MainWindow(QMainWindow):
         # never partially-overlaps with the rebuild.
         self._engine.pause_emissions()
         try:
-            self._engine.set_a4(new_a4)
+            self._push_a4(new_a4)
             # Re-derive from the frequencies behind the CURRENT table only.
             # The log also holds earlier sessions, other instruments, imports
             # and notes the user reset or deleted; none of those belong here.
@@ -5001,15 +5013,6 @@ class MainWindow(QMainWindow):
                                 a4_hz=new_a4,
                                 label=self._nick_edit.text().strip())
         self._refresh_table()
-        # Keep the drone + pitch-pipe reference frequencies tuned to the new
-        # concert pitch (pads must sound correct at the current A4).
-        for _c in (getattr(self, '_drone_ctrl', None),
-                   getattr(self, '_pipes_ctrl', None)):
-            if _c is not None and hasattr(_c, 'set_a4'):
-                try:
-                    _c.set_a4(new_a4)
-                except Exception:
-                    pass
 
     # ── Start / Stop ──────────────────────────────────────────────────────────
     def _on_record_toggle(self):

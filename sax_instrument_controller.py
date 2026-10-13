@@ -173,12 +173,24 @@ class InstrumentController:
 
     # ── Nickname ─────────────────────────────────────────────────────────────
     def on_nickname_changed(self) -> None:
-        """User finished editing the nickname. Stamp the new label onto the
-        current run so the next CSV export and table summary pick it up."""
+        """User finished editing the nickname. A nickname names a horn, so a
+        new nickname starts a new run, as an instrument or A4 change does:
+        relabelling the current run would move readings already taken on the
+        previous horn under the new name. An empty current run is coalesced
+        by start_run, so typing a name before playing just relabels it.
+        Clearing the nickname opens a run with an empty label."""
         from sax_intonation_gui import AUDIO_OK
         nickname = self._nick_edit.text().strip()
-        if AUDIO_OK and getattr(self._w, '_recording', False):
-            self._log.set_current_run_metadata(label=nickname)
+        if not (AUDIO_OK and getattr(self._w, '_recording', False)):
+            return
+        current = self._log.current_run()
+        # editingFinished also fires on a plain focus change; only an actual
+        # change of name opens a run.
+        if current is not None and current.label == nickname:
+            return
+        self._log.start_run(instrument=self._w.instrument,
+                            a4_hz=self._engine.a4,
+                            label=nickname)
 
     # ── Range editor ─────────────────────────────────────────────────────────
     def open_range_editor(self) -> None:

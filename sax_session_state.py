@@ -23,7 +23,7 @@
 # =============================================================================
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from PyQt6.QtCore import QByteArray
 from PyQt6.QtGui import QGuiApplication
@@ -52,7 +52,8 @@ class SessionStateController:
                  nick_edit: 'QLineEdit | None' = None,
                  disp_combo: 'QComboBox | None' = None,
                  a4_combo: 'QComboBox | None' = None,
-                 lang_combo: 'QComboBox | None' = None) -> None:
+                 lang_combo: 'QComboBox | None' = None,
+                 apply_a4: 'Callable[[float], None]') -> None:
         self._w = window
         self._cfg = cfg
         self._engine = engine
@@ -62,6 +63,10 @@ class SessionStateController:
         self._disp_combo = disp_combo
         self._a4_combo = a4_combo
         self._lang_combo = lang_combo
+        # The window's A4 apply path. Restoring through it, instead of
+        # writing engine.a4 here, is what retunes the drone and pitch pipes
+        # and mirrors both A4 combos on start-up.
+        self._apply_a4 = apply_a4
 
     # -------------------------------------------------------------------------
     def restore(self) -> None:
@@ -143,17 +148,10 @@ class SessionStateController:
                 self._disp_combo.setCurrentIndex(target_idx)
                 self._disp_combo.blockSignals(False)
 
-        # A4 — apply to combo and engine.
+        # A4 — one path to the combos, engine, drone and pitch pipes.
         a4 = int(getattr(cfg, 'last_a4_hz', 440))
         if 430 <= a4 <= 450:
-            if self._a4_combo is not None:
-                self._a4_combo.blockSignals(True)
-                self._a4_combo.setCurrentIndex(a4 - 430)
-                self._a4_combo.blockSignals(False)
-            try:
-                self._engine.a4 = float(a4)
-            except Exception:
-                pass
+            self._apply_a4(float(a4))
 
     # -------------------------------------------------------------------------
     def save(self) -> None:
