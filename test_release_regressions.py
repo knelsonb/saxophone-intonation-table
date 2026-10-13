@@ -171,12 +171,12 @@ def test_csv_import_strips_utf8_bom(tmp_path):
 # --- audio sources follow the output rate --------------------------------------
 @pytest.mark.parametrize("sr", [48000, 96000])
 def test_pitch_pipes_follow_output_rate(sr):
-    """The controller is built before an output stream exists; set_output
-    must make new pads sound at the target pitch on the real stream."""
+    """The controller is built before an output stream exists; a pad pressed
+    once the output has opened must sound at the target pitch on it."""
     block = 2048
-    mixer = Mixer(max_block=block)
+    mixer = Mixer(max_block=1024, samplerate=44100)
     ctrl = pp.PitchPipesController(mixer, 44100, max_block=1024, a4=440.0)
-    ctrl.set_output(sr, block)
+    mixer.set_format(sr, block)
     ctrl.toggle(69)
     out = np.zeros(block * 12, dtype=np.float32)
     for i in range(12):
@@ -185,12 +185,22 @@ def test_pitch_pipes_follow_output_rate(sr):
     assert abs(err) < 5.0, f"A4 pad off by {err:+.1f} cents at {sr} Hz"
 
 
-def test_pitch_pipes_set_output_releases_stale_pads():
-    mixer = Mixer(max_block=2048)
-    ctrl = pp.PitchPipesController(mixer, 44100, a4=440.0)
-    ctrl.toggle(60)
-    ctrl.set_output(48000, 2048)
-    assert ctrl.active_midis() == frozenset()
+def test_a_held_pitch_pipe_follows_an_output_rate_change():
+    """A pad held across an output switch keeps sounding, in tune, on the new
+    stream, filling every block."""
+    mixer = Mixer(max_block=1024, samplerate=48000)
+    ctrl = pp.PitchPipesController(mixer, 48000, a4=440.0)
+    ctrl.toggle(69)
+    for _ in range(8):
+        mixer.render(np.zeros(1024, dtype=np.float32), 1024)
+    mixer.set_format(96000, 4458)
+    assert ctrl.active_midis() == frozenset({69})
+    out = np.zeros(4458 * 8, dtype=np.float32)
+    for i in range(8):
+        mixer.render(out[i * 4458:(i + 1) * 4458], 4458)
+    err = H.cents(H.fft_peak_hz(out, 96000), 440.0)
+    assert abs(err) < 5.0, f"held A4 pad off by {err:+.1f} cents after the switch"
+    assert np.abs(out[-200:]).max() > 0.1, "the end of every block is filled"
 
 
 def test_drone_voice_superscript_digit_falls_back():

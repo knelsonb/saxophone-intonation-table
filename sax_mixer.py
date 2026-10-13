@@ -49,6 +49,16 @@ Design contract:
   lock while doing numpy work — mirroring the buffer-snapshot discipline the
   input engine already uses (see sax_audio_engine.AudioEngine).
 
+* **The mixer owns the output format.** ``samplerate`` and ``max_block`` are
+  the open stream's rate and block size. Whenever the output (re)opens, the
+  engine calls ``set_format``; every registered source then gets
+  ``on_format_changed(samplerate, max_block)`` and re-rates itself in place
+  (a held note keeps sounding at the same pitch, phase-continuously), and
+  pending events are rescaled so each keeps its distance in *time* from
+  "now". A source registered later is brought to the current format by
+  ``register`` before it is first rendered. No caller has to remember which
+  sources exist or which ones were built at which rate.
+
 The mixer is mono. The whole app reasons about a single mono signal; the
 engine's output callback fans the mono block out to however many channels
 the device wants. Keeping the mixer mono keeps every source trivial.
@@ -88,6 +98,12 @@ class MixerSource(Protocol):
 
     def render(self, out: np.ndarray, frames: int, t0: int) -> None: ...
 
+    # Optional: ``on_format_changed(samplerate, max_block)``. Called with no
+    # render running when the output format changes (and by ``register`` if
+    # the source was built for another format). A source that binds its rate
+    # or buffer sizes at construction re-rates itself here; one without the
+    # method is assumed format-independent.
+
     @property
     def active_midi(self) -> Optional[int]:
         """The MIDI note this source is currently sounding, or None.
@@ -100,22 +116,43 @@ class MixerSource(Protocol):
         ...
 
 
+def _notify_format(source, samplerate: int, max_block: int) -> None:
+    """Tell one source about the output format, if it cares."""
+    hook = getattr(source, "on_format_changed", None)
+    if hook is None:
+        return
+    try:
+        hook(samplerate, max_block)
+    except Exception:
+        # Same rule as render: one bad source must not stop the output from
+        # opening for all the others.
+        pass
+
+
 class Mixer:
     """Sums pull-based sources into a mono output block, sample-accurately.
 
     Thread model: ``render`` runs on the PortAudio output worker thread.
     ``register`` / ``unregister`` / ``schedule`` are called from the GUI
-    (Qt main) thread. The short ``_lock`` guards the source tuple and the
-    event schedule; numpy work happens outside it.
+    (Qt main) thread; ``set_format`` from the audio-control thread while no
+    stream is running. The short ``_lock`` guards the source tuple, the
+    event schedule and the format; numpy work happens outside it.
+
+    ``samplerate`` 0 means "no output format yet": sources keep the rate
+    they were built with and ``register`` leaves them alone.
     """
 
-    def __init__(self, max_block: int, channels: int = 1):
+    def __init__(self, max_block: int, channels: int = 1, samplerate: int = 0):
         if max_block < 1:
             raise ValueError(f"max_block must be >= 1, got {max_block}")
         # channels is stored for the engine's fan-out bookkeeping; the mixer
         # itself produces a mono block. See module docstring.
         self.channels = int(channels)
         self._max_block = int(max_block)
+        self._samplerate = max(0, int(samplerate))
+        # Bumped by every set_format, so register can tell that the format
+        # changed while it was bringing a new source up to date.
+        self._format_gen = 0
 
         self._lock = threading.Lock()
         # Immutable snapshot the render thread reads. Swapped wholesale on
@@ -159,15 +196,16 @@ class Mixer:
         return self._clock
 
     def reset_clock(self, value: int = 0) -> None:
-        """Reset the sample clock and clear any pending schedule.
+        """Restart the sample clock at ``value``.
 
-        Called by the engine when a fresh output stream opens, so absolute
-        sample indices restart from a known origin alongside the new stream's
-        own frame count. Not for use while a stream is running.
+        Pending events move with it: each keeps its distance from "now", so a
+        running metronome's next beat still comes when it was due. Not for
+        use while a stream is running.
         """
         with self._lock:
+            shift = int(value) - self._clock
+            self._events = [(t + shift, seq, ev) for t, seq, ev in self._events]
             self._clock = int(value)
-            self._events.clear()
             # dropped_events is a lifetime diagnostic — intentionally NOT
             # reset here, mirroring how the engine keeps overflow counts.
 
@@ -175,35 +213,67 @@ class Mixer:
     def max_block(self) -> int:
         return self._max_block
 
-    def resize(self, max_block: int) -> None:
-        """Reallocate the accumulator for a new maximum block size.
+    @property
+    def samplerate(self) -> int:
+        """Rate of the open output stream (0 before any format was set)."""
+        return self._samplerate
 
-        Called by the engine when an output stream opens at a blocksize that
-        differs from the mixer's current size, so the zero-allocation fast
-        path (which only triggers when ``frames == max_block``) stays armed at
-        the actual stream blocksize. MUST be called with no stream running —
-        it swaps the accumulator the render thread reads. A no-op when the
-        size is unchanged.
+    def set_format(self, samplerate: int, max_block: int) -> None:
+        """Adopt the format of an output stream that is about to start.
+
+        Called by the engine for every output (re)open, with no stream
+        running: it swaps the accumulator the render thread reads, and the
+        sources re-rate their buffers. The clock restarts at 0 for the new
+        stream; each pending event keeps its distance in time from "now",
+        converted to samples at the new rate, so a beat due 0.3 s after the
+        switch is still due 0.3 s after it. Every registered source then gets
+        ``on_format_changed(samplerate, max_block)``.
         """
-        max_block = int(max_block)
+        samplerate, max_block = int(samplerate), int(max_block)
+        if samplerate <= 0:
+            raise ValueError(f"samplerate must be > 0, got {samplerate}")
         if max_block < 1:
             raise ValueError(f"max_block must be >= 1, got {max_block}")
         with self._lock:
-            if max_block == self._max_block:
-                return
-            self._max_block = max_block
-            self._acc = np.zeros(max_block, dtype=np.float32)
+            ratio = samplerate / self._samplerate if self._samplerate else 1.0
+            now = self._clock
+            # round() is monotonic, so the schedule stays sorted.
+            self._events = [(max(0, int(round((t - now) * ratio))), seq, ev)
+                            for t, seq, ev in self._events]
+            self._clock = 0
+            self._samplerate = samplerate
+            if max_block != self._max_block:
+                self._max_block = max_block
+                self._acc = np.zeros(max_block, dtype=np.float32)
+            self._format_gen += 1
+            sources = self._sources
+        for src in sources:
+            _notify_format(src, samplerate, max_block)
 
     # ---- source registry (lock-snapshot) ----------------------------------
     def register(self, source: MixerSource) -> MixerSource:
         """Add a source to the mix. Returns the source as an opaque handle
         for unregister(). Idempotent: registering an already-present source
-        is a no-op (it is not summed twice)."""
-        with self._lock:
-            if source in self._sources:
-                return source
-            self._sources = self._sources + (source,)
-        return source
+        is a no-op (it is not summed twice).
+
+        A source built before the current format was known (or while the
+        output was switching) is brought to the mixer's format first, before
+        the render thread can see it."""
+        while True:
+            with self._lock:
+                if source in self._sources:
+                    return source
+                gen, sr, mb = self._format_gen, self._samplerate, self._max_block
+            if sr:
+                _notify_format(source, sr, mb)
+            with self._lock:
+                # set_format ran meanwhile and did not know this source: bring
+                # it to the newer format before it joins the mix.
+                if gen != self._format_gen:
+                    continue
+                if source not in self._sources:
+                    self._sources = self._sources + (source,)
+            return source
 
     def unregister(self, handle: MixerSource) -> None:
         """Remove a previously-registered source. Silent if it isn't present
@@ -427,25 +497,23 @@ class TestToneSource:
         self._max_block = int(max_block)
         self._gain = float(gain)
         self._midi = midi
-        # Per-sample phase increment in radians. Kept as both a Python float
-        # (for precise phase accumulation across many blocks) and a preboxed
-        # numpy scalar (so the per-block multiply doesn't box it each call).
-        self._dphi = 2.0 * math.pi * self.freq / self.samplerate
-        self._dphi32 = np.float32(self._dphi)
+        # Per-sample phase increment in radians (_set_rate_steps). Kept as
+        # both a Python float (for precise phase accumulation across many
+        # blocks) and a preboxed numpy scalar (so the per-block multiply
+        # doesn't box it each call).
         self._gain32 = np.float32(self._gain)
         self._phase = 0.0
         # 0-d holder for the current phase, updated in place via fill() each
         # block so the per-block phase add boxes no new scalar object.
         self._phase_box = np.zeros((), dtype=np.float32)
-        # Preallocated scratch: an index ramp [0,1,2,...] and a work buffer
-        # the sine is computed into. Reused every block; never reallocated.
-        # float32 throughout so the additive mix into the float32 accumulator
-        # needs no per-block dtype cast (an .astype() would allocate). Phase
-        # is carried in a float64 scalar for long-run precision; only the
-        # within-block ramp is float32, which is ample for one block.
-        self._ramp = np.arange(self._max_block, dtype=np.float32)
-        self._work = np.zeros(self._max_block, dtype=np.float32)
-
+        # Preallocated scratch (_alloc): an index ramp [0,1,2,...] and a work
+        # buffer the sine is computed into. Reused every block; reallocated
+        # only when the output's block size changes. float32 throughout so
+        # the additive mix into the float32 accumulator needs no per-block
+        # dtype cast (an .astype() would allocate). Phase is carried in a
+        # float64 scalar for long-run precision; only the within-block ramp
+        # is float32, which is ample for one block.
+        #
         # Optional click-free envelope (OPT-IN; default OFF so the reference
         # steady tone — and every test/use that builds it plainly — is
         # byte-identical). When enabled, the tone attacks from silence on the
@@ -454,14 +522,40 @@ class TestToneSource:
         # turning stop_test_tone into a fade instead of a hard-cut click.
         # Mirrors PitchPipeSource's envelope. _env_work is allocated only when
         # enveloped (the steady reference tone keeps its lean footprint).
+        self._attack_ms = float(attack_ms)
+        self._release_ms = float(release_ms)
         self._enveloped = (attack_ms > 0.0 or release_ms > 0.0)
         self._env = 0.0 if attack_ms > 0.0 else 1.0
         self._env_target = 1.0
-        self._atk_step = 1.0 / max(1.0, attack_ms * self.samplerate / 1000.0)
-        self._rel_step = 1.0 / max(1.0, release_ms * self.samplerate / 1000.0)
         self._done = False
+        self._set_rate_steps()
+        self._alloc(self._max_block)
+
+    def _set_rate_steps(self) -> None:
+        """Per-sample phase and envelope steps for the current rate."""
+        self._dphi = 2.0 * math.pi * self.freq / self.samplerate
+        self._dphi32 = np.float32(self._dphi)
+        self._atk_step = 1.0 / max(1.0, self._attack_ms * self.samplerate / 1000.0)
+        self._rel_step = 1.0 / max(1.0, self._release_ms * self.samplerate / 1000.0)
+
+    def _alloc(self, max_block: int) -> None:
+        self._max_block = int(max_block)
+        self._ramp = np.arange(self._max_block, dtype=np.float32)
+        self._work = np.zeros(self._max_block, dtype=np.float32)
         self._env_work = (np.zeros(self._max_block, dtype=np.float32)
                           if self._enveloped else None)
+
+    def on_format_changed(self, samplerate: int, max_block: int) -> None:
+        """Keep sounding at the same frequency on a stream with another rate
+        or block size. The phase carries over, so the tone does not click."""
+        samplerate, max_block = int(samplerate), int(max_block)
+        if samplerate <= 0 or max_block < 1:
+            return
+        if samplerate != self.samplerate:
+            self.samplerate = samplerate
+            self._set_rate_steps()
+        if max_block != self._max_block:
+            self._alloc(max_block)
 
     # -- gain / duck --------------------------------------------------------
     def set_gain(self, g: float) -> None:
@@ -610,15 +704,24 @@ class GainGlide:
             raise ValueError(f"max_block must be >= 1, got {max_block}")
         if samplerate <= 0:
             raise ValueError(f"samplerate must be > 0, got {samplerate}")
-        # A full 0->1 swing completes in glide_ms; per-sample slew cap.
-        glide_samples = max(1.0, samplerate * float(glide_ms) / 1000.0)
-        self._max_step = 1.0 / glide_samples
+        self._glide_ms = float(glide_ms)
         self._gain = float(initial)
         self._target = float(initial)
-        self._max_block = int(max_block)
-        # Preallocated per-sample gain envelope + an index ramp, reused each block.
-        self._g = np.zeros(self._max_block, dtype=np.float32)
-        self._ramp = np.arange(self._max_block, dtype=np.float32)
+        self._max_block = 0
+        self.reformat(max_block, samplerate)
+
+    def reformat(self, max_block: int, samplerate: int) -> None:
+        """Size the buffers for another block size and keep the glide TIME
+        at another rate. The current gain and target are kept."""
+        # A full 0->1 swing completes in glide_ms; per-sample slew cap.
+        glide_samples = max(1.0, int(samplerate) * self._glide_ms / 1000.0)
+        self._max_step = 1.0 / glide_samples
+        if int(max_block) != self._max_block:
+            self._max_block = int(max_block)
+            # Preallocated per-sample gain envelope + an index ramp, reused
+            # each block.
+            self._g = np.zeros(self._max_block, dtype=np.float32)
+            self._ramp = np.arange(self._max_block, dtype=np.float32)
 
     def set_target(self, target: float) -> None:
         """Set the gain to glide toward, clamped to [0, 1]. Called per hop from

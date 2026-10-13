@@ -203,21 +203,38 @@ class DroneSource:
             raise ValueError(f"samplerate must be > 0, got {samplerate}")
         if max_block < 1:
             raise ValueError(f"max_block must be >= 1, got {max_block}")
-        import tinysoundfont as tsf  # lazy: keeps the pure helpers TSF-free
-
         self.samplerate = int(samplerate)
-        self._max_block = int(max_block)
         self._user_volume = _clamp01(volume)
         self._a4 = float(a4)
         self._program = int(gm_program)
+        self._sf2_path = sf2_path or _default_sf2_path()
+        self._note: Optional[int] = None      # currently note-on MIDI, or None
+        self._sounding: Optional[int] = None   # audible MIDI incl. tail, or None
+        self._silent_blocks = 0
 
-        self._syn = tsf.Synth(samplerate=self.samplerate)
-        self._sfid = self._syn.sfload(sf2_path or _default_sf2_path())
-        self._syn.program_select(0, self._sfid, 0, self._program)
-        self._syn.set_tuning(0, _a4_to_tuning_semitones(self._a4))
+        self._syn, self._sfid = self._new_synth(self.samplerate)
+        self._half32 = np.float32(0.5)
+        self._vol32 = np.float32(self._user_volume)
+        self._duck = GainGlide(int(max_block), self.samplerate,
+                               glide_ms=glide_ms, initial=1.0)
+        self._max_block = 0
+        self._alloc(int(max_block))
 
-        # Preallocated buffers (no per-block allocation). TSF writes stereo
-        # interleaved float32 into _stereo_buf; _stereo_np views it as float32.
+    def _new_synth(self, samplerate: int):
+        """A TinySoundFont synth at ``samplerate`` with the SF2, the current
+        program and the A4 tuning loaded. The rate binds here and nowhere
+        else, which is why a rate change builds a new one."""
+        import tinysoundfont as tsf  # lazy: keeps the pure helpers TSF-free
+        syn = tsf.Synth(samplerate=int(samplerate))
+        sfid = syn.sfload(self._sf2_path)
+        syn.program_select(0, sfid, 0, self._program)
+        syn.set_tuning(0, _a4_to_tuning_semitones(self._a4))
+        return syn, sfid
+
+    def _alloc(self, max_block: int) -> None:
+        """Preallocated buffers (no per-block allocation). TSF writes stereo
+        interleaved float32 into _stereo_buf; _stereo_np views it as float32."""
+        self._max_block = int(max_block)
         self._stereo_buf = bytearray(self._max_block * 2 * 4)
         self._stereo_mv = memoryview(self._stereo_buf)
         self._stereo_np = np.frombuffer(self._stereo_buf, dtype=np.float32)
@@ -227,18 +244,32 @@ class DroneSource:
         # view objects. Preboxed scalars keep the in-place ops allocation-free.
         self._left = self._stereo_np[0::2]
         self._right = self._stereo_np[1::2]
-        self._half32 = np.float32(0.5)
-        self._vol32 = np.float32(self._user_volume)
-
-        self._duck = GainGlide(self._max_block, self.samplerate,
-                               glide_ms=glide_ms, initial=1.0)
-
-        self._note: Optional[int] = None      # currently note-on MIDI, or None
-        self._sounding: Optional[int] = None   # audible MIDI incl. tail, or None
-        self._silent_blocks = 0
+        self._duck.reformat(self._max_block, self.samplerate)
         # ~50 ms of consecutive silence confirms the tail is gone.
         self._silence_confirm = max(
             1, int(0.05 * self.samplerate / self._max_block))
+
+    def on_format_changed(self, samplerate: int, max_block: int) -> None:
+        """Follow the output to another rate or block size. A new rate needs a
+        new synth (TinySoundFont fixes it at construction); a held note is
+        struck again on it, so the drone keeps sounding at the same pitch."""
+        samplerate, max_block = int(samplerate), int(max_block)
+        if samplerate <= 0 or max_block < 1:
+            return
+        rate_changed = samplerate != self.samplerate
+        if rate_changed:
+            syn, sfid = self._new_synth(samplerate)
+            if self._note is not None:
+                syn.noteon(0, self._note, 100)
+            old = self._syn
+            self._syn, self._sfid = syn, sfid
+            self.samplerate = samplerate
+            try:
+                old.sounds_off()
+            except Exception:
+                pass
+        if rate_changed or max_block != self._max_block:
+            self._alloc(max_block)
 
     # -- control ------------------------------------------------------------
     def set_volume(self, volume: float) -> None:
@@ -421,12 +452,6 @@ class SineDroneSource:
         self._inc = 0.0
         self._phase = 0.0
 
-        # Preallocated work buffers — zero per-block allocation. Phase + sine in
-        # float64 for accuracy; the mono output is float32 (the mixer's dtype).
-        self._idx = np.arange(self._max_block, dtype=np.float64)
-        self._phs = np.zeros(self._max_block, dtype=np.float64)
-        self._sin = np.zeros(self._max_block, dtype=np.float64)
-        self._mono = np.zeros(self._max_block, dtype=np.float32)
         self._vol32 = np.float32(self._user_volume)
 
         # Note envelope (click-free attack/release) + the D3 duck — both glide.
@@ -438,8 +463,36 @@ class SineDroneSource:
         self._note: Optional[int] = None      # currently note-on MIDI, or None
         self._sounding: Optional[int] = None   # audible MIDI incl. tail, or None
         self._silent_blocks = 0
+        self._alloc(self._max_block)
+
+    def _alloc(self, max_block: int) -> None:
+        """Preallocated work buffers — zero per-block allocation. Phase + sine
+        in float64 for accuracy; the mono output is float32 (the mixer's
+        dtype)."""
+        self._max_block = int(max_block)
+        self._idx = np.arange(self._max_block, dtype=np.float64)
+        self._phs = np.zeros(self._max_block, dtype=np.float64)
+        self._sin = np.zeros(self._max_block, dtype=np.float64)
+        self._mono = np.zeros(self._max_block, dtype=np.float32)
+        self._env.reformat(self._max_block, self.samplerate)
+        self._duck.reformat(self._max_block, self.samplerate)
         self._silence_confirm = max(
             1, int(0.05 * self.samplerate / self._max_block))
+
+    def on_format_changed(self, samplerate: int, max_block: int) -> None:
+        """Follow the output to another rate or block size, still sounding at
+        the same frequency. The phase carries over, so there is no click."""
+        samplerate, max_block = int(samplerate), int(max_block)
+        if samplerate <= 0 or max_block < 1:
+            return
+        rate_changed = samplerate != self.samplerate
+        if rate_changed:
+            # Radians per sample scale inversely with the rate; this also
+            # keeps a releasing tail (no note) at its pitch.
+            self._inc *= self.samplerate / samplerate
+            self.samplerate = samplerate
+        if rate_changed or max_block != self._max_block:
+            self._alloc(max_block)
 
     # -- control ------------------------------------------------------------
     def set_volume(self, volume: float) -> None:
@@ -614,18 +667,25 @@ class DroneController:
     def _played_midi(self) -> int:
         return max(0, min(127, self.reference_midi + self.semitones))
 
+    def _format(self) -> tuple[int, int]:
+        """(rate, block) to build a source at: the mixer's output format once
+        one is known, else what this controller was constructed with. A built
+        source follows later format changes through the mixer."""
+        sr = int(getattr(self._mixer, "samplerate", 0) or 0)
+        if sr <= 0:
+            return self._samplerate, self._max_block
+        return sr, int(getattr(self._mixer, "max_block", self._max_block))
+
     def _ensure_source(self) -> "DroneSource | SineDroneSource":
         if self._source is None:
-            self._max_block = int(getattr(self._mixer, "max_block", self._max_block))
+            sr, mb = self._format()
             if is_sine_voice(self.voice_id):
                 self._source = SineDroneSource(
-                    self._samplerate, self._max_block,
-                    volume=self.volume, a4=self._a4)
+                    sr, mb, volume=self.volume, a4=self._a4)
             else:
                 self._source = DroneSource(
-                    self._samplerate, self._max_block,
-                    resolve_drone_voice(self.voice_id), volume=self.volume,
-                    a4=self._a4, sf2_path=self._sf2_path)
+                    sr, mb, resolve_drone_voice(self.voice_id),
+                    volume=self.volume, a4=self._a4, sf2_path=self._sf2_path)
         return self._source
 
     def _ensure_source_or_sine(self) -> "DroneSource | SineDroneSource":
@@ -642,12 +702,12 @@ class DroneController:
             return self._ensure_source()
 
     def _rebuild_source(self) -> None:
-        """Tear the live source down and rebuild it from the current voice / rate
-        / volume / a4, preserving enabled + the playing note + mixer registration
-        + duck attach. Needed when something that can't be reconfigured in place
-        changes: the sample RATE (TinySoundFont binds its rate at construction) or
-        the source TYPE (SF2 DroneSource <-> SineDroneSource are different
-        classes). Assumes a live source exists; callers guard."""
+        """Tear the live source down and rebuild it from the current voice /
+        volume / a4, preserving enabled + the playing note + mixer registration
+        + duck attach. Needed when the source TYPE changes (SF2 DroneSource <->
+        SineDroneSource are different classes); a new output rate or block
+        size reaches the live source through the mixer instead
+        (``on_format_changed``). Assumes a live source exists; callers guard."""
         was_enabled = self.enabled
         eng = self._engine
         if self._source is not None:
@@ -770,22 +830,4 @@ class DroneController:
         self._a4 = a4
         if self._source is not None:
             self._source.set_a4(self._a4)
-        self._emit()
-
-    def set_samplerate(self, samplerate: int) -> None:
-        """Rebuild the synth for a new output rate (call on a device switch).
-        TinySoundFont binds its rate at construction, so the DroneSource is
-        recreated (voice / volume / a4 / playing-note preserved). Without this,
-        a rate change leaves the drone generating at the OLD rate while the DAC
-        plays at the new one -- the tuning reference goes sharp/flat by
-        12*log2(new/old) semitones (e.g. +2547 cents on a 44.1k -> 192k switch).
-        Mirrors MetronomeController.set_samplerate; called from
-        _reopen_output_bracketed alongside the metronome re-rate."""
-        sr = int(samplerate)
-        if sr <= 0 or sr == self._samplerate:
-            return
-        self._samplerate = sr
-        if self._source is None:
-            return  # next _ensure_source() builds at the new rate
-        self._rebuild_source()   # rate binds at construction -> rebuild
         self._emit()

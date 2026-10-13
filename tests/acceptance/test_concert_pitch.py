@@ -138,8 +138,6 @@ def test_a_pitch_pipe_pressed_after_an_a4_change_sounds_at_the_new_pitch(app):
     app.pipes.release("A4")
 
 
-@pytest.mark.xfail(strict=True, reason="Sauron-5: a held pitch-pipe pad keeps the old A4 "
-                                       "after the concert pitch changes")
 def test_a_held_pitch_pipe_follows_an_a4_change(app):
     """Holding the A pipe while switching to 442 should move the pipe to 442."""
     app.pipes.press("A4")

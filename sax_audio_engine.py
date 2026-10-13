@@ -565,7 +565,11 @@ class AudioEngine:
         # — but on its OWN transitioning guard so it can never corrupt the
         # input guard (both run on the Qt main thread; the guards are
         # independent re-entrancy locks, not cross-thread sync).
-        self.mixer = Mixer(max_block=DEFAULT_OUT_BLOCK)
+        # The mixer owns the output format; every (re)open hands it the new
+        # stream's rate and block size (Mixer.set_format), and the sources
+        # follow from there.
+        self.mixer = Mixer(max_block=DEFAULT_OUT_BLOCK,
+                           samplerate=DEFAULT_SAMPLE_RATE)
         self._out_stream = None
         self._out_transitioning = False
         self.output_samplerate = DEFAULT_SAMPLE_RATE
@@ -1356,8 +1360,8 @@ class AudioEngine:
             return None       # non-finite / non-positive freq -> NaN dphi -> NaN audio
         self.stop_test_tone(self._test_tone_handle)
         tone = TestToneSource(freq=f,
-                              samplerate=int(self.output_samplerate),
-                              max_block=int(self.output_block_size),
+                              samplerate=self.mixer.samplerate,
+                              max_block=self.mixer.max_block,
                               gain=0.2, attack_ms=8.0, release_ms=60.0)
         self._test_tone_handle = self.mixer.register(tone)
         return self._test_tone_handle
@@ -1491,15 +1495,13 @@ class AudioEngine:
         a wedged output driver can't freeze the GUI and can't leak a started
         stream."""
         out_block = max(256, int(round(samplerate * OUT_BLOCK_MS / 1000.0)))
-        # Size the mixer to the actual block so its zero-alloc fast path is
-        # armed, and restart the sample clock for the new stream.
-        # A registered test tone was built for the previous stream's rate and
-        # block size; it would play at the wrong pitch on the new one.
-        if self._test_tone_handle is not None:
-            self.mixer.unregister(self._test_tone_handle)
-            self._test_tone_handle = None
-        self.mixer.resize(out_block)
-        self.mixer.reset_clock(0)
+        # Hand the mixer this stream's format before it can start pulling:
+        # the mixer sizes its accumulator to the block (arming the zero-alloc
+        # fast path), restarts its clock for the new stream, and re-rates
+        # every source, so a held drone, pad, test tone or deck playback keeps
+        # its pitch and a running metronome its beat. No stream is running
+        # here (the caller tore the old one down).
+        self.mixer.set_format(samplerate, out_block)
         result: dict = {'stream': None, 'err_kind': None, 'err_msg': '',
                         'cancelled': False}
         # Atomic hand-off lock, mirror of _try_open (backlog #7): serialises the

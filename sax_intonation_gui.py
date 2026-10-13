@@ -1052,52 +1052,6 @@ class MainWindow(QMainWindow):
             pass
         return bool(self._engine.output_running)
 
-    def _sync_output_rate_consumers(self) -> None:
-        """Push the open output stream's rate and block size to the drone and
-        pitch pipes. Both synthesise at a rate fixed when their sources are
-        built; a mismatch with the stream shifts their pitch by
-        12*log2(stream/source) semitones."""
-        sr = int(self._engine.output_samplerate or 0)
-        if sr <= 0:
-            return
-        self._drone_ctrl.set_samplerate(sr)
-        if self._pipes_ctrl is not None:      # built on first open
-            self._pipes_ctrl.set_output(sr, self._engine.mixer.max_block)
-
-    def _reopen_output_bracketed(self, sel: 'DeviceSelection') -> None:
-        """Open a (different) output device, keeping a running metronome PHASE-
-        CORRECT across the switch (Option B). open_output_device() calls
-        mixer.reset_clock() (which clears the schedule), so afterwards we call
-        ctrl.resync(new_sr): it re-anchors the beat chain onto the reset clock
-        and resumes on the NEXT beat index — the accent pattern continues with
-        no spurious downbeat and no click truncation (the click is never
-        request_stopped). On a failed reopen we stop the metronome cleanly
-        rather than leave it running-but-silent. The GUI orchestrates the device
-        change, so this lives here, not in the engine (stays client-ignorant) or
-        the controller (stable contract). Covers GUI-orchestrated switches;
-        engine-internal hot-plug auto-recovery is still out of reach here."""
-        ctrl = self._metro_ctrl
-        was_running = ctrl.is_running()
-        try:
-            self._engine.open_output_device(sel)   # calls mixer.reset_clock()
-        except Exception:
-            pass
-        if self._engine.output_running:
-            self._sync_output_rate_consumers()
-        if not was_running:
-            return
-        sr = int(self._engine.output_samplerate or 0)
-        if self._engine.output_running:
-            try:
-                ctrl.resync(sr if sr else None)    # seamless resume on the next beat
-            except Exception:
-                pass
-        else:
-            try:
-                ctrl.stop()                        # reopen failed: stop cleanly
-            except Exception:
-                pass
-
     def _refresh_output_device_combo(self) -> None:
         """Fill the SETUP output combo: System default first, then the
         engine's output enumeration (empty when it fails, leaving only System
@@ -1137,9 +1091,13 @@ class MainWindow(QMainWindow):
             sax_config.save_config(self._cfg)
         except Exception:
             pass
-        # Re-open on the new device. Brackets a running metronome so the
-        # reopen's mixer.reset_clock() can't silently kill its beat chain.
-        self._reopen_output_bracketed(self._current_output_selection())
+        # Re-open on the new device. Whatever is sounding carries over: the
+        # mixer re-rates every source for the new stream and keeps the
+        # metronome's next beat where it was due.
+        try:
+            self._engine.open_output_device(self._current_output_selection())
+        except Exception:
+            pass
 
     def _on_prefer_duplex_toggled(self, checked: bool) -> None:
         # Persist the preference; it's consumed the next time the output
@@ -1495,11 +1453,6 @@ class MainWindow(QMainWindow):
         if not self._ensure_output_open():
             self._metro_revert_start()
             return
-        # Match the controller's clock to the (possibly re-negotiated) output
-        # rate before it schedules beats.
-        sr = int(self._engine.output_samplerate or 0)
-        if sr:
-            self._metro_ctrl.set_samplerate(sr)
         self._metro_ctrl.start()      # fires on_state_changed -> dot + label
 
     def _on_metro_state_changed(self) -> None:
@@ -1921,9 +1874,6 @@ class MainWindow(QMainWindow):
         if not self._ensure_output_open():
             self._drone_revert_toggle()
             return
-        sr = int(self._engine.output_samplerate or 0)
-        if sr:
-            self._drone_ctrl.set_samplerate(sr)
         self._drone_ctrl.set_enabled(True)   # fires on_state_changed
         self._report_drone_fallback()
 
@@ -2059,7 +2009,6 @@ class MainWindow(QMainWindow):
             self._sync_pipe_btns()
             return
         self._pipes_status.setVisible(False)
-        self._sync_output_rate_consumers()
         self._pipes_ctrl.toggle(midi)          # fires on_pipes_state_changed
 
     def _stop_pitch_pipes(self) -> None:
@@ -2468,9 +2417,9 @@ class MainWindow(QMainWindow):
         return sr if sr > 0 else int(DEFAULT_SAMPLE_RATE)
 
     def _output_rate(self) -> int:
-        """Rate the output sources are built at: the output stream's, or the
-        input default until an output stream has opened."""
-        return int(self._engine.output_samplerate or self._engine_sample_rate())
+        """Rate the output controllers start from. The mixer owns the output
+        format and moves their sources along when it changes."""
+        return int(self._engine.mixer.samplerate)
 
     def _device_selection_from_cfg(self) -> DeviceSelection:
         return DeviceSelection(

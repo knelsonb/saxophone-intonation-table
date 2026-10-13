@@ -184,13 +184,7 @@ class DeckPlaybackSource:
         self._max_block = int(max_block)
         self._gain32 = np.float32(gain)
 
-        # Capture samples consumed per output sample. r == 1.0 => no resample.
-        self._ratio = (float(self.capture_samplerate) / float(self.output_samplerate)
-                       if self.output_samplerate > 0 else 1.0)
-        # Resample only when the rates genuinely differ AND we have >=2 samples
-        # to interpolate between; otherwise the direct fast path.
-        self._resample = (self.capture_samplerate != self.output_samplerate
-                          and self._n >= 2)
+        self._set_ratio()
 
         self._pos = 0.0          # absolute fractional read position, in take samples (f64)
         self._finished = (self._n == 0)
@@ -204,6 +198,10 @@ class DeckPlaybackSource:
         self._fade = min(int(round(EDGE_FADE_MS / 1000.0 * self.capture_samplerate)),
                          self._n // 2)
 
+        self._alloc()
+
+    def _alloc(self) -> None:
+        """Working buffers for the current block size and resampling need."""
         # Fast-path scratch: one work buffer for (segment * gain).
         self._work = np.zeros(self._max_block, dtype=np.float32)
         # Resample scratch — allocated only when needed.
@@ -216,6 +214,30 @@ class DeckPlaybackSource:
             self._idx = np.zeros(self._max_block, dtype=np.intp)
             self._g0 = np.zeros(self._max_block, dtype=np.float32)
             self._g1 = np.zeros(self._max_block, dtype=np.float32)
+
+    def _set_ratio(self) -> None:
+        # Capture samples consumed per output sample. r == 1.0 => no resample.
+        self._ratio = (float(self.capture_samplerate) / float(self.output_samplerate)
+                       if self.output_samplerate > 0 else 1.0)
+        # Resample only when the rates genuinely differ AND we have >=2 samples
+        # to interpolate between; otherwise the direct fast path.
+        self._resample = (self.capture_samplerate != self.output_samplerate
+                          and self._n >= 2)
+
+    def on_format_changed(self, samplerate: int, max_block: int) -> None:
+        """The output moved to another rate or block size: keep playing from
+        the current position, resampled for the new rate so the take keeps
+        its pitch. The read position is in take samples, so it carries over
+        unchanged."""
+        samplerate, max_block = int(samplerate), int(max_block)
+        if samplerate <= 0 or max_block < 1:
+            return
+        if samplerate == self.output_samplerate and max_block == self._max_block:
+            return
+        self.output_samplerate = samplerate
+        self._max_block = max_block
+        self._set_ratio()
+        self._alloc()
 
     # -- MixerSource protocol ----------------------------------------------
     @property
@@ -347,11 +369,12 @@ class DeckController:
                        scratch_dir=cfg.deck_scratch_dir,
                        on_state_changed=self._on_deck_state_changed)
 
-    ``samplerate`` is the OUTPUT (mixer) rate at construction; the live output
-    rate is re-read from the engine at ``play()`` time so a device switch that
-    changed it is honoured. ``on_state_changed`` fires on every state
-    transition — always on the GUI thread (see the module docstring and
-    :meth:`pump`).
+    ``samplerate`` is the OUTPUT (mixer) rate used until the mixer knows the
+    output format; a playback source is built at the mixer's current format
+    and follows later changes through it (``on_format_changed``), so a
+    device switch mid-take keeps the take in tune. ``on_state_changed`` fires
+    on every state transition — always on the GUI thread (see the module
+    docstring and :meth:`pump`).
     """
 
     def __init__(self, mixer, samplerate: int, *, engine=None,
@@ -410,12 +433,8 @@ class DeckController:
         return int(getattr(self._mixer, "max_block", 2048))
 
     def _current_output_sr(self) -> int:
-        eng = self._engine
-        if eng is not None:
-            sr = int(getattr(eng, "output_samplerate", 0) or 0)
-            if sr > 0:
-                return sr
-        return self._samplerate
+        sr = int(getattr(self._mixer, "samplerate", 0) or 0)
+        return sr if sr > 0 else self._samplerate
 
     def _unregister_playback(self) -> None:
         """Drop the live playback source from the mixer (no state change).

@@ -149,13 +149,11 @@ def test_switching_to_headphones_keeps_the_bar_count(two_speakers):
 
     assert app.audio.status().output_device == HEADPHONES
     assert app.metronome.state.running
-    assert downbeats(after) == [False, True, False, False, False]   # beat 4, then bar 2
+    assert downbeats(after) == [False, True, False, False]   # beat 4, then bar 2
     for gap in after.onset_intervals():
         assert gap == pytest.approx(0.5, abs=block_seconds(app))
 
 
-@pytest.mark.xfail(strict=True, reason="New-practice-2: after an output switch the next "
-                                       "click comes at once instead of on the beat")
 def test_switching_to_headphones_does_not_shift_the_beat(two_speakers):
     """The click after the switch comes one beat after the last one, so a
     player keeping time does not get pulled off the beat."""
@@ -319,8 +317,6 @@ def test_a_speaker_switch_never_leaves_a_pitch_pipe_out_of_tune(two_speakers):
         assert heard.is_silent()
 
 
-@pytest.mark.xfail(strict=True, reason="New-practice-3: a speaker switch silences a "
-                                       "held pitch pipe (the drone keeps sounding)")
 def test_a_held_pitch_pipe_keeps_sounding_after_a_speaker_switch(two_speakers):
     """The pipe the player is tuning to keeps sounding on the new speaker, the
     same way the drone does."""
@@ -335,8 +331,6 @@ def test_a_held_pitch_pipe_keeps_sounding_after_a_speaker_switch(two_speakers):
     assert in_tune(heard.slice(0.1), 440.0)
 
 
-@pytest.mark.xfail(strict=True, reason="Sauron-5: a held pitch pipe keeps the old A4 "
-                                       "after a concert-pitch change")
 def test_a_held_pitch_pipe_follows_a_concert_pitch_change(app):
     """Changing A4 to 442 while the A pipe sounds retunes it to 442 Hz."""
     app.pipes.press("A4")
@@ -363,8 +357,6 @@ def test_the_test_tone_leaves_no_stale_tone_after_an_output_rate_change(two_spea
     assert heard.is_silent() or in_tune(heard, 440.0)
 
 
-@pytest.mark.xfail(strict=True, reason="New-practice-1: after an output switch the test "
-                                       "tone falls silent while its button still says Stop")
 def test_the_test_tone_button_tells_the_truth_after_an_output_switch(two_speakers):
     """After the switch the test tone either still plays at 440 Hz or its
     button shows it is off."""
@@ -442,8 +434,6 @@ def test_an_unexported_take_is_still_there_after_a_restart(app):
     assert app.deck.state.state == "have_take"
 
 
-@pytest.mark.xfail(strict=True, reason="Sauron-6: deck playback is not re-rated on an "
-                                       "output switch and plays about 147 cents flat")
 def test_deck_playback_stays_in_tune_when_switching_to_headphones(two_speakers):
     """Listening back to an A, switch to the 44.1 kHz headphones mid-take: the
     A still sounds at 440 Hz."""

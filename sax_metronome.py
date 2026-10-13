@@ -145,10 +145,14 @@ class ClickSource:
     def __init__(self, samplerate: int, volume: float = 1.0, *,
                  accent_freq: float = 1320.0, beat_freq: float = 880.0,
                  dur_ms: float = 38.0,
-                 accent_peak: float = 0.92, beat_peak: float = 0.55):
+                 accent_peak: float = 0.92, beat_peak: float = 0.55,
+                 format_listener: Optional[Callable[[int], None]] = None):
         if samplerate <= 0:
             raise ValueError(f"samplerate must be > 0, got {samplerate}")
         self._samplerate = int(samplerate)
+        # Told the new rate when the mixer changes format, so the controller
+        # that schedules this click counts beats at the rate it is played at.
+        self._format_listener = format_listener
         self._volume = clamp_volume(volume)
         self._accent_freq = float(accent_freq)
         self._beat_freq = float(beat_freq)
@@ -208,6 +212,14 @@ class ClickSource:
         self._accent_base = self._synth(self._accent_freq, self._accent_peak)
         self._beat_base = self._synth(self._beat_freq, self._beat_peak)
         self.set_volume(self._volume)
+
+    def on_format_changed(self, samplerate: int, max_block: int) -> None:
+        """Mixer hook: the output now runs at ``samplerate``. The click needs
+        no block-sized buffers, only voices synthesised at the right rate."""
+        self.set_samplerate(samplerate)
+        listener = self._format_listener
+        if listener is not None and samplerate > 0:
+            listener(int(samplerate))
 
     # -- trigger / MixerSource protocol ------------------------------------
     def trigger(self, accent: bool, offset: int = 0) -> None:
@@ -297,7 +309,8 @@ class MetronomeController:
         self.volume = clamp_volume(volume)
         self._on_state_changed = on_state_changed
 
-        self._click = ClickSource(self._samplerate, self.volume)
+        self._click = ClickSource(self._samplerate, self.volume,
+                                  format_listener=self._adopt_samplerate)
         # Bumped on every start/stop. A beat event scheduled by an earlier run
         # checks it and does nothing, so a quick stop/start cannot leave the old
         # run's pending beat firing into (and doubling) the new chain.
@@ -309,9 +322,7 @@ class MetronomeController:
         self._anchor = 0          # absolute sample of self._anchor_beat
         self._anchor_beat = 0     # global beat index at the anchor
         self._anchor_bpm = float(self.bpm)
-        # Index of the most recently FIRED beat (-1 = none yet). resync()
-        # continues the chain from here so a GUI output-device switch preserves
-        # the global beat index + accent pattern instead of restarting at 0.
+        # Index of the most recently FIRED beat (-1 = none yet).
         self._beat = -1
 
     # -- introspection ------------------------------------------------------
@@ -357,12 +368,11 @@ class MetronomeController:
             self._click.set_volume(nv)
             self._emit()
 
-    def set_samplerate(self, samplerate: int) -> None:
-        """Update for a new output rate (call before start, or it re-anchors on
-        next start). Re-synthesises the click; timing uses the new rate."""
-        if samplerate > 0:
-            self._samplerate = int(samplerate)
-            self._click.set_samplerate(self._samplerate)
+    def _adopt_samplerate(self, samplerate: int) -> None:
+        """The click's mixer moved to another output rate. Beats still due are
+        rescaled by the mixer itself; this makes the ones scheduled after
+        them count at the new rate."""
+        self._samplerate = int(samplerate)
 
     def register_tap(self, now: Optional[float] = None) -> Optional[int]:
         """Record a tap (default timestamp ``time.monotonic()``) and, once a run
@@ -408,37 +418,6 @@ class MetronomeController:
     def toggle(self) -> None:
         self.stop() if self._running else self.start()
 
-    def resync(self, samplerate: Optional[int] = None) -> None:
-        """Option B — re-anchor the beat chain onto the mixer's (reset) clock
-        WITHOUT resetting the global beat index, so a GUI-orchestrated output-
-        device switch resumes on the NEXT beat (accent pattern preserved) rather
-        than restarting at beat 0.
-
-        Flow: ``open_output_device()`` calls ``mixer.reset_clock()`` (clearing
-        the schedule + zeroing the clock), then the GUI calls ``resync(new_sr)``
-        instead of the Option-A ``stop()``/``start()`` bracket. The click stays
-        registered (no request_stop -> no burst truncation); we just reschedule
-        the next beat at the live clock, continuing ``_beat``. No-op if stopped.
-        """
-        if samplerate is not None and samplerate > 0:
-            self._samplerate = int(samplerate)
-            self._click.set_samplerate(self._samplerate)
-        if not self._running:
-            return
-        self._click.arm()              # clear any stale pending-stop, stay live
-        # Continue from the beat after the last that fired (0 if none yet),
-        # re-anchored at the live (reset) clock so the onset lands in the future.
-        next_beat = self._beat + 1
-        self._anchor = int(self._mixer.clock)
-        self._anchor_beat = next_beat
-        self._anchor_bpm = float(self.bpm)
-        # Schedule only if the reopen actually cleared the queue (the contract is
-        # open_output_device -> mixer.reset_clock -> resync). If a beat is still
-        # pending (resync called twice with no intervening reset), do NOT
-        # re-schedule the same beat — that would double-fire it at offset 0.
-        if self._mixer.pending_events() == 0:
-            self._schedule_beat(next_beat)
-
     # -- scheduler (render thread, except the initial start) ----------------
     def _onset(self, beat_index: int) -> int:
         return self._anchor + beat_onset_sample(
@@ -450,10 +429,19 @@ class MetronomeController:
 
         def event(offset: int, bi: int = beat_index, ac: bool = accent,
                   gen: int = self._run_gen) -> None:
-            # Fires on the render thread at the click's intra-block offset.
+            # Fires on the render thread at the click's intra-block offset;
+            # the mixer's clock still reads the block's first sample here.
             if not self._running or gen != self._run_gen:
                 return
-            self._beat = bi            # remember where we are for resync()
+            fired_at = int(self._mixer.clock) + offset
+            if fired_at != self._onset(bi):
+                # The output reopened since this beat was scheduled: the mixer
+                # moved it onto the new stream's clock (and rate), keeping its
+                # distance in time. Carry the grid on from where it sounded,
+                # so the next beat is one interval later, not at once.
+                self._anchor = fired_at
+                self._anchor_beat = bi
+            self._beat = bi
             self._click.trigger(ac, offset)
             self._schedule_next(bi)
 

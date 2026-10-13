@@ -67,28 +67,60 @@ class PitchPipeSource:
             raise ValueError(f"max_block must be >= 1, got {max_block}")
         self._midi = int(midi)
         self.samplerate = int(samplerate)
-        self._max_block = int(max_block)
         self._gain = float(gain)
+        self._attack_ms = float(attack_ms)
+        self._release_ms = float(release_ms)
         self.freq = midi_to_freq(self._midi, a4)
 
-        # Phase increment (rad/sample): float for precise long-run accumulation,
-        # preboxed numpy scalar so the per-block multiply allocates nothing.
-        self._dphi = 2.0 * math.pi * self.freq / self.samplerate
-        self._dphi32 = np.float32(self._dphi)
+        # Phase is carried as a float for precise long-run accumulation; the
+        # per-block multiply uses preboxed numpy scalars (_dphi32, _gain32)
+        # so it allocates nothing.
         self._gain32 = np.float32(self._gain)
         self._phase = 0.0
         self._phase_box = np.zeros((), dtype=np.float32)
-        self._ramp = np.arange(self._max_block, dtype=np.float32)
-        self._work = np.zeros(self._max_block, dtype=np.float32)
-        self._env_work = np.zeros(self._max_block, dtype=np.float32)
 
         # Envelope: current gain in [0,1], a target (1 = on, 0 = releasing), and
         # per-sample slopes. Starts at 0 and attacks to 1 (click-free tap-on).
         self._env = 0.0
         self._env_target = 1.0
-        self._atk_step = 1.0 / max(1.0, attack_ms * self.samplerate / 1000.0)
-        self._rel_step = 1.0 / max(1.0, release_ms * self.samplerate / 1000.0)
         self._done = False  # True once a release has fully faded out
+        self._set_rate_steps()
+        self._max_block = 0
+        self._alloc(max_block)
+
+    def _set_rate_steps(self) -> None:
+        """Per-sample phase and envelope steps for the current rate and pitch.
+        The render thread may read these mid-update; the worst case is one
+        block at a mix of old and new step, which is inaudible."""
+        dphi = 2.0 * math.pi * self.freq / self.samplerate
+        self._dphi32 = np.float32(dphi)
+        self._dphi = dphi
+        self._atk_step = 1.0 / max(1.0, self._attack_ms * self.samplerate / 1000.0)
+        self._rel_step = 1.0 / max(1.0, self._release_ms * self.samplerate / 1000.0)
+
+    def _alloc(self, max_block: int) -> None:
+        self._max_block = int(max_block)
+        self._ramp = np.arange(self._max_block, dtype=np.float32)
+        self._work = np.zeros(self._max_block, dtype=np.float32)
+        self._env_work = np.zeros(self._max_block, dtype=np.float32)
+
+    def on_format_changed(self, samplerate: int, max_block: int) -> None:
+        """Keep sounding, at the same pitch, on a stream with another rate or
+        block size. Only the per-sample steps change; the phase carries over."""
+        samplerate, max_block = int(samplerate), int(max_block)
+        if samplerate <= 0 or max_block < 1:
+            return
+        if samplerate != self.samplerate:
+            self.samplerate = samplerate
+            self._set_rate_steps()
+        if max_block != self._max_block:
+            self._alloc(max_block)
+
+    def set_a4(self, a4: float) -> None:
+        """Retune to a new concert pitch while sounding. The phase is
+        continuous, so a held pad glides to the new pitch without a click."""
+        self.freq = midi_to_freq(self._midi, a4)
+        self._set_rate_steps()
 
     # -- control ------------------------------------------------------------
     @property
@@ -181,24 +213,14 @@ class PitchPipesController:
         # midi -> live source (sounding or releasing).
         self._pads: Dict[int, PitchPipeSource] = {}
 
-    def set_output(self, samplerate: int, max_block: Optional[int] = None) -> None:
-        """Adopt the current output stream's rate and block size.
-
-        Pads bind both at construction, and the controller is created before
-        any output stream exists, so the GUI calls this once the stream is open
-        (and after a device switch). A change releases sounding pads at once:
-        a pad built for the old rate would play at the wrong pitch."""
-        sr = int(samplerate)
-        mb = int(max_block) if max_block else int(
-            getattr(self._mixer, "max_block", self._max_block))
-        if sr <= 0 or (sr == self._samplerate and mb == self._max_block):
-            return
-        self._samplerate, self._max_block = sr, mb
-        if self._pads:
-            for src in self._pads.values():
-                self._mixer.unregister(src)
-            self._pads.clear()
-            self._emit()
+    def _format(self) -> tuple[int, int]:
+        """(rate, block) to build a pad at: the mixer's output format once
+        one is known, else what this controller was constructed with. Pads
+        already sounding follow later format changes through the mixer."""
+        sr = int(getattr(self._mixer, "samplerate", 0) or 0)
+        if sr <= 0:
+            return self._samplerate, self._max_block
+        return sr, int(getattr(self._mixer, "max_block", self._max_block))
 
     def _emit(self) -> None:
         cb = self._on_state_changed
@@ -222,7 +244,8 @@ class PitchPipesController:
             self._emit()
             return False
         # (Re)start a fresh pad — replaces a still-releasing one at this note.
-        new = PitchPipeSource(midi, self._samplerate, self._max_block, a4=self._a4)
+        sr, mb = self._format()
+        new = PitchPipeSource(midi, sr, mb, a4=self._a4)
         if src is not None:
             self._mixer.unregister(src)
         self._pads[midi] = new
@@ -246,13 +269,16 @@ class PitchPipesController:
             self._emit()
 
     def set_a4(self, a4: float) -> None:
-        """Update concert pitch; affects pads sounded AFTER this call (existing
-        pads keep their frequency to avoid a mid-sound glitch). Ignores
+        """Update concert pitch. New pads sound at it, and pads already
+        sounding (or fading out) are retuned to it phase-continuously, so the
+        pad a player is tuning against always matches the app's A4. Ignores
         non-finite / non-positive input (would render NaN into the sine)."""
         a4 = float(a4)
         if not math.isfinite(a4) or a4 <= 0.0:
             return
         self._a4 = a4
+        for src in self._pads.values():
+            src.set_a4(a4)
 
     def _reap(self) -> None:
         """Unregister pads whose release tail has fully faded."""

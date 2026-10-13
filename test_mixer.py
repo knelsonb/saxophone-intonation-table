@@ -82,19 +82,82 @@ def test_render_zero_or_negative_frames_is_noop():
     assert m.clock == 0, f"non-positive frames must not advance clock, got {m.clock}"
 
 
-def test_reset_clock_sets_value_clears_events_keeps_dropped():
+def test_reset_clock_sets_value_keeps_event_distance_keeps_dropped():
+    """A reset moves pending events with the clock: each stays the same number
+    of samples ahead, so a running metronome's next beat still comes."""
     m = Mixer(max_block=128)
     out = np.zeros(128, dtype=np.float32)
     m.render(out, 100)                       # clock -> 100
     assert m.schedule(50, lambda off: None) is False  # past -> dropped
     assert m.dropped_events == 1
-    m.schedule(150, lambda off: None)        # pending
-    assert m.pending_events() == 1
+    fired = []
+    m.schedule(150, fired.append)            # 50 samples ahead
     m.reset_clock(0)
     assert m.clock == 0, "reset_clock must set the clock"
-    assert m.pending_events() == 0, "reset_clock must clear pending events"
+    assert m.pending_events() == 1, "reset_clock must keep pending events"
+    m.render(out, 128)
+    assert fired == [50], f"the event must stay 50 samples ahead, fired at {fired}"
     assert m.dropped_events == 1, (
         "dropped_events is a lifetime diagnostic — reset_clock must NOT zero it")
+
+
+class _FormatSource:
+    """Records the format changes it is told about."""
+
+    def __init__(self):
+        self.formats = []
+
+    def on_format_changed(self, samplerate, max_block):
+        self.formats.append((samplerate, max_block))
+
+    @property
+    def active_midi(self):
+        return None
+
+    def render(self, out, frames, t0):
+        pass
+
+
+def test_set_format_tells_registered_sources_and_rescales_events():
+    """set_format restarts the clock for the new stream, keeps each pending
+    event's distance in TIME (converted to the new rate) and hands every
+    registered source the new rate and block size."""
+    m = Mixer(max_block=480, samplerate=48000)
+    src = _FormatSource()
+    m.register(src)
+    assert src.formats == [(48000, 480)], "register brings a source to the format"
+    out = np.zeros(480, dtype=np.float32)
+    m.render(out, 480)                       # clock -> 480
+    fired = []
+    m.schedule(480 + 4800, fired.append)     # 0.1 s ahead at 48 kHz
+
+    m.set_format(44100, 441)
+
+    assert (m.samplerate, m.max_block, m.clock) == (44100, 441, 0)
+    assert src.formats[-1] == (44100, 441)
+    for _ in range(11):
+        m.render(np.zeros(441, dtype=np.float32), 441)
+    assert fired == [0], "the event was due 0.1 s later: 4410 samples at 44.1 kHz"
+
+
+def test_register_brings_a_late_source_to_the_current_format():
+    """A source built for the old format and registered after the switch is
+    re-rated before it is ever rendered."""
+    m = Mixer(max_block=1024, samplerate=48000)
+    m.set_format(96000, 2048)
+    src = _FormatSource()
+    m.register(src)
+    assert src.formats == [(96000, 2048)]
+    m.register(src)                           # idempotent: not told twice
+    assert src.formats == [(96000, 2048)]
+
+
+def test_mixer_without_a_format_leaves_sources_alone():
+    """samplerate 0 means no output format yet: sources keep their own rate."""
+    m = Mixer(max_block=256)
+    src = _FormatSource()
+    m.register(src)
+    assert m.samplerate == 0 and src.formats == []
 
 
 # ---------------------------------------------------------------------------

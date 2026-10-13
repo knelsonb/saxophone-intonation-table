@@ -280,21 +280,20 @@ def test_negative_control_same_leakage_locks_when_no_drone_sounds():
 
 
 # ---------------------------------------------------------------------------
-# 11. OUTPUT timing — the metronome survives an output-device switch (Option-B
-#     resync) cleanly in the RENDERED audio. A device switch has an unknown
-#     SILENT gap (old stream stops, new device opens), so resync deliberately
-#     re-anchors the next beat at the START of the new clock and continues the
-#     beat INDEX/accent — it does NOT try to preserve a sub-beat phase across
-#     silence that the musician can't hear anyway. test_metro_resync proves the
-#     scheduler STATE; this proves the audio: a drift-free grid on EACH side of
-#     the switch + a PROMPT re-attack on the new stream (no hang, no silence).
-#     The "feels off" scenario: swap headphones for speakers mid-practice and
-#     the metronome hangs or the beat starts drifting.
+# 11. OUTPUT timing — the metronome survives an output-device switch cleanly
+#     in the RENDERED audio. The reopen restarts the mixer clock
+#     (Mixer.set_format); the pending beat keeps its distance in time, so the
+#     first click on the new stream comes one beat after the last click on the
+#     old one, and the beat INDEX/accent continues. test_metro_reopen proves
+#     the scheduler STATE; this proves the audio: a drift-free grid on EACH
+#     side of the switch and the beat kept across it (no hang, no silence, no
+#     early click). The "feels off" scenario: swap headphones for speakers
+#     mid-practice and the metronome hangs or the beat jumps.
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("bpm", [60, 120, 200])
-def test_metronome_resync_renders_clean_beat_across_device_switch(bpm):
+def test_metronome_keeps_a_clean_beat_across_device_switch(bpm):
     mb = 1024
-    mixer = Mixer(max_block=mb)
+    mixer = Mixer(max_block=mb, samplerate=SR)
     metro = MetronomeController(mixer, SR, bpm=bpm)
     metro.start()
     interval = SR * 60.0 / bpm
@@ -309,16 +308,17 @@ def test_metronome_resync_renders_clean_beat_across_device_switch(bpm):
     assert np.all(np.abs(iv_b - interval) <= 2), (
         f"@{bpm}bpm pre-switch beat grid drifted: {iv_b.tolist()}")
     beat_before = metro._beat
+    since_last = mixer.clock - on_b[-1]
 
-    mixer.reset_clock()                  # open_output_device() does this
-    metro.resync()                       # Option B: re-anchor onto the new clock
+    mixer.set_format(SR, mb)             # the output reopens
 
     after = H.render_mixer(mixer, int(interval * 5), block=mb)
     on_a, iv_a = grid(after)
     assert len(on_a) >= 4, f"@{bpm}bpm too few post-switch clicks: {on_a}"
-    # PROMPT re-attack: the first click on the new stream lands within one beat,
-    # not after a hang or a dropped beat.
-    assert on_a[0] <= interval, f"@{bpm}bpm first post-switch click late: {on_a[0]}"
+    # The first click on the new stream is one beat after the last one on the
+    # old stream: not early (a jump the player hears) and not late (a hang).
+    assert abs(since_last + on_a[0] - interval) <= 2, (
+        f"@{bpm}bpm beat across the switch: {since_last + on_a[0]} samples")
     # the new stream's grid is itself drift-free
     assert np.all(np.abs(iv_a - interval) <= 2), (
         f"@{bpm}bpm post-switch beat grid drifted: {iv_a.tolist()}")

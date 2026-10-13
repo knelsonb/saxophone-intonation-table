@@ -1,10 +1,12 @@
-"""Drone output-pitch + samplerate-rebuild validation (uses sim_harness).
+"""Drone output-pitch + output-rate-change validation (uses sim_harness).
 
-Locks the device-switch pitch fix: DroneController.set_samplerate now rebuilds
-the TinySoundFont source at the new rate, so the drone holds its target pitch
-instead of shifting by 12*log2(new/old) semitones (up to +2547 cents on a
-44.1k->192k switch) -- catastrophic for a tuning reference. Also locks that
-shutdown() nulls the source (no reuse of a closed synth).
+Locks the device-switch pitch fix: when the output format changes, the mixer
+calls the drone source's on_format_changed, which builds a new TinySoundFont
+synth at the new rate (TSF fixes its rate at construction) and strikes the
+held note on it, so the drone holds its target pitch instead of shifting by
+12*log2(new/old) semitones (up to +2547 cents on a 44.1k->192k switch) --
+catastrophic for a tuning reference. Also locks that shutdown() nulls the
+source (no reuse of a closed synth).
 
 Needs tinysoundfont + the bundled SF2 (the venv); skips cleanly without them.
 The drone uses real instrument voices (vibrato / sample detune), so pitch
@@ -53,16 +55,17 @@ def test_drone_sounds_near_a4_at_base_rate():
 
 
 @pytest.mark.parametrize("sr", [48000, 88200, 192000])
-def test_drone_pitch_rate_invariant_after_set_samplerate(sr):
+def test_drone_pitch_rate_invariant_after_a_format_change(sr):
     c = _drone(44100)
     try:
-        assert c._source.samplerate == 44100
-        c.set_samplerate(sr)
-        # The source must be REBUILT at the new rate ...
-        assert c._source.samplerate == sr, "set_samplerate did not rebuild source"
+        src = c._source
+        assert src.samplerate == 44100
+        src.on_format_changed(sr, 2048)
+        # The same source keeps sounding, now synthesised at the new rate ...
+        assert c._source is src and src.samplerate == sr
         # ... and the pitch must stay ~A4, NOT shift by the rate ratio
         # (the bug: 440*sr/44100 -> +147 .. +2547 cents).
-        f = _pitch(c._source, sr)
+        f = _pitch(src, sr)
         err = H.cents(f, 440.0)
         assert abs(err) < 40.0, (
             f"drone at {sr} Hz -> {f:.2f} Hz ({err:+.1f} ct) -- rate-shift bug?")
@@ -70,16 +73,17 @@ def test_drone_pitch_rate_invariant_after_set_samplerate(sr):
         c.shutdown()
 
 
-def test_drone_set_samplerate_is_noop_on_same_or_invalid_rate():
+def test_drone_format_change_is_noop_on_same_or_invalid_format():
     c = _drone(44100)
     try:
         src0 = c._source
-        c.set_samplerate(44100)   # same rate -> no rebuild
-        assert c._source is src0
-        c.set_samplerate(0)       # invalid -> no-op
-        assert c._source is src0
-        c.set_samplerate(-48000)  # invalid -> no-op
-        assert c._source is src0
+        syn0 = src0._syn
+        src0.on_format_changed(44100, 2048)   # same format -> no new synth
+        assert src0._syn is syn0
+        src0.on_format_changed(0, 2048)       # invalid -> no-op
+        src0.on_format_changed(-48000, 2048)
+        src0.on_format_changed(48000, 0)
+        assert src0._syn is syn0 and src0.samplerate == 44100
     finally:
         c.shutdown()
 
