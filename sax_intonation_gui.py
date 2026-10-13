@@ -73,6 +73,7 @@ from sax_audio_engine import (
     DeviceInfo,
     DeviceSelection,
 )
+from sax_deck import DeckController
 from sax_device import DeviceController
 from sax_dialogs import (  # noqa: F401  (AudioPickerDialog, RangeEditorDialog,
     AudioPickerDialog,  # _promote_vendor_prefix re-exported for older importers)
@@ -81,6 +82,7 @@ from sax_dialogs import (  # noqa: F401  (AudioPickerDialog, RangeEditorDialog,
     _promote_vendor_prefix,
     add_lang_toggle,
 )
+from sax_drone import DRONE_FULL_GM, DRONE_PRESETS, DRONE_SYNTH_VOICES, DroneController
 from sax_export import ExportController
 from sax_i18n import STRINGS
 from sax_instrument_controller import InstrumentController
@@ -91,6 +93,7 @@ from sax_instruments import (
     transp_map,
 )
 from sax_intonation_log import MeasurementLog
+from sax_metronome import MetronomeController
 from sax_paths import AppPaths
 from sax_pitch import (  # noqa: F401  (re-exported for older importers)
     A4_DEFAULT,
@@ -102,6 +105,7 @@ from sax_pitch import (  # noqa: F401  (re-exported for older importers)
     midi_note_name,
     note_name_to_midi,
 )
+from sax_pitch_pipes import PitchPipesController
 from sax_session_state import SessionStateController
 from sax_stats import NoteStats
 from sax_table import TableController
@@ -116,58 +120,6 @@ from sax_widgets import (  # noqa: F401  (MatrixCellDelegate re-exported)
     StatusDot,
     TunerWidget,
 )
-
-# The metronome controller lives in its own module (sax_metronome.py,
-# MetronomeController). The METRO panel guards every controller call, so the
-# GUI still launches and the panel renders if the import fails.
-try:
-    from sax_metronome import MetronomeController as _MetronomeController
-except Exception:
-    _MetronomeController = None
-
-# Drone (TSF) + pitch pipes (numpy sine) live in their own modules, guarded
-# the same way as the metronome. The sax_drone voice catalog is the
-# authoritative source when it imports; the 5-preset fallback below keeps the
-# TUNER preset row rendering if it does not. Keep the fallback in step with
-# sax_drone.DRONE_PRESETS.
-try:
-    from sax_drone import (
-        DRONE_FULL_GM as _DRONE_FULL_GM,
-        DRONE_PRESETS as _DRONE_PRESETS,
-        DRONE_SYNTH_VOICES as _DRONE_SYNTH_VOICES,
-        DroneController as _DroneController,
-    )
-except Exception:
-    _DroneController = None
-    # (id, label, GM program) — ids match sax_drone.DRONE_PRESETS (the
-    # authoritative desktop catalog), not droneVoices.ts. Fallback only:
-    # used when sax_drone hasn't imported, so nothing is persisted against it.
-    _DRONE_PRESETS = [
-        ('organ', 'Organ', 19), ('strings', 'Strings', 48),
-        ('cello', 'Cello', 42), ('tenorsax', 'Tenor Sax', 66),
-        ('warmpad', 'Warm Pad', 89),
-    ]
-    # Desktop-only synthesised voices (pure-sine precision reference); kept out of
-    # the 5-voice Android catalog. Mirror sax_drone.DRONE_SYNTH_VOICES.
-    _DRONE_SYNTH_VOICES = [('sine', 'Pure Sine', -1)]
-    _DRONE_FULL_GM = []
-try:
-    from sax_pitch_pipes import PitchPipesController as _PitchPipesController
-except Exception:
-    _PitchPipesController = None
-
-# The tape deck (record mic → single take → playback/export) lives in
-# sax_deck.py (DeckController state machine + DeckPlaybackSource + WAV io).
-# Guarded like metro/drone — the DECK tab builds and renders its transport, and
-# every controller call is guarded, if sax_deck fails to import. The
-# GUI-facing contract: DeckController(
-# mixer, samplerate, *, engine, scratch_dir, on_state_changed); .state ∈
-# {idle, recording, have_take, playing} (hyphen/underscore tolerated);
-# start_record()->bool, stop(), play(), export(path)->bool.
-try:
-    from sax_deck import DeckController as _DeckController
-except Exception:
-    _DeckController = None
 
 APP_NAME = 'Intonation Analyzer'
 APP_VERSION = '1.2.1'
@@ -875,8 +827,7 @@ class MainWindow(QMainWindow):
         # is the voice id the controller resolves.
         seen_ids = set()
         # Presets, then the desktop-only synth voices (pure sine), then full GM.
-        for v in list(_DRONE_PRESETS) + list(_DRONE_SYNTH_VOICES) + list(_DRONE_FULL_GM):
-            vid, label, program = self._drone_voice_fields(v)
+        for vid, label, _program in DRONE_PRESETS + DRONE_SYNTH_VOICES + DRONE_FULL_GM:
             if vid in seen_ids:
                 continue
             seen_ids.add(vid)
@@ -1370,12 +1321,10 @@ class MainWindow(QMainWindow):
 
     def _build_metro_tab(self) -> QWidget:
         """The metronome panel. Audio is driven by MetronomeController
-        (sax_metronome.py). Every controller call is guarded, so the panel
-        renders and the pure-UI controls (BPM display, time-sig, volume)
-        respond even while the controller is absent. Audio actions (start,
-        tap) surface an inline 'not available yet' status rather than
-        claiming to play — the same honesty discipline as the test-tone
-        button. The GUI-facing controller API is: bpm/time_sig/volume/running,
+        (sax_metronome.py). Start surfaces an inline 'not available' status
+        when no output stream can open, rather than claiming to play — the
+        same honesty discipline as the test-tone button. The GUI-facing
+        controller API is: bpm/time_sig/volume/running,
         set_bpm/nudge_bpm/set_time_sig/set_volume, register_tap()->Optional[int],
         start/stop/toggle/is_running, on_state_changed."""
         # Local UI state, seeded from persisted config (the metronome
@@ -1385,25 +1334,15 @@ class MainWindow(QMainWindow):
         if self._metro_time_sig not in self.METRO_TIME_SIGS:
             self._metro_time_sig = '4/4'
         self._metro_running = False
-        # The metronome controller (sax_metronome.py). Constructed here when the
-        # module is present AND the engine exposes a mixer; stays None (an inert
-        # panel) otherwise — e.g. headless with audio disabled. on_state_changed
-        # is the zero-arg callback that re-syncs this panel from controller
-        # state (the controller is the single source of truth for run/bpm/sig).
-        self._metro_ctrl = None
-        if (_MetronomeController is not None
-                and getattr(self._engine, 'mixer', None) is not None):
-            try:
-                sr = int(getattr(self._engine, 'output_samplerate', 0)
-                         or self._engine_sample_rate() or 44100)
-                self._metro_ctrl = _MetronomeController(
-                    self._engine.mixer, sr,
-                    bpm=self._metro_bpm,
-                    time_sig=self._metro_time_sig,
-                    volume=float(getattr(self._cfg, 'click_volume', 1.0)),
-                    on_state_changed=self._on_metro_state_changed)
-            except Exception:
-                self._metro_ctrl = None
+        # The metronome controller (sax_metronome.py). on_state_changed is the
+        # zero-arg callback that re-syncs this panel from controller state
+        # (the controller is the single source of truth for run/bpm/sig).
+        self._metro_ctrl = MetronomeController(
+            self._engine.mixer, self._output_rate(),
+            bpm=self._metro_bpm,
+            time_sig=self._metro_time_sig,
+            volume=float(getattr(self._cfg, 'click_volume', 1.0)),
+            on_state_changed=self._on_metro_state_changed)
 
         w = QWidget()
         outer = QVBoxLayout(w)
@@ -1519,8 +1458,7 @@ class MainWindow(QMainWindow):
             self._metro_slider.setValue(bpm)
             self._metro_slider.blockSignals(blocked)
         self._cfg.last_bpm = bpm
-        if self._metro_ctrl is not None:
-            self._metro_ctrl.set_bpm(bpm)
+        self._metro_ctrl.set_bpm(bpm)
 
     def _metro_nudge(self, delta: int) -> None:
         self._set_metro_bpm(self._metro_bpm + delta)
@@ -1535,21 +1473,15 @@ class MainWindow(QMainWindow):
             btn.setChecked(key == ts)
             btn.blockSignals(blocked)
         self._cfg.last_time_sig = ts
-        if self._metro_ctrl is not None:
-            self._metro_ctrl.set_time_sig(ts)
+        self._metro_ctrl.set_time_sig(ts)
 
     def _on_metro_volume(self, value: int) -> None:
         self._metro_vol_lbl.setText(f'{value}%')
         vol = value / 100.0
         self._cfg.click_volume = vol
-        if self._metro_ctrl is not None:
-            self._metro_ctrl.set_volume(vol)
+        self._metro_ctrl.set_volume(vol)
 
     def _on_metro_tap(self) -> None:
-        if self._metro_ctrl is None:
-            self._metro_status.setText(self._t('metro_unavailable'))
-            self._metro_status.setVisible(True)
-            return
         self._metro_status.setVisible(False)
         # The controller updates its own bpm and fires on_state_changed, which
         # re-syncs the readout here — no manual set needed.
@@ -1567,9 +1499,6 @@ class MainWindow(QMainWindow):
         self._metro_status.setVisible(True)
 
     def _on_metro_toggle(self, on: bool) -> None:
-        if self._metro_ctrl is None:
-            self._metro_revert_start()
-            return
         if not on:
             self._metro_ctrl.stop()   # fires on_state_changed
             return
@@ -1598,8 +1527,6 @@ class MainWindow(QMainWindow):
         the single source of truth: pull state from it and sync the panel so
         the run dot, Start/Stop label, BPM readout, and time-sig can't drift."""
         ctrl = self._metro_ctrl
-        if ctrl is None:
-            return
         running = bool(ctrl.is_running())
         self._metro_running = running
         blocked = self._btn_metro_start.blockSignals(True)
@@ -1631,7 +1558,7 @@ class MainWindow(QMainWindow):
     # As in the Android useDeck hook: record the MIC to a single take, play it back
     # through the mixer, export it to a WAV. DeckController (sax_deck.py) owns the
     # state machine + the engine input-recording tap + WAV io; this panel is its
-    # transport and is inert+guarded if the module is unavailable. Honesty discipline:
+    # transport. Honesty discipline:
     # the pulsing-red dot + a 'recording' state appear ONLY when the controller
     # actually armed the mic input — never on a bare button press.
     #
@@ -1645,29 +1572,19 @@ class MainWindow(QMainWindow):
     def _build_deck_tab(self) -> QWidget:
         """The DECK tab: Record / Stop / Play / Export transport with
         state-driven enable + labels, an inline status line, and the pulsing-red
-        recording dot (set_deck_recording). Wired to
-        DeckController; inert + guarded if sax_deck is unavailable."""
+        recording dot (set_deck_recording). Wired to DeckController."""
         self._deck_played_once = False
         self._deck_last_state = None
         self._deck_last_can_record = None
-        # Construct the controller (None → inert transport). Mirrors drone/metro,
-        # plus max_seconds from the clamped config field.
-        self._deck_ctrl = None
-        if (_DeckController is not None
-                and getattr(self._engine, 'mixer', None) is not None):
-            try:
-                sr = int(getattr(self._engine, 'output_samplerate', 0)
-                         or self._engine_sample_rate() or 44100)
-                self._deck_ctrl = _DeckController(
-                    self._engine.mixer, sr,
-                    engine=self._engine,           # arms the input-recording tap
-                    max_seconds=float(getattr(self._cfg, 'deck_max_seconds',
-                                              300.0) or 300.0),
-                    scratch_dir=(str(getattr(self._cfg, 'deck_scratch_dir', '')
-                                     or '') or None),
-                    on_state_changed=self._on_deck_state_changed)
-            except Exception:
-                self._deck_ctrl = None
+        # The deck controller, with max_seconds from the clamped config field.
+        self._deck_ctrl = DeckController(
+            self._engine.mixer, self._output_rate(),
+            engine=self._engine,           # arms the input-recording tap
+            max_seconds=float(getattr(self._cfg, 'deck_max_seconds',
+                                      300.0) or 300.0),
+            scratch_dir=(str(getattr(self._cfg, 'deck_scratch_dir', '')
+                             or '') or None),
+            on_state_changed=self._on_deck_state_changed)
 
         w = QWidget()
         outer = QVBoxLayout(w)
@@ -1733,8 +1650,7 @@ class MainWindow(QMainWindow):
         self._deck_pump_timer = QTimer(self)
         self._deck_pump_timer.setInterval(100)
         self._deck_pump_timer.timeout.connect(self._deck_pump)
-        if self._deck_ctrl is not None:
-            self._deck_pump_timer.start()
+        self._deck_pump_timer.start()
 
         # Paint the initial (idle/empty, or controller-driven) transport.
         self._sync_deck_transport()
@@ -1745,8 +1661,6 @@ class MainWindow(QMainWindow):
         enum, and hyphen OR underscore ('have-take'/'have_take'), so the GUI
         can't drift from sax_deck's exact spelling (str-enum, value 'have-take')."""
         ctrl = self._deck_ctrl
-        if ctrl is None:
-            return 'idle'
         raw = getattr(ctrl, 'state', 'idle')
         val = getattr(raw, 'value', None) or getattr(raw, 'name', None) or raw
         s = str(val).replace('-', '_').lower()
@@ -1758,8 +1672,6 @@ class MainWindow(QMainWindow):
         the controller lacks the probe — start_record()'s False-return is the
         authoritative post-click check either way."""
         ctrl = self._deck_ctrl
-        if ctrl is None:
-            return False
         if hasattr(ctrl, 'can_record'):
             try:
                 return bool(ctrl.can_record())
@@ -1827,8 +1739,6 @@ class MainWindow(QMainWindow):
         (it fires on_state_changed when a transition happens), then re-sync if
         the state or the can_record() probe changed (e.g. the mic opened)."""
         ctrl = self._deck_ctrl
-        if ctrl is None:
-            return
         try:
             if hasattr(ctrl, 'pump'):
                 ctrl.pump()          # may fire on_state_changed → _sync
@@ -1849,9 +1759,6 @@ class MainWindow(QMainWindow):
         self._deck_show_status('deck_unavailable')
 
     def _on_deck_record_toggle(self, on: bool) -> None:
-        if self._deck_ctrl is None:
-            self._deck_revert_record()
-            return
         if not on:
             # Un-toggling Record while recording = stop the take.
             try:
@@ -1876,17 +1783,12 @@ class MainWindow(QMainWindow):
             self._sync_deck_transport()
 
     def _on_deck_stop(self) -> None:
-        if self._deck_ctrl is None:
-            return
         try:
             self._deck_ctrl.stop()           # fires on_state_changed
         except Exception:
             self._sync_deck_transport()
 
     def _on_deck_play(self) -> None:
-        if self._deck_ctrl is None:
-            self._deck_show_status('deck_play_unavailable')
-            return
         self._deck_status.setVisible(False)
         # Playback sounds through the output mixer — ensure an output stream is
         # open before claiming to play (don't show 'playing' if nothing can be
@@ -1912,9 +1814,6 @@ class MainWindow(QMainWindow):
             self._sync_deck_transport()
 
     def _on_deck_export(self) -> None:
-        if self._deck_ctrl is None:
-            self._deck_show_status('deck_export_fail')
-            return
         # File dialog — reuse sax_export's getSaveFileName pattern, .wav filter.
         start = str(getattr(self._cfg, 'last_take_path', '') or '')
         path, _sel = QFileDialog.getSaveFileName(
@@ -1937,22 +1836,13 @@ class MainWindow(QMainWindow):
 
     # ── Drone + pitch pipes ───────────────────────────────────────────────────
     @staticmethod
-    def _drone_voice_fields(v) -> tuple:
-        """(id, label, program) for a drone-voice entry, accepting either the
-        sax_drone DroneVoice object (.id/.label/.program) or the fallback
-        (id, label, program) tuple."""
-        if isinstance(v, tuple):
-            return v[0], v[1], v[2]
-        return v.id, v.label, v.program
-
-    @staticmethod
     def _fmt_semitone(n: int) -> str:
         return f'{n:+d}' if n else '0'
 
     def _build_drone_bar(self) -> QWidget:
         """The drone strip on the TUNER tab: on/off + 5-preset row + volume +
         semitone steppers + a pitch-pipes launcher. Wired to DroneController
-        (sax_drone.py); inert + guarded if it is unavailable. Turning the
+        (sax_drone.py). Turning the
         drone on requires an output stream (honesty discipline — no 'on' state
         if nothing can sound). The 128-GM picker lives in SETUP and stays in
         sync via the controller's on_state_changed (single source of truth)."""
@@ -1963,24 +1853,15 @@ class MainWindow(QMainWindow):
         self._drone_semitones = self._cfg.drone_semitones
         self._pipes_ctrl = None
         self._pipes_dlg = None
-        # Construct the drone controller (None → inert panel).
-        self._drone_ctrl = None
-        if (_DroneController is not None
-                and getattr(self._engine, 'mixer', None) is not None):
-            try:
-                sr = int(getattr(self._engine, 'output_samplerate', 0)
-                         or self._engine_sample_rate() or 44100)
-                self._drone_ctrl = _DroneController(
-                    self._engine.mixer, sr,
-                    voice_id=self._drone_voice_id,
-                    volume=self._drone_volume,
-                    semitones=self._drone_semitones,
-                    a4=float(getattr(self._engine, 'a4', 440.0) or 440.0),
-                    enabled=False,
-                    engine=self._engine,   # enables D3 duck-attach on enable
-                    on_state_changed=self._on_drone_state_changed)
-            except Exception:
-                self._drone_ctrl = None
+        self._drone_ctrl = DroneController(
+            self._engine.mixer, self._output_rate(),
+            voice_id=self._drone_voice_id,
+            volume=self._drone_volume,
+            semitones=self._drone_semitones,
+            a4=float(self._engine.a4),
+            enabled=False,
+            engine=self._engine,   # enables D3 duck-attach on enable
+            on_state_changed=self._on_drone_state_changed)
 
         grp = QGroupBox(self._t('drone_group'))
         g = QVBoxLayout(grp)
@@ -2001,8 +1882,7 @@ class MainWindow(QMainWindow):
             'QPushButton:checked{background:#c0392b;}')
         row1.addWidget(self._btn_drone_on)
         self._drone_preset_btns: dict = {}
-        for v in _DRONE_PRESETS:
-            vid, label, _program = self._drone_voice_fields(v)
+        for vid, label, _program in DRONE_PRESETS:
             b = QPushButton(label)
             b.setCheckable(True)
             b.setChecked(vid == self._drone_voice_id)
@@ -2066,9 +1946,6 @@ class MainWindow(QMainWindow):
         return grp
 
     def _on_drone_toggle(self, on: bool) -> None:
-        if self._drone_ctrl is None:
-            self._drone_revert_toggle()
-            return
         if not on:
             self._drone_ctrl.set_enabled(False)
             return
@@ -2089,7 +1966,7 @@ class MainWindow(QMainWindow):
         """If the SoundFont synth could not load, the drone switched to the
         pure-sine voice; say so and point the voice picker at it."""
         ctrl = self._drone_ctrl
-        if ctrl is None or not getattr(ctrl, 'synth_fallback', False):
+        if not ctrl.synth_fallback:
             return
         combo = getattr(self, '_drone_voice_combo', None)
         if combo is not None:
@@ -2111,24 +1988,19 @@ class MainWindow(QMainWindow):
     def _on_drone_preset(self, voice_id: str) -> None:
         self._drone_voice_id = voice_id
         self._cfg.drone_voice_id = voice_id
-        if self._drone_ctrl is not None:
-            self._drone_ctrl.set_voice(voice_id)   # fires on_state_changed
-        else:
-            self._refresh_drone_voice_widgets()
+        self._drone_ctrl.set_voice(voice_id)   # fires on_state_changed
 
     def _on_drone_volume(self, value: int) -> None:
         self._drone_volume = value / 100.0
         self._cfg.drone_volume = self._drone_volume
-        if self._drone_ctrl is not None:
-            self._drone_ctrl.set_volume(self._drone_volume)
+        self._drone_ctrl.set_volume(self._drone_volume)
 
     def _drone_semitone_nudge(self, delta: int) -> None:
         n = max(-12, min(12, self._drone_semitones + delta))
         self._drone_semitones = n
         self._drone_semi_lbl.setText(self._fmt_semitone(n))
         self._cfg.drone_semitones = n
-        if self._drone_ctrl is not None:
-            self._drone_ctrl.set_semitones(n)
+        self._drone_ctrl.set_semitones(n)
 
     def _refresh_drone_voice_widgets(self) -> None:
         """Sync the TUNER preset row + the SETUP voice combo to the current
@@ -2151,8 +2023,6 @@ class MainWindow(QMainWindow):
         the single source of truth: sync the on/off button, voice selection
         (preset row + SETUP combo), volume, and semitone from it + persist."""
         ctrl = self._drone_ctrl
-        if ctrl is None:
-            return
         enabled = bool(ctrl.is_enabled()) if hasattr(ctrl, 'is_enabled') \
             else bool(getattr(ctrl, 'enabled', False))
         blocked = self._btn_drone_on.blockSignals(True)
@@ -2179,18 +2049,12 @@ class MainWindow(QMainWindow):
         if self._pipes_dlg is not None and self._pipes_dlg.isVisible():
             self._pipes_dlg.raise_()
             return
-        # Lazily construct the controller.
-        if (self._pipes_ctrl is None and _PitchPipesController is not None
-                and getattr(self._engine, 'mixer', None) is not None):
-            try:
-                sr = int(getattr(self._engine, 'output_samplerate', 0)
-                         or self._engine_sample_rate() or 44100)
-                self._pipes_ctrl = _PitchPipesController(
-                    self._engine.mixer, sr,
-                    a4=float(getattr(self._engine, 'a4', 440.0) or 440.0),
-                    on_state_changed=self._on_pipes_state_changed)
-            except Exception:
-                self._pipes_ctrl = None
+        # Built on first open; until then there is nothing to retune.
+        if self._pipes_ctrl is None:
+            self._pipes_ctrl = PitchPipesController(
+                self._engine.mixer, self._output_rate(),
+                a4=float(self._engine.a4),
+                on_state_changed=self._on_pipes_state_changed)
 
         from PyQt6.QtWidgets import QGridLayout
         dlg = QDialog(self)
@@ -2227,11 +2091,6 @@ class MainWindow(QMainWindow):
         dlg.show()
 
     def _on_pipe_tapped(self, midi: int) -> None:
-        if self._pipes_ctrl is None:
-            self._pipes_status.setText(self._t('pipes_unavailable'))
-            self._pipes_status.setVisible(True)
-            self._sync_pipe_btns()
-            return
         if not self._ensure_output_open():
             self._pipes_status.setText(self._t('pipes_unavailable'))
             self._pipes_status.setVisible(True)
@@ -2665,6 +2524,11 @@ class MainWindow(QMainWindow):
         except Exception:
             sr = 0
         return sr if sr > 0 else int(DEFAULT_SAMPLE_RATE)
+
+    def _output_rate(self) -> int:
+        """Rate the output sources are built at: the output stream's, or the
+        input default until an output stream has opened."""
+        return int(self._engine.output_samplerate or self._engine_sample_rate())
 
     def _device_selection_from_cfg(self) -> DeviceSelection:
         return DeviceSelection(

@@ -120,39 +120,26 @@ def test_pack_smoke_chain_synthesizes_non_silent():
 
 
 # ---------------------------------------------------------------------------
-# 4. Guard-imported modules must be in the spec hiddenimports (REL-FROZEN-SMOKE).
-#    The audio controllers are imported under try/except in the GUI
-#    (so the dev app degrades gracefully if one is absent). PyInstaller's static
-#    analysis CANNOT see a guarded import, so each must be declared in the spec's
-#    hiddenimports or the frozen binary ships that tab INERT — exactly the
-#    case where sax_deck was missing from the spec and the whole Deck tab would
-#    have been dead (_DeckController=None) in the onefile. This locks it deterministically,
-#    no PyInstaller build required.
+# 4. Every app module ships in the frozen binary (REL-FROZEN-SMOKE).
+#    PyInstaller starts from the spec's entry script and follows its imports.
+#    An app module it does not reach, and the spec does not list in
+#    hiddenimports, is left out of the onefile and the feature that needs it
+#    is dead there (the sax_deck-missing-from-spec bug class). The check below
+#    follows only imports that run when a module is imported (not those inside
+#    a function), so a module the app loads lazily must be declared. No
+#    PyInstaller build required.
 # ---------------------------------------------------------------------------
-def _guard_imported_sax_modules() -> set:
-    import ast
-    tree = ast.parse((_REPO / "sax_intonation_gui.py").read_text(encoding="utf-8"))
-    guarded = set()
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Try):
-            continue
-        for sub in ast.walk(node):
-            if isinstance(sub, ast.ImportFrom) and (sub.module or "").startswith("sax_"):
-                guarded.add(sub.module)
-            elif isinstance(sub, ast.Import):
-                for alias in sub.names:
-                    if alias.name.startswith("sax_"):
-                        guarded.add(alias.name)
-    return guarded
-
-
-def _spec_hiddenimports() -> set:
+def _spec_tree():
     # Parse the spec via AST so a module NAME that only appears in a comment does
     # not count as declared (a regex over the file text would false-pass).
     import ast
-    tree = ast.parse((_REPO / "intonation_analyzer.spec").read_text(encoding="utf-8"))
+    return ast.parse((_REPO / "intonation_analyzer.spec").read_text(encoding="utf-8"))
+
+
+def _spec_hiddenimports() -> set:
+    import ast
     hidden = set()
-    for node in ast.walk(tree):
+    for node in ast.walk(_spec_tree()):
         if (isinstance(node, ast.keyword) and node.arg == "hiddenimports"
                 and isinstance(node.value, ast.List)):
             for elt in node.value.elts:
@@ -161,11 +148,56 @@ def _spec_hiddenimports() -> set:
     return hidden
 
 
-def test_guard_imported_modules_are_in_spec_hiddenimports():
-    guarded = _guard_imported_sax_modules()
-    assert guarded, "expected to find try/except-guarded sax_ imports in the GUI"
-    missing = guarded - _spec_hiddenimports()
+def _import_time_imports(module: str) -> set:
+    """In-repo modules ``module`` imports at import time: every import
+    statement outside a function or class body, including ones under a
+    module-level ``if`` or ``try``."""
+    import ast
+    path = _REPO / f"{module}.py"
+    if not path.exists():
+        return set()
+    found = set()
+
+    def visit(node):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            if isinstance(child, ast.Import):
+                found.update(a.name for a in child.names)
+            elif isinstance(child, ast.ImportFrom) and child.level == 0 and child.module:
+                found.add(child.module)
+            visit(child)
+
+    visit(ast.parse(path.read_text(encoding="utf-8")))
+    return {m for m in found if (_REPO / f"{m}.py").exists()}
+
+
+def _bundled_modules() -> set:
+    pending = ["main", *sorted(_spec_hiddenimports())]
+    seen: set = set()
+    while pending:
+        mod = pending.pop()
+        if mod in seen:
+            continue
+        seen.add(mod)
+        pending.extend(_import_time_imports(mod) - seen)
+    return seen
+
+
+def test_spec_starts_from_the_launcher():
+    import ast
+    analysis = next(node for node in ast.walk(_spec_tree())
+                    if isinstance(node, ast.Call)
+                    and getattr(node.func, "id", "") == "Analysis")
+    scripts = ast.unparse(analysis.args[0])
+    assert "'main.py'" in scripts, f"spec entry script is {scripts}, expected main.py"
+
+
+def test_every_app_module_is_bundled():
+    app_modules = {p.stem for p in _REPO.glob("sax_*.py")}
+    missing = app_modules - _bundled_modules()
     assert not missing, (
-        f"guard-imported modules NOT in intonation_analyzer.spec hiddenimports: "
-        f"{sorted(missing)} — PyInstaller would ship them INERT in the frozen "
-        f"binary (the sax_deck-missing-from-spec bug class)")
+        f"app modules neither imported at import time from main.py nor listed in "
+        f"intonation_analyzer.spec hiddenimports: {sorted(missing)} — PyInstaller "
+        f"would leave them out of the frozen binary (the sax_deck-missing-from-spec "
+        f"bug class)")

@@ -29,21 +29,12 @@ installed.
 from __future__ import annotations
 
 import math
-import os
 from typing import Callable, List, Optional, Tuple
 
 import numpy as np
 
-try:  # GainGlide is the mixer's de-zipper (sax_mixer); guard so this module
-    from sax_mixer import GainGlide as _MixerGainGlide  # imports even if absent.
-except Exception:  # pragma: no cover
-    _MixerGainGlide = None
-
-try:  # frozen-aware asset resolution (PyInstaller bundle vs. source tree).
-    from sax_assets import asset_path as _asset_path
-except Exception:  # pragma: no cover - dev fallback if sax_assets is absent
-    _asset_path = None
-
+from sax_assets import asset_path
+from sax_mixer import GainGlide
 from sax_pitch import A4_DEFAULT, midi_to_freq
 
 _SF2_FILENAME = "GeneralUser-GS.sf2"
@@ -122,13 +113,9 @@ DRONE_SYNTH_VOICES: List[Tuple[str, str, int]] = [
 
 
 def _default_sf2_path() -> str:
-    """Frozen-aware path to the bundled SoundFont. Uses sax_assets.asset_path
-    (resolves against sys._MEIPASS in a PyInstaller build) when available, else
-    falls back to a dev-checkout path relative to this module."""
-    if _asset_path is not None:
-        return _asset_path("assets", _SF2_FILENAME)
-    return os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "assets", _SF2_FILENAME)
+    """Frozen-aware path to the bundled SoundFont: resolves against
+    sys._MEIPASS in a PyInstaller build, else the source checkout."""
+    return asset_path("assets", _SF2_FILENAME)
 
 
 # ---------------------------------------------------------------------------
@@ -187,42 +174,6 @@ def _clamp01(v: float) -> float:
     if math.isnan(v):
         return 0.0
     return max(0.0, min(1.0, v))
-
-
-# Fallback GainGlide (only used if sax_mixer.GainGlide isn't importable) so this
-# module stays self-contained; mirrors the API of the sax_mixer class.
-if _MixerGainGlide is not None:
-    GainGlide = _MixerGainGlide
-else:  # pragma: no cover - exercised only without sax_mixer.GainGlide
-    class GainGlide:  # type: ignore[no-redef]
-        def __init__(self, max_block: int, samplerate: int,
-                     glide_ms: float = 5.0, initial: float = 1.0):
-            self.gain = float(initial)
-            self.target = float(initial)
-            self._step = 1.0 / max(1.0, glide_ms * samplerate / 1000.0)
-            self._ramp = np.arange(int(max_block), dtype=np.float32)
-            self._g = np.zeros(int(max_block), dtype=np.float32)
-
-        def set_target(self, level: float) -> None:
-            self.target = float(level)
-
-        def apply(self, buf: np.ndarray, frames: int) -> None:
-            if frames <= 0:
-                return
-            if self.gain == self.target:
-                if self.gain != 1.0:
-                    buf[:frames] *= np.float32(self.gain)
-                return
-            step = self._step if self.target > self.gain else -self._step
-            g = self._g[:frames]
-            np.multiply(self._ramp[:frames], np.float32(step), out=g)
-            g += np.float32(self.gain)
-            lo, hi = sorted((self.gain, self.target))
-            np.clip(g, lo, hi, out=g)
-            buf[:frames] *= g
-            self.gain = float(g[frames - 1])
-            if abs(self.gain - self.target) <= self._step:
-                self.gain = self.target
 
 
 # ---------------------------------------------------------------------------

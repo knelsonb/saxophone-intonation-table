@@ -37,10 +37,8 @@ from typing import Callable, List, Optional
 
 import numpy as np
 
-try:  # canonical allowlist (single source of truth with the config/GUI selector)
-    from sax_config import TIME_SIG_VALUES as VALID_TIME_SIGS
-except Exception:  # pragma: no cover - standalone fallback if config unavailable
-    VALID_TIME_SIGS = frozenset({"2/4", "3/4", "4/4", "6/8"})
+# Canonical allowlist, shared with the config coercion and the GUI selector.
+from sax_config import TIME_SIG_VALUES as VALID_TIME_SIGS
 
 __all__ = [
     "BPM_MIN", "BPM_MAX", "DEFAULT_BPM", "DEFAULT_TIME_SIG", "VALID_TIME_SIGS",

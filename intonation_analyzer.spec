@@ -66,9 +66,9 @@ a = Analysis(
         'sax_config',
         'sax_flow_layout',
         'sax_audio_engine',
-        # Audio output modules. sax_drone / sax_pitch_pipes / sax_deck are
-        # guard-imported (try/except), so PyInstaller's static analysis can miss
-        # them — list them explicitly or the frozen build ships those tabs inert.
+        # Audio output modules, listed explicitly so a later change that loads
+        # one lazily cannot drop it from the binary (test_packaging checks that
+        # every app module is either reached at import time or listed here).
         'sax_mixer',
         'sax_coordination',
         'sax_metronome',
