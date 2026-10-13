@@ -365,7 +365,13 @@ class InstrumentController:
             # (the autotune flow does its own stats clear + refresh
             # via on_a4_changed). This matches the v0.5.x behaviour
             # before the extraction.
-            self._set_a4(float(a4_clamped))
-            stats.clear()
-            if self._on_a4_changed is not None:
-                self._on_a4_changed()
+            # Pause detection across the change, as the manual A4 path does,
+            # so no reading lands between the stats clear and the new run.
+            self._engine.pause_emissions()
+            try:
+                self._set_a4(float(a4_clamped))
+                stats.clear()
+                if self._on_a4_changed is not None:
+                    self._on_a4_changed()
+            finally:
+                self._engine.resume_emissions()

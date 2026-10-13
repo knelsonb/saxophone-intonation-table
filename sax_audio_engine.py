@@ -556,8 +556,10 @@ class AudioEngine:
         self._reset_serial = 0
         self._detector_serial = 0
         # Bumped by every set_a4(). Each NoteEvent carries the generation it
-        # was graded under.
+        # was graded under; the consumer resets the detector when it changes,
+        # so no reading measured against an old A4 is emitted after the change.
         self.a4_generation = 0
+        self._detector_a4_generation = 0
         self._analysis_errors = 0
         self._wake = threading.Event()
         self._analysis_thread: Optional[threading.Thread] = None
@@ -2119,11 +2121,14 @@ class AudioEngine:
     def _analyse_hop(self, ring: _InputRing, a4: float, a4_gen: int,
                      serial: int, mode: str) -> None:
         det = self._detector
-        if serial != self._detector_serial:
-            # A reset request or a mode change.
+        if serial != self._detector_serial or a4_gen != self._detector_a4_generation:
+            # A reset request, a mode change or a new A4: nothing the detector
+            # holds (vote window, lock, pending readings graded against the
+            # old A4) may survive into the new state.
             det.set_mode(mode)
             det.midi_min, det.midi_max = self._midi_min, self._midi_max
             self._detector_serial = serial
+            self._detector_a4_generation = a4_gen
         sr = ring.samplerate or int(self.samplerate)
         events = det.process(ring.window, sr, a4, a4_gen, self.mic_gain,
                              self.coordination_step)

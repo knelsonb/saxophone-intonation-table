@@ -235,7 +235,7 @@ class MainWindow(QMainWindow):
         # The first run opens after _restore_session_state below, so it is
         # stamped with the restored A4 and nickname.
         if AUDIO_OK:
-            self._engine.signals.note_detected.connect(self._on_note)
+            self._engine.signals.note_event.connect(self._on_note_event)
             self._engine.signals.state_changed.connect(self._on_engine_state)
             self._engine.signals.devices_changed.connect(
                 self._on_devices_changed)
@@ -2203,6 +2203,18 @@ class MainWindow(QMainWindow):
         self._refresh_table()
 
     # ── Audio-Callback ────────────────────────────────────────────────────────
+    def _on_note_event(self, ev) -> None:
+        """A reading from the analysis thread, queued to this thread.
+
+        A reading graded against an A4 that has since been replaced is
+        dropped, not re-graded: it was measured before the change, so it
+        belongs to the run that ended with that A4, not to the run the change
+        opened. The generation counter (not the A4 value) decides, so a round
+        trip 440 -> 442 -> 440 still drops readings from the first 440."""
+        if ev.a4_generation != self._engine.a4_generation:
+            return
+        self._on_note(ev.midi, ev.freq, ev.cents)
+
     def _on_note(self, midi_kl: int, freq: float, cents: float):
         if not self._recording:
             return

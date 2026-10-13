@@ -191,3 +191,37 @@ def test_readings_carry_the_a4_they_were_graded_against():
     assert events and all((e.a4, e.a4_generation) == (442.0, gen) for e in events)
     # 440 Hz against A4 = 442 Hz is 7.85 cents flat.
     assert all(abs(e.cents + 7.85) < 0.2 for e in events)
+
+
+def test_an_a4_change_discards_readings_waiting_from_the_old_a4():
+    """Readings held back by the release guard were graded against the old A4;
+    after a change none of them may come out, even when the note continues."""
+    eng, events = _engine_with_sink()
+    tone = sim.sax_like(440.0, 44100, 16384 * 30, 0.5)
+    for i in range(12):
+        eng.feed_input_frames(tone[i * 2048:(i + 1) * 2048])
+    held = len(events)
+    assert held, "the note was measured before the change"
+    eng.set_a4(443.0)
+    new_gen = eng.a4_generation
+    for i in range(12, 40):
+        eng.feed_input_frames(tone[i * 2048:(i + 1) * 2048])
+    after = events[held:]
+    assert after, "the continuing note is measured at the new A4"
+    assert all(e.a4_generation == new_gen and e.a4 == 443.0 for e in after)
+
+
+def test_the_window_drops_a_reading_graded_against_a_replaced_a4():
+    """A reading already queued to the GUI thread when A4 changes still carries
+    the old generation; the window must not record it."""
+    from types import SimpleNamespace
+
+    import sax_intonation_gui as gui
+    from sax_detector import NoteEvent
+
+    recorded = []
+    window = SimpleNamespace(_engine=SimpleNamespace(a4_generation=3),
+                             _on_note=lambda *a: recorded.append(a))
+    gui.MainWindow._on_note_event(window, NoteEvent(69, 440.0, 0.0, 440.0, 2))
+    gui.MainWindow._on_note_event(window, NoteEvent(69, 442.0, 1.0, 442.0, 3))
+    assert recorded == [(69, 442.0, 1.0)]

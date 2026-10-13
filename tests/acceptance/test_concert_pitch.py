@@ -308,8 +308,6 @@ def test_accepting_autotune_keeps_my_notes_like_a_manual_a4_change_does(app):
 
 
 # ----------------------------------------------- readings measured before the change
-@pytest.mark.xfail(strict=True, reason="Sauron-3: readings measured at the old A4 and still "
-                                       "queued when autotune is accepted land in the new run")
 def test_a_note_held_through_autotune_is_logged_against_the_new_pitch(app):
     """I keep sustaining E4 while clicking Yes: the 443 run is graded against 443 only."""
     app.pick_instrument(ALTO)
