@@ -26,6 +26,7 @@ if __name__ == '__main__':
     import sax_crash
     sax_crash.install()
 
+import datetime
 import math
 import threading
 from pathlib import Path
@@ -81,13 +82,6 @@ from PyQt6.QtWidgets import (
 import sax_config
 import sax_instruments
 import sax_theme
-from sax_theme import IN_TUNE_CENTS, cents_band
-from sax_i18n import STRINGS
-from sax_session_state import SessionStateController
-from sax_export import ExportController
-from sax_table import TableController
-from sax_instrument_controller import InstrumentController
-from sax_device import DeviceController
 
 # v0.5.4: AudioEngine + pitch detection + filter presets live in their own
 # module so the engine has a state machine, host-API fallback chain, and
@@ -127,7 +121,7 @@ from sax_instruments import (
 from sax_intonation_log import MeasurementLog
 from sax_session_state import SessionStateController
 from sax_table import TableController
-from sax_theme import CLOSE_CENTS, IN_TUNE_CENTS
+from sax_theme import IN_TUNE_CENTS, cents_band
 
 # The metronome controller lives in its own module (sax_metronome.py,
 # MetronomeController). The METRO panel guards every controller call, so the

@@ -32,7 +32,11 @@ CRASH_LOG_MAX_BYTES = 256 * 1024
 
 # Returns 'de' or 'en'. Replaced by the window once it exists, so the dialog
 # follows the language the user picked.
-_lang_source: Callable[[], str] = lambda: "en"
+def _default_lang() -> str:
+    return "en"
+
+
+_lang_source: Callable[[], str] = _default_lang
 # A slot that keeps failing would otherwise stack one modal box per failure.
 _dialog_open = False
 

@@ -28,8 +28,7 @@ the module-level "active" pointer needs no lock.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, fields
-
+from dataclasses import dataclass
 
 # Cents thresholds shared by every view (tuner, table, PDF, chart): within
 # IN_TUNE_CENTS is green, within CLOSE_CENTS amber, beyond that red.

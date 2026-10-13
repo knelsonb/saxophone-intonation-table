@@ -14,11 +14,6 @@ from __future__ import annotations
 
 import math
 
-from sax_theme import IN_TUNE_CENTS, cents_band
-
-# Bar colour for each cents_band() result.
-_BAND_RGB = {'in': (60, 220, 100), 'close': (255, 200, 40),
-             'off': (240, 80, 80)}
 from PyQt6.QtCore import QPointF, QRectF, Qt
 from PyQt6.QtGui import (
     QColor,
@@ -29,7 +24,11 @@ from PyQt6.QtGui import (
     QPolygonF,
 )
 
-from sax_theme import CLOSE_CENTS, IN_TUNE_CENTS
+from sax_theme import IN_TUNE_CENTS, cents_band
+
+# Bar colour for each cents_band() result.
+_BAND_RGB = {'in': (60, 220, 100), 'close': (255, 200, 40),
+             'off': (240, 80, 80)}
 
 
 def _sans(point_size: int, bold: bool = False) -> QFont:

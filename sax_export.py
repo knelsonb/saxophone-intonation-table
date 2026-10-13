@@ -50,14 +50,12 @@ from PyQt6.QtWidgets import (
 )
 
 import sax_instruments
+from sax_intonation_chart import render_intonation_chart
+from sax_intonation_log import MeasurementLog
 from sax_theme import cents_band
 
 # PDF mean-column text colour for each cents_band() result.
 _PDF_BAND_COLOR = {'in': '#1b5e20', 'close': '#e65100', 'off': '#b71c1c'}
-from sax_intonation_log import MeasurementLog
-from sax_intonation_chart import render_intonation_chart
-from sax_intonation_log import MeasurementLog
-from sax_theme import CLOSE_CENTS, IN_TUNE_CENTS
 
 if TYPE_CHECKING:
     from PyQt6.QtWidgets import QMainWindow
