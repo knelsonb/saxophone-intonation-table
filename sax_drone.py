@@ -1,14 +1,14 @@
 """Drone: a sustained reference voice via TinySoundFont (GeneralUser-GS) +
 the D3 mic-coordination duck consumer.
 
-Sprint-3 keystone (parity feature D1). The drone sounds a sustained pitched
+The drone sounds a sustained pitched
 note — the current reference note shifted by a signed semitone offset — through
 TinySoundFont loading the bundled GeneralUser-GS.sf2, so the user can tune
 against any of the 5 ported presets (Organ/Strings/Cello/Tenor Sax/Warm Pad =
 GM 19/48/42/66/89) or the full 128-voice GM catalogue.
 
 Because the drone is the first *pitched* output source (``active_midi`` != None),
-it is what finally activates the Sprint-1 mic-coordination policy end-to-end:
+it is what activates the mic-coordination policy end-to-end:
 its sounding MIDI flows through ``mixer.sounding_midis()`` ->
 ``engine.get_sounding_output_midis()`` -> ``OutputCoordinator.update()``, which
 vote-excludes that MIDI from the incumbent pitch (so the tuner readout doesn't
@@ -34,12 +34,12 @@ from typing import Callable, List, Optional, Tuple
 
 import numpy as np
 
-try:  # GainGlide is Gandalf's de-zipper (sax_mixer); guard so this module
+try:  # GainGlide is the mixer's de-zipper (sax_mixer); guard so this module
     from sax_mixer import GainGlide as _MixerGainGlide  # imports even if absent.
 except Exception:  # pragma: no cover
     _MixerGainGlide = None
 
-try:  # frozen-aware asset resolution (Gandalf's packaging lane).
+try:  # frozen-aware asset resolution (PyInstaller bundle vs. source tree).
     from sax_assets import asset_path as _asset_path
 except Exception:  # pragma: no cover - dev fallback if sax_assets is absent
     _asset_path = None
@@ -194,7 +194,7 @@ def _clamp01(v: float) -> float:
 
 
 # Fallback GainGlide (only used if sax_mixer.GainGlide isn't importable) so this
-# module stays self-contained; mirrors the API Gandalf's class exposes.
+# module stays self-contained; mirrors the API of the sax_mixer class.
 if _MixerGainGlide is not None:
     GainGlide = _MixerGainGlide
 else:  # pragma: no cover - exercised only without sax_mixer.GainGlide
@@ -237,8 +237,8 @@ class DroneSource:
 
     Holds one ``tinysoundfont.Synth`` (SF2 loaded once), plays a single note at
     a time on channel 0, downmixes TSF's stereo output to mono into a
-    preallocated buffer (zero-allocation Python glue per Gandalf's native-source
-    ruling), applies the user volume and the embedded duck ``GainGlide``, and
+    preallocated buffer (zero-allocation Python glue around the native
+    synth), applies the user volume and the embedded duck ``GainGlide``, and
     sums into the block. ``active_midi`` is audible-tail aware.
     """
 

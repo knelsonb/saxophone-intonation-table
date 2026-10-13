@@ -1,14 +1,16 @@
 """
 Root conftest.py — shared pytest fixtures and path setup.
 
-Kept deliberately minimal: no pytest.ini / pyproject.toml yet (Phase 1).
-Only add things here that are genuinely shared; per-file setup stays in
-the test file itself.
+Pytest options live in pyproject.toml ([tool.pytest.ini_options]). Only add
+things here that are genuinely shared; per-file setup stays in the test file
+itself.
 """
 from __future__ import annotations
 
 import sys
 from pathlib import Path
+
+import pytest
 
 # ---------------------------------------------------------------------------
 # Ensure the repo root is on sys.path so test files can import production
@@ -23,9 +25,6 @@ if str(_REPO_ROOT) not in sys.path:
 # ---------------------------------------------------------------------------
 # Shared fixtures
 # ---------------------------------------------------------------------------
-import pytest
-
-
 @pytest.fixture()
 def tmp_log_path(tmp_path: Path) -> Path:
     """Return a ``pathlib.Path`` pointing to a writable temporary file.

@@ -20,7 +20,7 @@ import pytest
 numpy = pytest.importorskip('numpy')
 import numpy as np  # noqa: E402
 
-from sax_audio_engine import yin_pitch, DEFAULT_BLOCK_SIZE  # noqa: E402
+from sax_audio_engine import DEFAULT_BLOCK_SIZE, yin_pitch  # noqa: E402
 
 
 def _cents(detected: float, true: float) -> float:

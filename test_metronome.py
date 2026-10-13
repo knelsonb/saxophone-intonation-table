@@ -1,7 +1,6 @@
-"""Acceptance net for ``sax_metronome`` — the Sprint-2 metronome.
+"""Acceptance net for ``sax_metronome`` — the metronome.
 
-Covers the Orchestrator's Sprint-2 acceptance items against the four pure
-test-seams Sauron built in (msg request 3342):
+Covers the acceptance items against the four pure test seams:
   * beat-index -> sample-offset math, incl. the integer-round-ONCE drift proof
   * accent-on-downbeat per time signature
   * tap-tempo: average of the last 4 inter-tap intervals, reset on >2s gap
@@ -17,11 +16,18 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from sax_mixer import Mixer
 from sax_metronome import (
-    BPM_MIN, BPM_MAX, beat_onset_sample, bpm_from_tap_times, beats_per_bar,
-    clamp_bpm, clamp_volume, ClickSource, MetronomeController,
+    BPM_MAX,
+    BPM_MIN,
+    ClickSource,
+    MetronomeController,
+    beat_onset_sample,
+    beats_per_bar,
+    bpm_from_tap_times,
+    clamp_bpm,
+    clamp_volume,
 )
+from sax_mixer import Mixer
 
 
 # ===========================================================================
@@ -222,8 +228,10 @@ def test_click_spanning_block_boundary_resumes():
     cs = ClickSource(sr, volume=1.0)
     cs.trigger(accent=True, offset=0)
     # Render in two short blocks shorter than the ~38ms envelope (~1824 samples).
-    a = np.zeros(256, dtype=np.float32); cs.render(a, 256, 0)
-    b = np.zeros(256, dtype=np.float32); cs.render(b, 256, 256)
+    a = np.zeros(256, dtype=np.float32)
+    cs.render(a, 256, 0)
+    b = np.zeros(256, dtype=np.float32)
+    cs.render(b, 256, 256)
     assert np.any(np.abs(a) > 1e-3), "first block has click energy"
     assert np.any(np.abs(b) > 1e-3), "click continues into the second block"
 
@@ -268,10 +276,15 @@ def test_controller_clamps_constructor_args():
 
 def test_set_bpm_clamps_and_nudge():
     c = _ctrl()
-    c.set_bpm(9999); assert c.bpm == BPM_MAX
-    c.set_bpm(0); assert c.bpm == BPM_MIN
-    c.set_bpm(120); c.nudge_bpm(5); assert c.bpm == 125
-    c.nudge_bpm(-10000); assert c.bpm == BPM_MIN
+    c.set_bpm(9999)
+    assert c.bpm == BPM_MAX
+    c.set_bpm(0)
+    assert c.bpm == BPM_MIN
+    c.set_bpm(120)
+    c.nudge_bpm(5)
+    assert c.bpm == 125
+    c.nudge_bpm(-10000)
+    assert c.bpm == BPM_MIN
 
 
 def test_set_volume_propagates_to_click_source():
@@ -294,12 +307,18 @@ def test_on_state_changed_fires_on_changes_only():
     c = MetronomeController(Mixer(max_block=4096), 48000,
                             on_state_changed=lambda: fired.append(1))
     n0 = len(fired)
-    c.set_bpm(150); assert len(fired) == n0 + 1          # changed -> fires
-    c.set_bpm(150); assert len(fired) == n0 + 1          # no-op -> no fire
-    c.set_time_sig("3/4"); assert len(fired) == n0 + 2
-    c.set_volume(0.3); assert len(fired) == n0 + 3
-    c.start(); assert len(fired) == n0 + 4
-    c.stop(); assert len(fired) == n0 + 5
+    c.set_bpm(150)
+    assert len(fired) == n0 + 1  # changed -> fires
+    c.set_bpm(150)
+    assert len(fired) == n0 + 1  # no-op -> no fire
+    c.set_time_sig("3/4")
+    assert len(fired) == n0 + 2
+    c.set_volume(0.3)
+    assert len(fired) == n0 + 3
+    c.start()
+    assert len(fired) == n0 + 4
+    c.stop()
+    assert len(fired) == n0 + 5
 
 
 def test_start_registers_click_and_schedules_first_beat():
@@ -349,14 +368,17 @@ def test_stop_does_not_truncate_inflight_click():
 
 def test_toggle_flips_running():
     c = _ctrl()
-    c.toggle(); assert c.is_running() is True
-    c.toggle(); assert c.is_running() is False
+    c.toggle()
+    assert c.is_running() is True
+    c.toggle()
+    assert c.is_running() is False
 
 
 def test_start_is_idempotent():
     m = Mixer(max_block=4096)
     c = MetronomeController(m, 48000)
-    c.start(); c.start()
+    c.start()
+    c.start()
     assert m.active_sources() == 1, "double start must not double-register"
 
 
@@ -366,8 +388,8 @@ def test_start_is_idempotent():
 # An output-device reopen calls mixer.reset_clock(0), which clears the
 # scheduled-event horizon. Because the metronome's rolling horizon only
 # reschedules from a FIRED event, a reopen mid-play silently kills the beat
-# chain (Gandalf/Sauron's catch). The fix is a GUI-layer stop()/start()
-# bracket (Frodo's lane, locked by gui_smoke). These UNIT tests complement
+# chain (found in review). The fix is a GUI-layer stop()/start()
+# bracket, locked by gui_smoke. These UNIT tests complement
 # that: they run on the ALWAYS-RUNNABLE suite (no PyQt6 — gui_smoke skips
 # there), locking the underlying controller/mixer mechanism the GUI fix
 # rides on, so the regression is covered on every test run, not just CI.

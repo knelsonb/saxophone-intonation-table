@@ -33,7 +33,7 @@ sd_binaries = collect_dynamic_libs('sounddevice')
 sd_datas = collect_data_files('sounddevice', include_py_files=False)
 sd_hidden = collect_submodules('sounddevice')
 
-# tinysoundfont (Sprint 3 drone synth) ships its synth as a compiled extension
+# tinysoundfont (the drone synth) ships its synth as a compiled extension
 # (_tinysoundfont.*.so/.pyd) inside the wheel. It is imported LAZILY (guarded
 # try/except) by sax_drone, so PyInstaller's static analysis can miss it —
 # collect the binary + submodules + hiddenimport it explicitly. The SoundFont
@@ -62,7 +62,7 @@ a = Analysis(
         'sax_config',
         'sax_flow_layout',
         'sax_audio_engine',
-        # Sprint 1-4 audio modules. sax_drone / sax_pitch_pipes / sax_deck are
+        # Audio output modules. sax_drone / sax_pitch_pipes / sax_deck are
         # guard-imported (try/except), so PyInstaller's static analysis can miss
         # them — list them explicitly or the frozen build ships those tabs inert.
         'sax_mixer',

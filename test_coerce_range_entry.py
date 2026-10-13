@@ -1,4 +1,4 @@
-"""Phase-0 safety net for ``_coerce_range_entry`` in ``sax_instruments``.
+"""Safety net for ``_coerce_range_entry`` in ``sax_instruments``.
 
 ``_coerce_range_entry`` is the sole validation gate for every entry that
 ``load_range_overrides`` reads from the user-edited
@@ -31,11 +31,9 @@ produces a visible test failure requiring deliberate sign-off.
 
 from __future__ import annotations
 
-
 import pytest
 
 from sax_instruments import _coerce_range_entry
-
 
 # ---------------------------------------------------------------------------
 # 1. Main parametrize table — ``None``-or-tuple cases
@@ -168,8 +166,8 @@ def test_coerce_range_entry_float_truncation(lo_f, hi_f, expected_lo, expected_h
 # 4. Infinity inputs — DEFECT locked, not fixed.
 #
 # ``int(float('inf'))`` raises ``OverflowError``, which is NOT a subclass
-# of ``ValueError`` or ``TypeError``.  Phase 1 added ``OverflowError`` to the
-# except clause; these inputs now return ``None`` instead of crashing
+# of ``ValueError`` or ``TypeError``.  ``OverflowError`` is caught in the
+# except clause, so these inputs now return ``None`` instead of crashing
 # ``load_range_overrides``.  A user-edited JSON entry like
 #   "eb_alto": [48, 1e308]    (rounds to inf in IEEE-754)
 # is now silently skipped.

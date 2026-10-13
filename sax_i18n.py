@@ -283,7 +283,7 @@ STRINGS = {
         'data_rate_negotiated':    'Ausgehandelte Rate',
         'data_block_hop':          'Block / Hop',
         'data_halfcent_floor':     '½-¢-Grenze bei A4',
-        # ── Sprint 1: Navigations-Hülle (4 Reiter) + EINSTELLUNGEN-Reiter ──
+        # ── Navigations-Hülle (4 Reiter) + EINSTELLUNGEN-Reiter ──
         # Reiter-Beschriftungen. Übersetzt (wie der Rest der GUI), auch wenn
         # die Android-App sie englisch lässt — diese App lokalisiert konsequent.
         'nav_tab_tuner':     'STIMMGERÄT',
@@ -300,13 +300,13 @@ STRINGS = {
         'setup_output_default':    'Systemstandard',
         'setup_prefer_duplex':     'Gemeinsames Ein-/Ausgabegerät bevorzugen (Duplex)',
         'setup_prefer_duplex_tip': 'Aktiviert: nutzt einen gemeinsamen Vollduplex-Stream, wenn Ein- und Ausgang dasselbe Gerät sind (geringere Latenz).\nDeaktiviert (Standard): getrennter Ausgabe-Stream — robuster, wenn du auf einem anderen Gerät hörst.',
-        # EINSTELLUNGEN-Reiter — Testton (belegt den Ausgabepfad; Sprint-1-Abnahme)
+        # EINSTELLUNGEN-Reiter — Testton (belegt den Ausgabepfad)
         'setup_testtone_group':    'Testton',
         'setup_testtone_play':     'Testton abspielen',
         'setup_testtone_stop':     'Testton stoppen',
         'setup_testtone_tip':      'Spielt einen 440-Hz-Sinuston über den Audioausgang. Das Stimmgerät liest dabei weiter das Mikrofon mit.',
         'setup_testtone_failed':   'Testton konnte nicht gestartet werden — wähle oben ein Ausgabegerät.',
-        # METRONOM-Reiter (Sprint 2)
+        # METRONOM-Reiter
         'metro_bpm':             'BPM',
         'metro_timesig':         'Taktart',
         'metro_tap':             'Tippen',
@@ -317,7 +317,7 @@ STRINGS = {
         'metro_nudge_down_tip':  '−1 BPM',
         'metro_nudge_up_tip':    '+1 BPM',
         'metro_unavailable':     'Das Metronom braucht ein Ausgabegerät — wähle eines unter EINSTELLUNGEN › Audioausgang.',
-        # Bordun (Drone) + Stimmpfeife (Pitch pipes) — Sprint 3
+        # Bordun (Drone) + Stimmpfeife (Pitch pipes)
         'drone_group':            'Bordun',
         'drone_on_tip':           'Bordun ein-/ausschalten — klingt den Zielton, gegen den du stimmst.',
         'drone_volume':           'Lautstärke',
@@ -348,7 +348,7 @@ STRINGS = {
         'pipes_title':            'Stimmpfeife',
         'pipes_tip':              'Klicke ein Feld für einen Referenzton; ein zweiter Klick stoppt ihn.',
         'pipes_unavailable':      'Die Stimmpfeifen brauchen ein Ausgabegerät — wähle eines unter EINSTELLUNGEN › Audioausgang.',
-        # Bandmaschine (Tape deck) — Sprint 4. Nimmt nur das Mikrofon auf.
+        # Bandmaschine (Tape deck). Nimmt nur das Mikrofon auf.
         'deck_group':             'Bandmaschine',
         'deck_record':            'Aufnehmen',
         'deck_stop':              'Stopp',
@@ -618,7 +618,7 @@ STRINGS = {
         'data_rate_negotiated':    'Negotiated rate',
         'data_block_hop':          'Block / Hop',
         'data_halfcent_floor':     '½-¢ floor @ A4',
-        # ── Sprint 1: navigation shell (4-tab) + SETUP tab ──────────────
+        # ── navigation shell (4-tab) + SETUP tab ────────────────────────
         'nav_tab_tuner':     'TUNER',
         'nav_tab_metro':     'METRO',
         'nav_tab_deck':      'DECK',
@@ -633,13 +633,13 @@ STRINGS = {
         'setup_output_default':    'System default',
         'setup_prefer_duplex':     'Prefer shared input/output device (duplex)',
         'setup_prefer_duplex_tip': 'On: use one full-duplex stream when input and output are the same device (lower latency).\nOff (default): separate output stream — more robust when you listen on a different device.',
-        # SETUP tab — test tone (proves the output path; Sprint 1 acceptance)
+        # SETUP tab — test tone (proves the output path)
         'setup_testtone_group':    'Test tone',
         'setup_testtone_play':     'Play test tone',
         'setup_testtone_stop':     'Stop test tone',
         'setup_testtone_tip':      'Plays a 440 Hz sine through the audio output. The tuner keeps reading the mic.',
         'setup_testtone_failed':   "Couldn't start the test tone — choose an output device above.",
-        # METRO tab (Sprint 2)
+        # METRO tab
         'metro_bpm':             'BPM',
         'metro_timesig':         'Time signature',
         'metro_tap':             'Tap',
@@ -650,7 +650,7 @@ STRINGS = {
         'metro_nudge_down_tip':  '−1 BPM',
         'metro_nudge_up_tip':    '+1 BPM',
         'metro_unavailable':     "The metronome needs an output device — pick one under SETUP › Audio output.",
-        # Drone + Pitch pipes — Sprint 3
+        # Drone + Pitch pipes
         'drone_group':            'Drone',
         'drone_on_tip':           'Toggle the drone — sounds the target pitch you tune against.',
         'drone_volume':           'Volume',
@@ -680,7 +680,7 @@ STRINGS = {
         'pipes_title':            'Pitch pipes',
         'pipes_tip':              'Click a pad to sound a reference tone; click again to stop.',
         'pipes_unavailable':      "The pitch pipes need an output device — pick one under SETUP › Audio output.",
-        # Tape deck — Sprint 4. Records the mic only.
+        # Tape deck. Records the mic only.
         'deck_group':             'Tape deck',
         'deck_record':            'Record',
         'deck_stop':              'Stop',

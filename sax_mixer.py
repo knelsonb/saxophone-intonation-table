@@ -1,8 +1,8 @@
 """
 Pull-based software mixer for the audio-output foundation.
 
-Three of the four parity features (metronome, drone, pitch pipes) and the
-tape deck's playback are *output* consumers. Rather than give each its own
+The metronome, drone, pitch pipes and the tape deck's playback are all
+*output* consumers. Rather than give each its own
 stream, the engine owns ONE output path and a single numpy mixer that sums
 the per-block contributions of however many sources are currently sounding.
 Building the output path once keeps every source on one sample clock, so
@@ -39,7 +39,7 @@ Design contract:
   in place, and copies into the caller's output buffer. Sources MUST do the
   same (pre-allocate their working buffers; write additively into the slice
   they're handed). ``TestToneSource`` below is the reference proving this is
-  achievable, and is what the GUI's test-tone control drives. The plan's
+  achievable, and is what the GUI's test-tone control drives. The
   no-alloc bar is enforced by a tracemalloc gate in the test suite.
 
 * **Source registry is a lock-snapshot.** ``register`` / ``unregister`` swap
@@ -316,7 +316,7 @@ class Mixer:
         #    fills the whole accumulator (the steady-state case — the mixer is
         #    sized to the stream's blocksize), use the buffer WHOLE: a numpy
         #    slice such as self._acc[:frames] allocates a fresh view object
-        #    every call, which a strict peak-allocation gate (plan §2) counts.
+        #    every call, which a strict peak-allocation gate counts.
         #    Slicing is taken only for a rare short final block.
         full = (frames == self._max_block)
         acc = self._acc if full else self._acc[:frames]
@@ -402,8 +402,8 @@ class Mixer:
 # Reference source: a pure-numpy sine test tone.
 # ---------------------------------------------------------------------------
 class TestToneSource:
-    """A steady sine tone — the reference MixerSource and the Sprint-1
-    acceptance vehicle ("a test tone plays through the mixer while the tuner
+    """A steady sine tone — the reference MixerSource and the
+    output-path acceptance vehicle ("a test tone plays through the mixer while the tuner
     still reads the mic").
 
     It demonstrates the zero-allocation discipline every real source must

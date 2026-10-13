@@ -1,6 +1,6 @@
 """Pitch pipes: pure-numpy sine reference pads over the chromatic octave.
 
-The simplest of the Sprint-3 output features (parity feature D1). A pitch pipe
+The simplest of the pitched output sources. A pitch pipe
 is a steady sine at a chromatic reference note (C4-B4 by default), sounded at
 the app's current A4 so it doubles as a tuning reference. Tap a pad to sustain
 it, tap again to release; several can sound at once.

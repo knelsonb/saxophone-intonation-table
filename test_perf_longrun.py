@@ -17,8 +17,8 @@ import tracemalloc
 
 import numpy as np
 
-from sax_mixer import Mixer, TestToneSource
 from sax_metronome import MetronomeController
+from sax_mixer import Mixer, TestToneSource
 
 SR = 48000
 MB = 1024

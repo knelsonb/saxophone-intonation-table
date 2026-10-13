@@ -13,13 +13,12 @@ drone-pitch + deck-timing + input-latency benches build on this in follow-ups.
 """
 from __future__ import annotations
 
-
 import numpy as np
 import pytest
 
 import sim_harness as H
-from sax_mixer import Mixer, TestToneSource
 from sax_metronome import MetronomeController, beat_onset_sample, beats_per_bar
+from sax_mixer import Mixer, TestToneSource
 
 pp = pytest.importorskip("sax_pitch_pipes", reason="pitch pipes module")
 PitchPipeSource = pp.PitchPipeSource
@@ -100,7 +99,8 @@ def test_pitch_pipe_rendered_pitch_matches_target(midi):
     det = H.fft_peak_hz(sig, SR)
     true = pp.midi_to_freq(midi, a4)
     err = H.cents(det, true)
-    assert abs(err) < 1.5, f"pitch pad midi={midi} ({true:.2f}Hz) rendered {det:.2f}Hz ({err:+.2f}c)"
+    assert abs(err) < 1.5, (
+        f"pitch pad midi={midi} ({true:.2f}Hz) rendered {det:.2f}Hz ({err:+.2f}c)")
 
 
 # ---------------------------------------------------------------------------

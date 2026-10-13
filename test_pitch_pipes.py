@@ -1,11 +1,8 @@
-"""Acceptance net for ``sax_pitch_pipes`` (parity Sprint 3).
+"""Acceptance net for ``sax_pitch_pipes``.
 
 Pitch pipes are pure-numpy sine pads over the chromatic reference octave
 (C4..B4 = MIDI 60..71), tuned at the current A4. No TSF, no Qt — pure math +
 the Mixer, so the whole net runs on the always-runnable suite.
-
-Pre-written against Sauron's firm S3 contract (msg 3430); skip-guarded so it
-auto-activates the moment sax_pitch_pipes lands.
 """
 from __future__ import annotations
 
@@ -14,9 +11,7 @@ import pytest
 
 from sax_mixer import Mixer
 
-pp = pytest.importorskip(
-    "sax_pitch_pipes",
-    reason="sax_pitch_pipes not landed yet (Sauron's S3 lane) — auto-activates on land")
+pp = pytest.importorskip("sax_pitch_pipes", reason="pitch pipes module")
 
 
 def _expected_freq(midi, a4):

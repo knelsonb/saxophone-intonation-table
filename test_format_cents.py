@@ -24,8 +24,8 @@ import pytest
 
 pytest.importorskip('PyQt6', reason='PyQt6 not installed; skipping cents-format tests')
 
-from sax_intonation_gui import format_cents  # noqa: E402
 from sax_intonation_chart import _format_cents_label  # noqa: E402
+from sax_intonation_gui import format_cents  # noqa: E402
 
 SENTINEL = '–'   # U+2013 EN DASH
 

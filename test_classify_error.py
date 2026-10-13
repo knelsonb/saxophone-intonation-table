@@ -122,7 +122,7 @@ def test_unsupported_rate_integer_arg():
     ("device unavailable",                     AudioEngineError.DEVICE_BUSY),
     ("busy",                                   AudioEngineError.DEVICE_BUSY),
     ("unanticipated host error",               AudioEngineError.DEVICE_BUSY),
-    # Windows WDM-KS IOCTL failure string (Aragorn memo).
+    # Windows WDM-KS IOCTL failure string.
     ("wdmsyncioctl",                           AudioEngineError.DEVICE_BUSY),
     # Hex code 0xaa (decimal 170 — Windows host-API failure code).
     ("0xaa",                                   AudioEngineError.DEVICE_BUSY),
@@ -207,13 +207,13 @@ def test_no_device(msg, expected):
 
 
 # ---------------------------------------------------------------------------
-# '-1' substring boundary — Phase 1 tightened the match.
+# '-1' substring boundary — the match is exact, not a substring.
 #
-# The old branch used a plain substring 'in' check for '-1', which over-
-# matched on '-10', '-12', '-100', '-1000' and routed them to NO_DEVICE.
-# The new regex `(?:^|\D)-1(?!\d)` matches '-1' only when it stands alone
-# (not followed by another digit), so larger negative codes correctly fall
-# through to HOSTAPI_FAILURE.
+# A plain substring 'in' check for '-1' would over-match on '-10', '-12',
+# '-100', '-1000' and route them to NO_DEVICE. The regex
+# `(?:^|\D)-1(?!\d)` matches '-1' only when it stands alone (not followed by
+# another digit), so larger negative codes correctly fall through to
+# HOSTAPI_FAILURE.
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("msg", [
@@ -386,7 +386,7 @@ class TestUnsupportedRateVsDeviceBusyBoundary:
     def test_0xaa_is_device_busy_not_hostapi_failure(self):
         """Windows WDM-KS GLE 0xAA must be DEVICE_BUSY.
 
-        Documented in Aragorn's memo: the hex string appears in the
+        The hex string appears in the
         exception message when WDM-KS grabs exclusive access.
         """
         assert _classify(FakeErr("0xaa")) == AudioEngineError.DEVICE_BUSY

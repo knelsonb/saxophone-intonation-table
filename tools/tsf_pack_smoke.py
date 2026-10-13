@@ -1,4 +1,4 @@
-"""Frozen-packaging smoke for the tinysoundfont drone synth (Sprint 3).
+"""Frozen-packaging smoke for the tinysoundfont drone synth.
 
 The packaging RISK is whether a PyInstaller onefile bundles, and at runtime
 loads, BOTH the compiled tinysoundfont extension AND the 32 MB SoundFont, and
@@ -15,6 +15,7 @@ import sys
 
 def main() -> int:
     import numpy as np
+
     from sax_assets import asset_path, base_dir
     frozen = getattr(sys, 'frozen', False)
     print(f"frozen={frozen} base_dir={base_dir()}")

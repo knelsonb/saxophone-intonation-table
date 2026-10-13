@@ -34,7 +34,7 @@ along to a backing track, or anything else where you want the readout to
 react to each note as you blow it. The goal is per-note feedback while you
 play; a single sustained tone gets measured more precisely in Normal or Slow.
 
-**What it does:** the first reading of a note arrives about 186 ms (4 hops)
+**What it does:** the first reading of a note arrives about 190 ms (4 hops)
 after you start a clean, sustained pitch. Smoothing window is short (~140 ms
 median), so the displayed cents value tracks small expression changes —
 vibrato, scoops, fall-offs — instead of averaging them out. Edge guard
@@ -54,7 +54,7 @@ working through Remington-style sustained-pitch drills, or matching pitch
 inside a section. This is the everyday default — balanced between
 responsiveness and stability.
 
-**What it does:** the first reading arrives after about 325 ms (7 hops).
+**What it does:** the first reading arrives after about 330 ms (7 hops).
 Smoothing window is medium (~230 ms median over same-MIDI detections), so
 passing pitch bobble inside a sustained note averages out but the readout
 still moves when you actually shade the pitch. Edge guard is two hops
@@ -95,12 +95,15 @@ settled.
 
 | Preset | First reading | Smoothing window | Edge guard | YIN gate | RMS floor |
 |--------|--------------:|-----------------:|-----------:|---------:|----------:|
-| Fast   |   ~186 ms (4 hops) |       ~140 ms |   ~46 ms  |    0.15  |  8e-5     |
-| Normal |   ~325 ms (7 hops) |       ~230 ms |   ~92 ms  |    0.10  |  1.5e-4   |
+| Fast   |   ~190 ms (4 hops) |       ~140 ms |   ~46 ms  |    0.15  |  8e-5     |
+| Normal |   ~330 ms (7 hops) |       ~230 ms |   ~93 ms  |    0.10  |  1.5e-4   |
 | Slow   |  ~650 ms (14 hops) |       ~460 ms |  ~186 ms  |    0.07  |  3e-4     |
 
 First reading = `(confirm + 2 × edge_hops)` hops, measured through the engine;
-smoothing window = `window` hops. The hop is about 46 ms at every sample rate:
+smoothing window = `window` hops. One hop is 46.4 ms, so the first-reading
+times are 4 × 46.4 = 186 ms, 7 × 46.4 = 325 ms and 14 × 46.4 = 650 ms; the
+table and the in-app tooltips round them to the nearest 10 ms (190, 330, 650).
+The hop is about 46 ms at every sample rate:
 the engine scales the hop size in samples with the negotiated rate, so these
 times hold at 44.1, 48, 96 and 192 kHz alike. The actual numeric constants are
 `window`, `confirm`, `yin_thr`, `rms_floor`, and `edge_hops` in

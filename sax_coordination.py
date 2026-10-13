@@ -23,9 +23,9 @@ called once per detection frame — the engine's hop cadence (~46 ms; see
 detection path.
 
 The CONSUMER wiring (engine input callback -> ``update()`` -> drone
-``source.set_gain(duck_level)``) is correctly deferred to Sprint 3 — it needs
-a pitched output source that does not exist yet. The policy is built and
-unit-locked now; see ``test_coordination.py`` for the canonical contract.
+``source.set_gain(duck_level)``) lives in ``sax_audio_engine`` and
+``sax_drone``; this module holds only the policy. See
+``test_coordination.py`` for the canonical contract.
 """
 
 from __future__ import annotations

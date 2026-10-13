@@ -1,4 +1,4 @@
-"""Tests for sax_theme — the Sprint-5 theme palette module.
+"""Tests for sax_theme — the theme palette module.
 
 Pure (no Qt): runs under system python like the other logic nets. Locks the
 palette contract (every theme complete), the coerce/active behaviour, the
@@ -85,7 +85,7 @@ def test_active_roundtrip():
 
 
 def test_dark_matches_legacy_inline_colours():
-    # No-op-wiring guarantee: DARK reproduces the pre-Sprint-5 hexes the global
+    # No-op-wiring guarantee: DARK reproduces the original dark-only hexes the global
     # stylesheet used, so build_app_qss(DARK) is visually identical to the old
     # hand-written sheet. If someone "improves" a DARK colour, this fails loudly.
     assert th.DARK.window_bg == "#12121a"

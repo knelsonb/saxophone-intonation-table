@@ -1,5 +1,5 @@
 """
-Phase-0 safety-net tests for ``_agg_stats`` in ``sax_intonation_log``.
+Safety-net tests for ``_agg_stats`` in ``sax_intonation_log``.
 
 ``_agg_stats`` is the single aggregation primitive called by every CSV export
 slice mode (per_run_note, per_instrument_note, per_nickname_note,
@@ -30,10 +30,10 @@ outside the standard library.  No QApplication, no sounddevice, no Qt.
 from __future__ import annotations
 
 import math
+
 import pytest
 
 from sax_intonation_log import _agg_stats
-
 
 # ---------------------------------------------------------------------------
 # Helpers

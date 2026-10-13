@@ -1,11 +1,11 @@
 """Acceptance net for ``sax_mixer`` — the pull-based output mixer.
 
-This is the executable form of "Gandalf's contract" (D2, drift budget
-zero) plus the no-allocation bar (plan §2). The mixer imports only numpy —
+This is the executable form of the mixer's design contract (sample-exact
+scheduling with zero drift budget) plus the no-allocation bar. The mixer imports only numpy —
 no sounddevice, no Qt — so every assertion here runs with no audio
 hardware and no mock, exactly as the module docstring promises.
 
-Test surface (Treebeard's A–G net, mapped to the contract):
+Test surface, mapped to the contract:
   * clock: starts at 0, advances by exactly ``frames`` per render.
   * render: additive sum of sources, clamp to [-1, 1], silence when empty,
     over-long ``frames`` clamps to ``max_block``, 2-D output broadcast.
@@ -32,7 +32,7 @@ import tracemalloc
 import numpy as np
 import pytest
 
-from sax_mixer import Mixer, TestToneSource, GainGlide
+from sax_mixer import GainGlide, Mixer, TestToneSource
 
 
 # ---------------------------------------------------------------------------
@@ -152,7 +152,7 @@ def test_render_2d_output_broadcasts_mono_to_channels():
 
 
 # ---------------------------------------------------------------------------
-# 3. Scheduling — the drift gate (D2). event(offset) is the observable.
+# 3. Scheduling — the drift gate. event(offset) is the observable.
 # ---------------------------------------------------------------------------
 def test_schedule_future_event_fires_at_correct_offset():
     m = Mixer(max_block=128)
@@ -455,7 +455,7 @@ def test_testtone_released_then_muted_still_finishes():
     its fade and finish. The envelope is time-based, so it must advance even
     while muted — otherwise the release freezes, never reaches zero, finished
     never goes True, and the Mixer never reaps the source (it lingers forever).
-    Regression for the gain==0 early-return skipping the envelope (uruk-hai)."""
+    Regression for the gain==0 early-return skipping the envelope."""
     sr, mb = 48000, 256
     src = TestToneSource(freq=440.0, samplerate=sr, max_block=mb, gain=0.5,
                          attack_ms=8.0, release_ms=40.0)
@@ -491,7 +491,7 @@ def test_testtone_rejects_bad_args(sr, mb):
 
 
 # ---------------------------------------------------------------------------
-# 8. THE NO-ALLOC GATE (plan §2 — the stricter bar output is held to).
+# 8. THE NO-ALLOC GATE (the stricter bar output is held to).
 #
 # Steady-state render (sources summing, no events due) must not allocate
 # data buffers on the hot path. Calibration matters here: numpy SLICING
@@ -558,7 +558,7 @@ def test_render_has_no_frames_proportional_allocation(make_source):
     that does NOT vary with frames. A real per-block data temporary (the bug
     this gate hunts) allocates ~frames*itemsize and so scales linearly. So we
     measure peak at a small and a large blocksize and assert the difference
-    is flat. (Credit: Orchestrator's frames-sweep showed the constant is
+    is flat. (A sweep over frame counts shows the constant is
     irreducible numpy view-boxing, not source allocation.)
 
     KNOWN LIMITATION (logged, per "no silent caps"): tracemalloc tracks
@@ -582,7 +582,7 @@ def test_render_has_no_frames_proportional_allocation(make_source):
 
 
 def test_whole_buffer_fast_path_reduces_allocation():
-    """Steady-state cleanliness (Gandalf's intent), asserted ROBUSTLY.
+    """Steady-state cleanliness, asserted ROBUSTLY.
 
     An absolute floor on the steady-state peak is environment-fragile: it
     measures ~252 B here (numpy ufunc-dispatch object boxing) — only a few
@@ -608,10 +608,9 @@ def test_whole_buffer_fast_path_reduces_allocation():
 
 
 def test_testtone_steady_state_allocation_is_bounded():
-    """Strict steady-state floor (Gandalf/Orchestrator consensus) at a
-    cross-environment-ROBUST threshold.
+    """Strict steady-state floor at a cross-environment-ROBUST threshold.
 
-    Gandalf's whole-buffer fast path makes the frames==max_block render
+    The whole-buffer fast path makes the frames==max_block render
     genuinely allocation-light. Measured here: ~252 B peak. The originally
     proposed 256 B line passes — but by only ~4 B, which is one numpy/Python
     build away from flaking. So the bound is 1024 B: still far below the
@@ -627,7 +626,7 @@ def test_testtone_steady_state_allocation_is_bounded():
     assert peak < 1024, (
         f"steady-state (frames==max_block) render peaked {peak} B — a real "
         f"per-block data temporary would be >=1 KB. The reference source must "
-        f"stay allocation-light on the hot path (plan §2).")
+        f"stay allocation-light on the hot path.")
 
 
 # ===========================================================================
@@ -636,7 +635,7 @@ def test_testtone_steady_state_allocation_is_bounded():
 # Glides an applied gain toward a coarsely-set target SAMPLE-BY-SAMPLE,
 # slew-limited, so a coarse per-hop duck step (1.0 -> 0.30 in ~2 frames) is
 # smoothed to a click-free ramp. Pure numpy — runs on every suite. (Lives in
-# sax_mixer; embedded by the Sprint-3 drone source.)
+# sax_mixer; embedded by the drone source.)
 # ===========================================================================
 def _max_slew_step(samplerate, glide_ms):
     return 1.0 / max(1.0, samplerate * glide_ms / 1000.0)
@@ -651,9 +650,12 @@ def test_gainglide_rejects_bad_args():
 
 def test_gainglide_set_target_clamps_unit_interval():
     g = GainGlide(512, 48000)
-    g.set_target(2.0); assert g.target == 1.0
-    g.set_target(-1.0); assert g.target == 0.0
-    g.set_target(0.3); assert g.target == pytest.approx(0.3)
+    g.set_target(2.0)
+    assert g.target == 1.0
+    g.set_target(-1.0)
+    assert g.target == 0.0
+    g.set_target(0.3)
+    assert g.target == pytest.approx(0.3)
 
 
 def test_gainglide_downward_glide_respects_slew_cap():

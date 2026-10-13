@@ -22,7 +22,9 @@ numpy = pytest.importorskip('numpy')
 import numpy as np  # noqa: E402
 
 from sax_audio_engine import (  # noqa: E402
-    AudioEngine, FILTER_PRESETS, DEFAULT_BLOCK_SIZE,
+    DEFAULT_BLOCK_SIZE,
+    FILTER_PRESETS,
+    AudioEngine,
 )
 
 _SR = 44100

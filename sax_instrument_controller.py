@@ -1,7 +1,7 @@
 # =============================================================================
 # sax_instrument_controller.py — InstrumentController
 #
-# Extracted from sax_intonation_gui.py in Phase 5 of the refactor. The
+# Extracted from sax_intonation_gui.py as a MainWindow controller. The
 # controller owns instrument-family selection, instrument selection,
 # nickname editing, per-instrument range editor, custom-instrument
 # registration, and the autotune-from-history flow.
@@ -39,21 +39,26 @@ from __future__ import annotations
 import math
 
 import numpy as np
-
 from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QFormLayout, QLabel, QLineEdit, QSpinBox,
-    QDialogButtonBox, QMessageBox,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QSpinBox,
+    QVBoxLayout,
 )
 
-import sax_instruments
 import sax_config
+import sax_instruments
 from sax_instruments import (
-    families as instrument_families,
-    instruments_in,
-    transp_map as build_transp_map,
     display_name as instrument_display_name,
+    families as instrument_families,
     family_of as instrument_family_of,
+    instruments_in,
     register_custom,
+    transp_map as build_transp_map,
 )
 
 
@@ -180,7 +185,7 @@ class InstrumentController:
         """Open the per-instrument range editor for the active instrument.
         Accepts → persist via sax_instruments override DB → notify caller
         so the new bounds take effect immediately."""
-        from sax_intonation_gui import RangeEditorDialog, TRANSP_MAP
+        from sax_intonation_gui import TRANSP_MAP, RangeEditorDialog
         w = self._w
         key = w.instrument
         cur_lo, cur_hi = sax_instruments.fingered_range(key)
@@ -338,7 +343,7 @@ class InstrumentController:
         stats = self._get_stats()
         with w._lock:
             items = [(st.mean, st.n) for st in stats.values() if st.n >= 5]
-            # v0.6 Phase-4 (Item 6): count progress so the blocker is
+            # Count progress so the blocker is
             # actionable. ``qualified`` = notes meeting the ≥5 threshold;
             # ``touched`` = distinct notes that have ANY samples. Both are
             # shown to the user when there isn't enough data yet.

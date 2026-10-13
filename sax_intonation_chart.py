@@ -14,11 +14,17 @@ from __future__ import annotations
 
 import math
 
-from sax_theme import CLOSE_CENTS, IN_TUNE_CENTS
 from PyQt6.QtCore import QPointF, QRectF, Qt
 from PyQt6.QtGui import (
-    QColor, QFont, QPainter, QPen, QPixmap, QPolygonF,
+    QColor,
+    QFont,
+    QPainter,
+    QPen,
+    QPixmap,
+    QPolygonF,
 )
+
+from sax_theme import CLOSE_CENTS, IN_TUNE_CENTS
 
 
 def _sans(point_size: int, bold: bool = False) -> QFont:
@@ -84,7 +90,7 @@ def render_intonation_chart(
     drawing the numeric value above each bar. ``sample_rate`` is the
     engine's negotiated rate at chart time and gates that precision.
 
-    ``instrument`` (v0.6 Phase-4 Item 7) is the instrument-catalog key for
+    ``instrument`` is the instrument-catalog key for
     looking up the fingered range when the 7-tuple form isn't used. Any
     note whose fingered MIDI lands outside ``fingered_range(instrument)``
     is rendered in a desaturated grey with a small ⚠ marker so the user
@@ -227,7 +233,8 @@ def _draw_bars(p: QPainter,
                sample_rate: int = 44100,
                in_range_fn=None) -> None:
     if in_range_fn is None:
-        in_range_fn = lambda _midi: True
+        def in_range_fn(_midi):
+            return True
     area = _plot_area()
     n = len(notes)
     slot = area.width() / n
@@ -283,7 +290,7 @@ def _draw_bars(p: QPainter,
             continue
         top_y = _cent_to_y(mean, area)
         # Color by magnitude — same thresholds as the in-app tuner widget.
-        # v0.6 Phase-4 (Item 7): notes outside the instrument's fingered
+        # Notes outside the instrument's fingered
         # range render in a desaturated grey instead of the green-yellow-
         # red gradient, so an altissimo overtone doesn't visually scream
         # "out of tune" when it's really just out of range.

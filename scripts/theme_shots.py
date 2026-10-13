@@ -49,9 +49,10 @@ def main() -> int:
     outdir = sys.argv[1] if len(sys.argv) > 1 else "/tmp/sax_shots"
     os.makedirs(outdir, exist_ok=True)
 
+    from PyQt6.QtWidgets import QApplication
+
     import sax_intonation_gui as G
     import sax_theme as TH
-    from PyQt6.QtWidgets import QApplication
 
     # The one modal we can't defuse via config (headless no-audio box).
     G.QMessageBox.information = staticmethod(lambda *a, **k: None)
@@ -86,7 +87,7 @@ def main() -> int:
         try:
             cur_lo, cur_hi = _si.fingered_range(key)
             baked_lo, baked_hi = _si.baked_fingered_range(key)
-            _name_fn = getattr(G, "instrument_display_name", lambda k, l: str(k))
+            _name_fn = getattr(G, "instrument_display_name", lambda k, lang: str(k))
             rdlg = G.RangeEditorDialog(
                 win, win._t, key, _name_fn(key, win.lang),
                 cur_lo, cur_hi, baked_lo, baked_hi, _si.has_baked_range(key),

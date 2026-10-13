@@ -17,7 +17,7 @@ def test_languages_present():
 
 def test_every_key_present_in_every_language():
     """No key may exist in one language but not another — the i18n sweep
-    invariant for v1.0 parity (no half-translated string)."""
+    invariant (no half-translated string)."""
     all_keys = i18n.keys()
     for lang in i18n.available_languages():
         missing = sorted(all_keys - set(i18n.STRINGS[lang]))

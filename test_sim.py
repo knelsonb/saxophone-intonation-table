@@ -23,7 +23,6 @@ import numpy as np  # noqa: E402
 import sim_harness as H  # noqa: E402
 from sax_audio_engine import FILTER_PRESETS  # noqa: E402
 
-
 # ── INPUT pipeline: detect_tone / feed_engine ──────────────────────────────
 
 @pytest.mark.parametrize("freq, midi", [

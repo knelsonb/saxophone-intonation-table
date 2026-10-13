@@ -1,15 +1,14 @@
 """Metronome: sample-accurate click scheduling + a two-voice numpy click synth.
 
-Sprint 2 of the parity sprint. The metronome is the first real *output* consumer
-of the Sprint-1 mixer foundation (see ``sax_mixer.py``). It owns no stream of its
-own: it registers a :class:`ClickSource` on the shared :class:`~sax_mixer.Mixer`
+The metronome is an *output* consumer of the shared mixer (see
+``sax_mixer.py``). It owns no stream of its own: it registers a
+:class:`ClickSource` on the shared :class:`~sax_mixer.Mixer`
 and schedules each beat's click by ABSOLUTE sample index via
 ``mixer.schedule(abs_sample, event)``. The mixer's monotonic sample clock — not
 any wall-clock timer — is the timebase, so timing is exact and blocksize-invariant.
 
-Drift budget is ZERO (plan D2). The keystone rule, proven by Gandalf's
-scheduling stress-test (non-dividing + alternating blocksizes, 64-beat runs, all
-max|drift|=0):
+Drift budget is ZERO. The keystone rule, verified by a scheduling stress test
+(non-dividing + alternating blocksizes, 64-beat runs, all max|drift|=0):
 
     onset(beat) = round(beat_index * samplerate * 60 / bpm)
 
@@ -49,13 +48,13 @@ __all__ = [
     "ClickSource", "MetronomeController",
 ]
 
-# Tempo / time-sig rails (mirror the Android parity scope + sax_config clamps).
+# Tempo / time-sig rails (mirror the Android app's scope + sax_config clamps).
 BPM_MIN = 30
 BPM_MAX = 300
 DEFAULT_BPM = 100
 DEFAULT_TIME_SIG = "4/4"
 
-# Tap-tempo windowing (Android useMetronome parity).
+# Tap-tempo windowing (matches the Android useMetronome hook).
 _TAP_AVG_INTERVALS = 4     # average the last N inter-tap intervals
 _TAP_RESET_GAP_S = 2.0     # a gap longer than this starts a fresh tap run
 

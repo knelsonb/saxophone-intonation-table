@@ -24,8 +24,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from sax_mixer import Mixer
 from sax_metronome import MetronomeController
+from sax_mixer import Mixer
 
 PP = pytest.importorskip("sax_pitch_pipes", reason="pitch pipes module")
 

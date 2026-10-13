@@ -1,7 +1,7 @@
 # =============================================================================
 # sax_table.py — TableController
 #
-# Extracted from sax_intonation_gui.py in Phase 5 of the refactor. The
+# Extracted from sax_intonation_gui.py as a MainWindow controller. The
 # controller owns the intonation table's two view modes (single-column
 # list and octave-by-pitch-class matrix), the per-cell paint pipeline,
 # and the 300 ms QTimer-driven refresh cycle.
@@ -12,14 +12,14 @@
 #     the controller through getter callables, not via fixed references
 #     captured at construction time. That way every refresh tick reads
 #     the *current* values rather than ones frozen at __init__.
-#   * v0.6 (Phase 5) lands Legolas W8: cell QTableWidgetItem objects are
-#     allocated ONCE per layout change in configure_for_mode().  The
-#     refresh() body methods read self._cells[(r, c)] and mutate the
-#     already-existing item via setText / setData / setBackground /
-#     setForeground.  Previously every 300 ms tick allocated up to 84
-#     fresh QTableWidgetItem objects (12 pitch classes × 7 octaves in
-#     matrix mode), at ~16,800 Qt allocations per minute under a held
-#     practice session.  Now: zero allocations on the refresh hot path.
+#   * Cell QTableWidgetItem objects are allocated ONCE per layout change
+#     in configure_for_mode().  The refresh() body methods read
+#     self._cells[(r, c)] and mutate the already-existing item via
+#     setText / setData / setBackground / setForeground.  Allocating
+#     fresh items every 300 ms tick would cost up to 84 objects (12 pitch
+#     classes × 7 octaves in matrix mode), about 16,800 Qt allocations
+#     per minute under a held practice session; reusing them makes the
+#     refresh hot path allocation-free.
 #   * The QTimer ownership stays on MainWindow.  The window's
 #     _refresh_table delegates to TableController.refresh() after
 #     deciding the layout mode — keeping the timer wiring local to
@@ -36,7 +36,9 @@ from typing import TYPE_CHECKING, Callable
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
-    QTableWidgetItem, QHeaderView, QStyledItemDelegate,
+    QHeaderView,
+    QStyledItemDelegate,
+    QTableWidgetItem,
 )
 
 import sax_instruments
@@ -44,6 +46,7 @@ from sax_theme import CLOSE_CENTS, IN_TUNE_CENTS
 
 if TYPE_CHECKING:
     from PyQt6.QtWidgets import QMainWindow, QTableWidget
+
     from sax_config import AppConfig
 
 
@@ -52,13 +55,13 @@ class TableController:
     octave-by-pitch-class matrix), the per-cell paint pipeline, and the
     QTimer-driven 300ms refresh cycle.
 
-    v0.6 (Phase 5): cell items are allocated ONCE per layout change in
+    Cell items are allocated ONCE per layout change in
     configure_for_mode() — subsequent refresh ticks only mutate the
     already-existing QTableWidgetItem instances via setText/setData/
-    setBackground.  Previously every 300ms tick allocated up to 84 fresh
-    QTableWidgetItem objects (12 rows × 7 octaves in matrix mode), at
-    ~16,800 Qt object allocations per minute under a held practice
-    session.  Legolas W8.
+    setBackground.  Allocating fresh items on every 300ms tick would cost
+    up to 84 QTableWidgetItem objects (12 rows × 7 octaves in matrix
+    mode), about 16,800 Qt object allocations per minute under a held
+    practice session.
     """
 
     def __init__(self, window: 'QMainWindow', *,
@@ -106,7 +109,7 @@ class TableController:
         allocates one QTableWidgetItem per (row, col) cell and parks it
         in self._cells.  Subsequent refresh() calls mutate those cached
         items in place — no further QTableWidgetItem allocations on the
-        300 ms hot path (Legolas W8).
+        300 ms hot path.
         """
         w = self._w
         # Lazily build the delegates the way the original code did so
@@ -284,7 +287,9 @@ class TableController:
     # -------------------------------------------------------------------------
     def _refresh_single(self) -> None:
         from sax_intonation_gui import (
-            TRANSP_MAP, midi_note_name, format_cents,
+            TRANSP_MAP,
+            format_cents,
+            midi_note_name,
         )
         w = self._w
         instrument = self._get_instrument_key()
@@ -312,8 +317,7 @@ class TableController:
 
         self._table.setRowCount(len(items))
         # Ensure the cell cache matches the new row count BEFORE we
-        # start mutating cells (Legolas W8 — no per-row allocations on
-        # the hot path).
+        # start mutating cells (no per-row allocations on the hot path).
         self._ensure_single_cells(len(items))
 
         played_n = 0
@@ -389,7 +393,9 @@ class TableController:
     # -------------------------------------------------------------------------
     def _refresh_matrix(self) -> None:
         from sax_intonation_gui import (
-            TRANSP_MAP, midi_note_name, CHROMA,
+            CHROMA,
+            TRANSP_MAP,
+            midi_note_name,
         )
         w = self._w
         instrument = self._get_instrument_key()

@@ -25,11 +25,11 @@ import wave
 import numpy as np
 import pytest
 
+import sax_deck
 import sim_harness as H
 from sax_audio_engine import AudioEngine, freq_to_midi
-from sax_mixer import Mixer
-import sax_deck
 from sax_deck import DeckController, DeckState, write_wav
+from sax_mixer import Mixer
 
 
 # ---------------------------------------------------------------------------

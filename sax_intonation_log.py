@@ -27,8 +27,8 @@ GUI knows; callers therefore supply both MIDI numbers to `add_measurement`.
 from __future__ import annotations
 
 import csv
-import io
 import datetime
+import io
 import json
 import math
 import threading
@@ -36,7 +36,6 @@ import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Optional
-
 
 _CHROMA = ['C', 'C#/Db', 'D', 'D#/Eb', 'E', 'F',
            'F#/Gb', 'G', 'G#/Ab', 'A', 'A#/Bb', 'B']

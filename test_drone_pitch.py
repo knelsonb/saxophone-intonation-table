@@ -17,8 +17,8 @@ import pytest
 
 numpy = pytest.importorskip("numpy")
 pytest.importorskip("tinysoundfont")
-import sim_harness as H          # noqa: E402
-import sax_drone as D            # noqa: E402
+import sax_drone as D  # noqa: E402
+import sim_harness as H  # noqa: E402
 
 
 class _FakeMixer:

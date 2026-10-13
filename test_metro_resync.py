@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from sax_mixer import Mixer
 from sax_metronome import MetronomeController
+from sax_mixer import Mixer
 
 SR = 48000
 MB = 1024

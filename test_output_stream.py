@@ -1,12 +1,11 @@
-"""Acceptance net for the v0.6.3 engine OUTPUT mirror (parity Sprint 1).
+"""Acceptance net for the v0.6.3 engine OUTPUT mirror.
 
 The output path in ``sax_audio_engine`` mirrors the long-hardened input path:
 worker-thread open with a join timeout + cancelled-flag orphan disposal,
 sample-rate negotiation, device-vanished -> DEVICE_DISCONNECTED, hot-plug
 auto-recover, and a SEPARATE ``_out_transitioning`` guard so output lifecycle
-can never corrupt the input state machine (D5). This file is the real
-acceptance net Gandalf asked for: it drives that lifecycle with a fake
-``sounddevice`` so no PortAudio / audio hardware is required.
+can never corrupt the input state machine. This file drives that lifecycle
+with a fake ``sounddevice`` so no PortAudio / audio hardware is required.
 
 Two fake-installation patterns, matching the existing suite:
   * module-level fake ``sounddevice`` installed BEFORE importing the engine
@@ -23,7 +22,6 @@ import types
 
 import numpy as np
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Install a fake sounddevice BEFORE importing the engine. Extends the input
@@ -243,7 +241,7 @@ def test_stop_output_tears_down_and_clears_running():
 
 
 def test_stop_output_preserves_active_device_as_last_selection():
-    """Persistence invariant (war-council-verified — sax_audio_engine.py:532):
+    """Persistence invariant (see the active_output_device field in AudioEngine):
     stop_output() flips LIVENESS (output_running -> False) but PRESERVES
     active_output_device, which is the last user SELECTION and the hot-plug
     recovery target — not a liveness flag. Clearing it here would silently
@@ -276,7 +274,7 @@ def test_open_stop_reopen_output_cycle_is_clean():
 
 
 # ---------------------------------------------------------------------------
-# 3. Test tone — the Sprint-1 acceptance vehicle.
+# 3. Test tone — proves the output path end to end.
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("bad", [float("nan"), float("inf"), 0.0, -100.0],
                          ids=["nan", "inf", "zero", "negative"])
@@ -497,9 +495,9 @@ def test_open_output_construct_failure_reports_state():
 
 
 # ---------------------------------------------------------------------------
-# 8. D3 coordination END-TO-END — the payoff: Sprint-1 coordination firing
-#    against a real sounding source, via Gandalf's deterministic
-#    coordination_step seam (no mic audio needed).
+# 8. D3 coordination END-TO-END: the coordination policy firing against a
+#    real sounding source, via the deterministic coordination_step seam
+#    (no mic audio needed).
 # ---------------------------------------------------------------------------
 class _PitchedSource:
     """A registerable MixerSource that reports a sounding MIDI (silent audio is
@@ -585,13 +583,12 @@ def test_detach_duck_consumer_stops_delivery():
 
 
 # ---------------------------------------------------------------------------
-# 9. Tape-deck input-recording tap (Sprint 4 — Gandalf's bounded-prealloc
-#    seam). The deck is the FIRST input-side consumer (S1-3 were output): the
+# 9. Tape-deck input-recording tap (bounded-prealloc seam). The deck is the
+#    only input-side consumer (the other sources are output): the
 #    input hot path slice-assigns every mic frame into a bounded buffer while
 #    armed. Driven via feed_input_frames (the real _on_input body) with a fake
 #    OPEN input stream — no device, no PortAudio. Mirrors the output orphan
-#    test, input-side. Pinned to Gandalf's landed API (engine 834-933 / 1486 /
-#    1804-2011).
+#    test, input-side.
 # ---------------------------------------------------------------------------
 class _FakeOpenInputStream:
     """Stands in for an open mic stream — what input_running /
@@ -678,9 +675,9 @@ def test_recorded_frame_count_grows_monotonically_then_resets():
 
 
 def test_capture_continues_through_emissions_pause():
-    """The tap sits BEFORE the emissions-pause gate (Sauron + Treebeard
-    ratified): an A4-remap pitch-detection pause must NOT punch a hole in the
-    take. Frames fed while paused are still captured."""
+    """The tap sits BEFORE the emissions-pause gate: an A4-remap
+    pitch-detection pause must NOT punch a hole in the take. Frames fed while
+    paused are still captured."""
     eng = _recording_engine()
     eng.start_input_recording(10.0)
     eng.feed_input_frames(np.ones(100, dtype=np.float32) * 0.2)
@@ -744,7 +741,7 @@ def test_stop_engine_disarms_recording():
 
 def test_fresh_arm_discards_previous_take():
     """A new start_input_recording discards any prior unfetched take (single
-    take, mic-only parity)."""
+    take, mic-only)."""
     eng = _recording_engine()
     eng.start_input_recording(10.0)
     eng.feed_input_frames(np.ones(500, dtype=np.float32) * 0.3)

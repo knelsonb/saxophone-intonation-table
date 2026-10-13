@@ -7,10 +7,10 @@ own sounding MIDIs from the incumbent-pitch vote, and duck the output on
 plus an internal counter — no audio, no Qt, no sounddevice, no numpy — so the
 whole contract is unit-testable deterministically here.
 
-This is the "E" test in Treebeard's net, written against the CANONICAL
-interface the Orchestrator locked (Decision dataclass + OutputCoordinator).
-The consumer wiring (engine input callback → coordinator.update() → drone
-set_gain) is correctly deferred to Sprint 3; the policy is built + locked now.
+It is written against the canonical interface (Decision dataclass +
+OutputCoordinator). The consumer wiring (engine input callback →
+coordinator.update() → drone set_gain) is covered in test_output_stream.py
+and test_drone.py.
 
 Calibration of the assertions:
   * The CRISP invariants are asserted EXACTLY — vote-exclude equals the
@@ -22,9 +22,6 @@ Calibration of the assertions:
     toward 1.0 after leakage clears — NOT by an exact per-frame step count,
     which depends on the implementation's frame-cadence math. This locks the
     behaviour without over-coupling to one ramp formula.
-
-TDD note: skips cleanly until ``sax_coordination`` lands (Sauron's lane), then
-auto-activates. It must show PASSED — not skipped — for Sprint 1 done.
 """
 from __future__ import annotations
 
@@ -33,9 +30,7 @@ import dataclasses
 import pytest
 
 sax_coordination = pytest.importorskip(
-    'sax_coordination',
-    reason="sax_coordination not landed yet (Sauron's D3 policy lane) — "
-           "E test auto-activates when the module appears")
+    'sax_coordination', reason="sax_coordination module")
 
 Decision = sax_coordination.Decision
 OutputCoordinator = sax_coordination.OutputCoordinator
@@ -247,7 +242,9 @@ def test_instances_are_independent():
     a = OutputCoordinator(suspicion_frames=3)
     b = OutputCoordinator(suspicion_frames=3)
     s = frozenset({60})
-    a.update(60, s); a.update(60, s); a.update(60, s)   # a → suspicious
+    a.update(60, s)
+    a.update(60, s)
+    a.update(60, s)  # a → suspicious
     # b is untouched: its first frame must not inherit a's streak.
     assert b.update(60, s).suspicious is False, (
         "coordinators must not share counter state")

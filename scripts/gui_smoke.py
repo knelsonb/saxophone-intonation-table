@@ -2,18 +2,19 @@
 """Headless GUI smoke for the saxophone intonation analyzer.
 
 Builds the real ``MainWindow`` under the offscreen Qt platform and asserts the
-Sprint-1 navigation shell is wired correctly. This is a *construction* smoke —
+navigation shell and the SETUP / METRO / DECK controls are wired correctly.
+This is a *construction* smoke —
 it proves the window assembles, the tabs exist, and the status-dot defaults are
 right; it does not exercise live audio (there is no device in CI).
 
 Two modal seams would otherwise hang a headless build, so this script defuses
 both via the real-path approach rather than patching window internals:
 
-  * sax_intonation_gui.py:2322 — first-launch welcome dialog, fired when
+  * MainWindow.__init__ — first-launch welcome dialog, fired when
     ``cfg.welcome_shown`` is False. Defused by pointing HOME at a throwaway
     dir containing a config.json with ``welcome_shown: true`` BEFORE import,
     so the welcome branch is never entered and true construction runs.
-  * sax_intonation_gui.py:2316 — the "audio disabled" QMessageBox.information,
+  * MainWindow.__init__ — the "audio disabled" QMessageBox.information,
     fired when ``AUDIO_OK`` is False (always true headless: no PortAudio
     device). AUDIO_OK is import-time hardware state we can't force, so this
     one modal is stubbed to a no-op.
@@ -21,8 +22,7 @@ both via the real-path approach rather than patching window internals:
 Run:  QT_QPA_PLATFORM=offscreen python3 scripts/gui_smoke.py
 Exit: 0 = all assertions passed; 1 = a smoke assertion failed.
 
-Owned jointly by Frodo (assertions / GUI lane) and Treebeard (suite
-integration). Treebeard folds it into the pytest suite so CI runs it on the
+test_gui_smoke.py runs it from the pytest suite, so CI covers it on the
 PyQt6-equipped runner.
 """
 from __future__ import annotations
@@ -56,8 +56,9 @@ def main() -> int:
         sys.path.insert(0, repo_root)
     _isolate_config()
 
-    import sax_intonation_gui as G
     from PyQt6.QtWidgets import QApplication
+
+    import sax_intonation_gui as G
 
     # The only modal we can't defuse via config: the headless no-audio box.
     G.QMessageBox.information = staticmethod(lambda *a, **k: None)
@@ -133,12 +134,12 @@ def main() -> int:
     check(win._cfg.last_active_tab == "setup",
           f"tab switch did not persist last_active_tab: {win._cfg.last_active_tab}")
 
-    # SETUP parity: the instrument range-editor link is reachable from SETUP
+    # SETUP: the instrument range-editor link is reachable from SETUP
     # (also on the toolbar gear) and enabled/wired to the range editor.
     check(hasattr(win, "_btn_setup_range") and win._btn_setup_range.isEnabled(),
           "SETUP instrument range-editor button missing or disabled")
 
-    # SETUP parity: the Response (Fast/Normal/Slow) combo is reachable from SETUP
+    # SETUP: the Response (Fast/Normal/Slow) combo is reachable from SETUP
     # and stays in TWO-WAY sync with the toolbar Response combo through the
     # shared _apply_filter_mode — signals blocked on the mirrored side so neither
     # change double-routes into the engine. Drive the real handler path (not a
@@ -169,7 +170,7 @@ def main() -> int:
             win._filter_combo.setCurrentIndex(_ri)
         app.processEvents()
 
-    # SETUP parity: horn nickname editor mirrors the toolbar nickname field
+    # SETUP: horn nickname editor mirrors the toolbar nickname field
     # (both edit cfg.last_nickname; the toolbar field stays canonical). The
     # editingFinished signal can't be driven headless, so call the REAL
     # handlers after setText and confirm the mirror both directions.
@@ -190,7 +191,7 @@ def main() -> int:
         win._on_setup_nickname_changed()
         app.processEvents()
 
-    # SETUP parity: concert-pitch (A4) combo mirrors the toolbar Kammerton combo
+    # SETUP: concert-pitch (A4) combo mirrors the toolbar Kammerton combo
     # through the shared _apply_a4 — the heavy measurement recalc runs once,
     # never double-fired by the sibling (blockSignals). Drive both directions
     # and confirm the engine A4 follows.
@@ -217,7 +218,7 @@ def main() -> int:
         win._a4_combo.setCurrentIndex(_a4_saved)
         app.processEvents()
 
-    # SETUP parity: mic-gain combo wires to cfg.mic_gain_db + the engine
+    # SETUP: mic-gain combo wires to cfg.mic_gain_db + the engine
     # (set_mic_gain, dB->linear). Default 0 dB = unity gain. Drive the real
     # handler and confirm both the persisted dB and the engine's linear gain.
     check(hasattr(win, "_setup_mic_gain_combo"), "SETUP mic-gain combo missing")
@@ -238,7 +239,7 @@ def main() -> int:
         win._setup_mic_gain_combo.setCurrentIndex(_mg_saved)
         app.processEvents()
 
-    # Restore-mirror parity (Ent W3a): the post-restore sync must propagate the
+    # Restore-mirror: the post-restore sync must propagate the
     # canonical toolbar A4 + nickname into the SETUP twins. Drive the extracted
     # sync directly with non-default toolbar values (no full restore side-effects).
     if hasattr(win, "_sync_setup_twins_from_toolbar"):
@@ -258,7 +259,7 @@ def main() -> int:
         app.processEvents()
 
     # _apply_a4 must fire EXACTLY once per change — the sibling combo's mirrored
-    # index update is blockSignals'd, so no second recalc (Ent W3b).
+    # index update is blockSignals'd, so no second recalc.
     if hasattr(win, "_apply_a4"):
         _a4_calls = [0]
         _orig_apply = win._apply_a4
@@ -273,8 +274,7 @@ def main() -> int:
         app.processEvents()
 
     # Autotune A4 setter must sync BOTH combos + engine, and its bounds guard
-    # must no-op an out-of-range hz without crashing or corrupting the combo
-    # (Ent W3c / Uruk-hai W5).
+    # must no-op an out-of-range hz without crashing or corrupting the combo.
     if hasattr(win, "_instr_set_a4"):
         win._instr_set_a4(445.0)
         app.processEvents()
@@ -298,7 +298,7 @@ def main() -> int:
     check(win._test_tone_status.isVisible(),
           "test-tone failure status not shown when start failed")
 
-    # METRO panel (Sprint 2) — built inert (no controller in headless). Verify
+    # METRO panel — built inert (no controller in headless). Verify
     # the pure-UI controls respond and the audio actions don't lie.
     win._tabs.setCurrentIndex(win._tab_keys.index("metro"))
     app.processEvents()
@@ -369,8 +369,8 @@ def main() -> int:
     check(fake.is_running(),
           "metronome did not stay running across the output device switch")
 
-    # Drone bar + pitch pipes (Sprint 3). The controllers may or may not be
-    # present (sax_drone / sax_pitch_pipes land in CI's venv). Either way,
+    # Drone bar + pitch pipes. The controllers may or may not be
+    # present (the drone synth needs tinysoundfont). Either way,
     # headless has NO real output device — so force output "down" and assert the
     # honesty path: an audio action that can't sound must revert + show status,
     # never claim to be running. (The prior device-switch block left output
@@ -460,9 +460,8 @@ def main() -> int:
         win._btn_drone_on.setChecked(False)
         app.processEvents()
 
-    # DECK tab (Sprint 4) — built inert here (sax_deck lands in CI's venv; and
-    # headless has no input device anyway). This is the HONESTY LOCK Treebeard
-    # pins: a record attempt that can't arm the mic must NEVER show the pulsing
+    # DECK tab — built inert here (headless has no input device). This is
+    # the HONESTY LOCK: a record attempt that can't arm the mic must NEVER show the pulsing
     # red dot or claim 'recording' — the dot is driven off controller.state, and
     # with no armable input the state stays idle, so set_deck_recording(True)
     # never fires. Mirror of the drone/metro revert lock, input-side.
@@ -493,21 +492,22 @@ def main() -> int:
     check(not win._deck_pulse_timer.isActive(),
           "deck pulse timer running despite no armed take (false recording)")
 
-    # DECK live-wiring lock (Sprint 4): with sax_deck present, prove the GUI
+    # DECK live-wiring lock: with sax_deck present, prove the GUI
     # transport actually DRIVES the controller and the pulsing-red dot follows
     # controller state — the deck analog of the drone duck-attach lock (a wiring
     # bug a pure unit test can't see, because the unit tests call the controller
     # directly and bypass the button → handler → controller path). We build a
     # controller on a FAKE input engine + the REAL mixer, swap it in, and drive
     # the real buttons. Faking the engine's input methods keeps this independent
-    # of whether the engine input-tap has landed yet. Skips if sax_deck absent.
+    # of real audio hardware. Skips if sax_deck absent.
     if win._deck_ctrl is not None:
         import numpy as _np
+
         import sax_deck as _sd
 
         class _FakeInputEngine:
             """Minimal engine the DeckController needs: an armable mic input and
-            an output samplerate. Mirrors Gandalf's engine input-tap surface."""
+            an output samplerate. Mirrors the engine's input-tap surface."""
             def __init__(self, mixer):
                 self.mixer = mixer
                 self.input_running = True
@@ -571,7 +571,7 @@ def main() -> int:
         app.processEvents()
         win._deck_ctrl.shutdown()
 
-    # ── Theme switching (Sprint 5 live-apply lock) ───────────────────────
+    # ── Theme switching (live-apply lock) ────────────────────────────────
     # The SETUP picker exists and _apply_theme switches the palette + re-renders
     # the global stylesheet live without raising. Drives the real handler path
     # (mirrors the drone duck-attach lock), not a stub.
@@ -593,7 +593,7 @@ def main() -> int:
               f"theme {_name!r} window_bg not in the applied stylesheet")
     win._apply_theme(_start_theme)
 
-    # ── SETUP live re-translation (Frodo W2) + mic-gain status (Frodo W1) ─────
+    # ── SETUP live re-translation + mic-gain status ──────────────────────────
     # The SETUP tab is built once; switching language must re-label its group
     # titles + the mic-gain status line, not leave them stale until restart.
     check(hasattr(win, "_setup_mic_gain_status")
@@ -620,7 +620,7 @@ def main() -> int:
             break
     app.processEvents()
 
-    # ── A11Y: accessible names on the parity-sprint controls (A11Y-LABELS) ────
+    # ── A11Y: accessible names on the nav-shell controls (A11Y-LABELS) ────
     # Screen readers derive a button/checkbox name from its visible text, so
     # text-bearing controls only need non-empty text; text-LESS controls
     # (combos, sliders, line edits) announce as anonymous without an explicit

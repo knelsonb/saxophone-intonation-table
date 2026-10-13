@@ -23,7 +23,6 @@ from typing import Optional
 from sax_atomic import atomic_write_json
 from sax_theme import coerce_theme_name
 
-
 CONFIG_DIR = Path.home() / ".intonation_analyzer"
 CONFIG_PATH = CONFIG_DIR / "config.json"
 CUSTOMS_PATH = CONFIG_DIR / "custom_instruments.json"
@@ -90,7 +89,7 @@ class AppConfig:
     # the source of the GLE 0xAA busy crash on Windows.
     prefer_wdmks: bool = False
 
-    # ---- v0.6.3 audio OUTPUT device selection (parity sprint) ------------
+    # ---- v0.6.3 audio OUTPUT device selection ------------------------
     # Mirror of the input-device fields above, for the new sd.OutputStream
     # that feeds the mixer (metronome / drone / pitch pipes / test tone).
     # Index is intentionally NOT stored — it reshuffles on every USB-hub
@@ -128,13 +127,12 @@ class AppConfig:
     # UI language. 'de' or 'en'. First launch picks from the system locale;
     # subsequent launches honor the user's last explicit choice.
     last_lang: str = "en"
-    # v0.6.3 (parity sprint): the nav-shell tab the user last had open,
-    # restored on the next launch. One of TAB_VALUES; anything else
-    # degrades to the TUNER centerpiece. METRO/DECK/SETUP tabs land in
-    # later sprints but the field is restored from Sprint 1 onward.
+    # v0.6.3: the nav-shell tab the user last had open, restored on the
+    # next launch. One of TAB_VALUES; anything else degrades to the TUNER
+    # centerpiece.
     last_active_tab: str = "tuner"
 
-    # ---- v0.8.0 metronome (parity Sprint 2) ------------------------------
+    # ---- v0.8.0 metronome -----------------------------------------------
     # Last tempo in BPM, restored on launch. Clamped to [30, 300] (the
     # metronome's supported range); default 100 matches the Android app.
     last_bpm: int = 100
@@ -144,11 +142,11 @@ class AppConfig:
     # Metronome click volume, 0.0 (silent) .. 1.0 (full). Clamped on load.
     click_volume: float = 1.0
 
-    # ---- v0.10.0 tape deck (parity Sprint 4) -----------------------------
+    # ---- v0.10.0 tape deck ----------------------------------------------
     # Max single-take recording length in seconds. Bounds the engine's
     # preallocated mic-capture buffer (np.zeros(int(s*sr), f32)) so a
     # forgotten record can't grow without limit; 300s ~= 53 MB f32 @44.1k.
-    # Clamped to [1, 600] on load. Matches Gandalf's bounded-prealloc tap.
+    # Clamped to [1, 600] on load. Matches the engine's bounded-prealloc input tap.
     deck_max_seconds: int = 300
     # Full path of the WAV the user last EXPORTED a take to. Persisted so the
     # export file dialog reopens at that directory/filename. Empty = no
@@ -160,7 +158,7 @@ class AppConfig:
     # lifecycle and the user's chosen save location never collide.
     deck_scratch_dir: str = ""
 
-    # ---- v0.11.0 theme switching (parity Sprint 5) -----------------------
+    # ---- v0.11.0 theme switching ------------------------------------------
     # UI theme: 'dark' (default, the original look), 'night' (red-shifted,
     # low-blue for dark-hall tuning), or 'light'. Coerced to a known theme on
     # load via sax_theme.coerce_theme_name, so a stale/unknown value degrades

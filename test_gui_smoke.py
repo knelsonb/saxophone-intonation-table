@@ -1,5 +1,5 @@
-"""Suite integration for ``scripts/gui_smoke.py`` (co-owned: Frodo authors the
-GUI assertions, Treebeard folds it into the pytest suite / CI gate).
+"""Suite integration for ``scripts/gui_smoke.py`` (the pytest / CI gate for
+the GUI assertions).
 
 The smoke BUILDS a real ``MainWindow`` under offscreen Qt, so it is run as an
 isolated SUBPROCESS rather than imported: the script sets ``HOME`` to a

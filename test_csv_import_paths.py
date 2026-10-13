@@ -1,5 +1,5 @@
 """
-Phase-0 safety net for import_raw_csv — covers paths not exercised by the
+Safety net for import_raw_csv — covers paths not exercised by the
 existing test_csv_bom_import.py (which tests only the current-header + BOM
 case).
 

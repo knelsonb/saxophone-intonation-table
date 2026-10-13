@@ -1,12 +1,12 @@
 """
 Tape deck: record one mic take, play it back through the mixer, export it.
 
-Sprint-4 parity feature (Android ``useDeck``). The deck is the first
-*input-side* consumer of the audio engine — Sprints 1-3 were all output
-(metronome / drone / pitch pipes). The split, mirroring D3's
-mechanism/policy divide (GainGlide vs OutputCoordinator):
+Modelled on the Android app's ``useDeck`` hook. The deck is the *input-side*
+consumer of the audio engine; the metronome, drone and pitch pipes are all
+output sources. The split mirrors the mechanism/policy divide used for mic
+coordination (GainGlide vs OutputCoordinator):
 
-* **Engine = pure capture mechanism** (Gandalf, sax_audio_engine). While
+* **Engine = pure capture mechanism** (sax_audio_engine). While
   armed, the input callback slice-assigns each mic frame into a bounded
   preallocated buffer — zero hot-path allocation, zero drop until the cap.
   ``start_input_recording(max_seconds) -> bool`` arms;

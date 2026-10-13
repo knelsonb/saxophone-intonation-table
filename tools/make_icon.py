@@ -19,10 +19,8 @@ import sys
 from pathlib import Path
 
 from PyQt6.QtCore import QPointF, QRectF, Qt
-from PyQt6.QtGui import (QBrush, QColor, QFont, QPainter,
-                          QPen, QPixmap, QPolygonF, QRadialGradient)
+from PyQt6.QtGui import QBrush, QColor, QFont, QPainter, QPen, QPixmap, QPolygonF, QRadialGradient
 from PyQt6.QtWidgets import QApplication
-
 
 SIZE = 512
 OUT_DIR = Path(__file__).resolve().parent.parent / 'assets'
@@ -105,7 +103,8 @@ def render_icon() -> QPixmap:
 
 def main() -> int:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    app = QApplication.instance() or QApplication(sys.argv)
+    # Hold a reference: painting QPixmaps needs a live QApplication.
+    _app = QApplication.instance() or QApplication(sys.argv)
     pix = render_icon()
     png_path = OUT_DIR / 'icon.png'
     if not pix.save(str(png_path), 'PNG'):

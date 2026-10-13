@@ -1,4 +1,4 @@
-"""Theme palettes for the intonation analyzer (Sprint-5 parity feature).
+"""Theme palettes for the intonation analyzer.
 
 Android (v1.1) ships three themes — ``dark`` / ``night`` / ``light`` — plus a
 night-vision tuning emphasis; the desktop was dark-only. This module is the
@@ -13,10 +13,10 @@ Design:
   (tuner needle, cents bars, table, chart) read role colours via
   :func:`active` and wrap them in ``QColor`` themselves. Keeping this module
   Qt-free means it unit-tests in system python like the other logic modules.
-* **DARK reproduces the pre-Sprint-5 inline colours** for the roles the global
+* **DARK reproduces the original inline colours** (the single hard-coded dark
+  palette the app used before themes existed) for the roles the global
   stylesheet uses, so routing the app through ``build_app_qss(DARK)`` is a
-  visual no-op — the refactor is provably safe before NIGHT/LIGHT are judged
-  on appearance.
+  visual no-op.
 * **NIGHT** is red-shifted and low-blue (preserves dark-adapted vision while
   tuning in a pit/dark hall); **LIGHT** is dark-on-light with semantic colours
   darkened for contrast on a pale background.
@@ -28,7 +28,6 @@ the module-level "active" pointer needs no lock.
 from __future__ import annotations
 
 from dataclasses import dataclass
-
 
 # Cents thresholds shared by every view (tuner, table, PDF, chart): within
 # IN_TUNE_CENTS is green, within CLOSE_CENTS amber, beyond that red.
@@ -89,7 +88,7 @@ class ThemePalette:
 
 
 # ---------------------------------------------------------------------------
-# DARK — reproduces the pre-Sprint-5 inline palette for the global-stylesheet
+# DARK — reproduces the original inline palette for the global-stylesheet
 # roles, so build_app_qss(DARK) renders identically to the old hand-written QSS.
 # ---------------------------------------------------------------------------
 DARK = ThemePalette(
@@ -220,7 +219,7 @@ def set_active(name) -> ThemePalette:
 # ---------------------------------------------------------------------------
 # Global Qt stylesheet, parameterised by a palette. This is the old hand-written
 # MainWindow stylesheet with the hex literals replaced by palette roles, so
-# build_app_qss(DARK) == the pre-Sprint-5 stylesheet (modulo whitespace).
+# build_app_qss(DARK) == the original dark-only stylesheet (modulo whitespace).
 # ---------------------------------------------------------------------------
 def build_app_qss(p: ThemePalette) -> str:
     """Return the application-wide stylesheet for palette ``p``."""

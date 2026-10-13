@@ -10,9 +10,9 @@ Starten:
 """
 
 import csv
-from array import array
 import os
 import sys
+from array import array
 
 # Launched as a script, this file runs as __main__; controllers that import
 # sax_intonation_gui would otherwise load a second copy with its own
@@ -20,9 +20,9 @@ import sys
 if __name__ == '__main__':
     sys.modules.setdefault('sax_intonation_gui', sys.modules[__name__])
 
+import datetime
 import math
 import threading
-import datetime
 from pathlib import Path
 
 import numpy as np
@@ -33,58 +33,109 @@ try:
 except Exception:
     AUDIO_OK = False
 
-from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QTableWidget, QHeaderView,
-    QComboBox, QSizePolicy, QFileDialog, QMessageBox,
-    QAbstractItemView, QGroupBox, QSplitter,
-    QDialog, QLineEdit, QDialogButtonBox, QFormLayout,
-    QStyledItemDelegate, QMenu, QCheckBox, QSpinBox, QToolButton,
-    QTabWidget, QTabBar, QSlider,
-)
 from PyQt6.QtCore import (
-    Qt, QTimer, pyqtSignal, QRectF, QPointF, QLocale,
+    QLocale,
+    QPointF,
+    QRectF,
+    Qt,
+    QTimer,
+    pyqtSignal,
 )
-from PyQt6.QtGui import QPainter, QColor, QFont, QPen, QIcon, QGuiApplication
+from PyQt6.QtGui import QColor, QFont, QGuiApplication, QIcon, QPainter, QPen
+from PyQt6.QtWidgets import (
+    QAbstractItemView,
+    QApplication,
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFileDialog,
+    QFormLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QMainWindow,
+    QMenu,
+    QMessageBox,
+    QPushButton,
+    QSizePolicy,
+    QSlider,
+    QSpinBox,
+    QSplitter,
+    QStyledItemDelegate,
+    QTabBar,
+    QTableWidget,
+    QTabWidget,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+)
 
-from sax_intonation_log import MeasurementLog
-import sax_instruments
-from sax_instruments import (
-    families as instrument_families,
-    transp_map as build_transp_map,
-    display_name as instrument_display_name,
-    register_custom,
-)
 import sax_config
+import sax_instruments
 import sax_theme
-from sax_theme import CLOSE_CENTS, IN_TUNE_CENTS
-from sax_i18n import STRINGS
-from sax_session_state import SessionStateController
-from sax_export import ExportController
-from sax_table import TableController
-from sax_instrument_controller import InstrumentController
-from sax_device import DeviceController
 
-# Sprint 2: the metronome controller lives in its own module (sax_metronome.py,
-# MetronomeController). It may not exist yet while Sprint 2 is in flight — the
-# METRO panel is built inert and guards every controller call, so the GUI
-# launches and the panel renders whether or not the controller has landed.
+# v0.5.4: AudioEngine + pitch detection + filter presets live in their own
+# module so the engine has a state machine, host-API fallback chain, and
+# hot-plug poller without dragging the GUI through every test path. The
+# names we re-export below keep the rest of this file's imports stable.
+from sax_audio_engine import (
+    A4_DEFAULT as _A4_DEFAULT_EXT,
+    BLOCK_MS as _BLOCK_MS_EXT,
+    DEFAULT_BLOCK_SIZE as _DEFAULT_BLOCK_SIZE_EXT,
+    DEFAULT_HOP_SIZE as _DEFAULT_HOP_SIZE_EXT,
+    DEFAULT_SAMPLE_RATE as _DEFAULT_SAMPLE_RATE_EXT,
+    FILTER_MODE_DEFAULT as _FILTER_MODE_DEFAULT_EXT,
+    FILTER_PRESETS as _FILTER_PRESETS_EXT,
+    HOP_MS as _HOP_MS_EXT,
+    MAX_FREQ as _MAX_FREQ_EXT,
+    MIN_FREQ as _MIN_FREQ_EXT,
+    SAMPLERATE_CANDIDATES as _SAMPLERATE_CANDIDATES_EXT,
+    SAMPLERATE_PREF_VALUES as _SAMPLERATE_PREF_VALUES_EXT,
+    VENDOR_REGEX,
+    AudioEngine,
+    AudioEngineError,
+    AudioEngineState,
+    DeviceInfo,
+    DeviceSelection,
+    yin_pitch as _yin_pitch_ext,
+)
+from sax_device import DeviceController
+from sax_export import ExportController
+from sax_i18n import STRINGS
+from sax_instrument_controller import InstrumentController
+from sax_instruments import (
+    display_name as instrument_display_name,
+    families as instrument_families,
+    register_custom,
+    transp_map as build_transp_map,
+)
+from sax_intonation_log import MeasurementLog
+from sax_session_state import SessionStateController
+from sax_table import TableController
+from sax_theme import CLOSE_CENTS, IN_TUNE_CENTS
+
+# The metronome controller lives in its own module (sax_metronome.py,
+# MetronomeController). The METRO panel guards every controller call, so the
+# GUI still launches and the panel renders if the import fails.
 try:
     from sax_metronome import MetronomeController as _MetronomeController
 except Exception:
     _MetronomeController = None
 
-# Sprint 3: drone (TSF) + pitch pipes (numpy sine) live in their own modules.
-# Same inert-until-landed discipline as the metronome. The voice catalog is the
-# authoritative source when present; a 5-preset fallback keeps the TUNER preset
-# row rendering before sax_drone.py lands (reconcile to the module catalog once
-# it's in — do not let these drift from droneVoices.ts).
+# Drone (TSF) + pitch pipes (numpy sine) live in their own modules, guarded
+# the same way as the metronome. The sax_drone voice catalog is the
+# authoritative source when it imports; the 5-preset fallback below keeps the
+# TUNER preset row rendering if it does not. Keep the fallback in step with
+# sax_drone.DRONE_PRESETS.
 try:
     from sax_drone import (
-        DroneController as _DroneController,
+        DRONE_FULL_GM as _DRONE_FULL_GM,
         DRONE_PRESETS as _DRONE_PRESETS,
         DRONE_SYNTH_VOICES as _DRONE_SYNTH_VOICES,
-        DRONE_FULL_GM as _DRONE_FULL_GM,
+        DroneController as _DroneController,
     )
 except Exception:
     _DroneController = None
@@ -105,11 +156,11 @@ try:
 except Exception:
     _PitchPipesController = None
 
-# Sprint 4: the tape deck (record mic → single take → playback/export) lives in
-# sax_deck.py (DeckController state machine + DeckPlaybackSource + WAV io). Same
-# inert-until-landed discipline as metro/drone — the DECK tab builds and renders
-# its transport, and every controller call is guarded, whether or not sax_deck
-# has landed yet. The GUI-facing contract (channel-firmed): DeckController(
+# The tape deck (record mic → single take → playback/export) lives in
+# sax_deck.py (DeckController state machine + DeckPlaybackSource + WAV io).
+# Guarded like metro/drone — the DECK tab builds and renders its transport, and
+# every controller call is guarded, if sax_deck fails to import. The
+# GUI-facing contract: DeckController(
 # mixer, samplerate, *, engine, scratch_dir, on_state_changed); .state ∈
 # {idle, recording, have_take, playing} (hyphen/underscore tolerated);
 # start_record()->bool, stop(), play(), export(path)->bool.
@@ -121,30 +172,6 @@ except Exception:
 APP_NAME = 'Intonation Analyzer'
 APP_VERSION = '1.2.0'
 
-# v0.5.4: AudioEngine + pitch detection + filter presets live in their own
-# module so the engine has a state machine, host-API fallback chain, and
-# hot-plug poller without dragging the GUI through every test path. The
-# names we re-export below keep the rest of this file's imports stable.
-from sax_audio_engine import (
-    AudioEngine,
-    AudioEngineState,
-    AudioEngineError,
-    DeviceInfo,
-    DeviceSelection,
-    FILTER_PRESETS as _FILTER_PRESETS_EXT,
-    FILTER_MODE_DEFAULT as _FILTER_MODE_DEFAULT_EXT,
-    HOP_MS as _HOP_MS_EXT,
-    BLOCK_MS as _BLOCK_MS_EXT,
-    MIN_FREQ as _MIN_FREQ_EXT,
-    MAX_FREQ as _MAX_FREQ_EXT,
-    A4_DEFAULT as _A4_DEFAULT_EXT,
-    DEFAULT_SAMPLE_RATE as _DEFAULT_SAMPLE_RATE_EXT,
-    DEFAULT_HOP_SIZE as _DEFAULT_HOP_SIZE_EXT,
-    DEFAULT_BLOCK_SIZE as _DEFAULT_BLOCK_SIZE_EXT,
-    SAMPLERATE_PREF_VALUES as _SAMPLERATE_PREF_VALUES_EXT,
-    SAMPLERATE_CANDIDATES as _SAMPLERATE_CANDIDATES_EXT,
-    VENDOR_REGEX,
-)
 
 
 # =============================================================================
@@ -253,7 +280,7 @@ def midi_note_name(m):
 
 # Reverse of midi_note_name: accept "G3", "F#5", "Bb2", "B♭2", "g3", etc.
 # Returns the integer MIDI number or None if the string can't be parsed.
-# Used by the range editor's note-name input field so Frodo doesn't have to
+# Used by the range editor's note-name input field so users don't have to
 # think in MIDI integers.
 _NOTE_PITCH_CLASSES = {
     'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11,
@@ -305,7 +332,6 @@ def cents_dev(f, a4=None):
 # Local thin wrapper retained for any in-process call sites; the engine
 # uses its own implementation directly.
 # =============================================================================
-from sax_audio_engine import yin_pitch as _yin_pitch_ext
 
 
 def yin_pitch(sig, sr=SAMPLE_RATE, fmin=MIN_FREQ, fmax=MAX_FREQ,
@@ -319,7 +345,7 @@ def _themed(role: str, alpha: int = 255) -> QColor:
 
     The custom-painted widgets call this each paintEvent, so a theme switch
     repaints them in the new palette. ``alpha`` (0-255) applies translucency
-    for fills/overlays without minting per-theme rgba roles. Sprint-5 parity."""
+    for fills/overlays without minting per-theme rgba roles."""
     c = QColor(getattr(sax_theme.active(), role))
     if alpha != 255:
         c.setAlpha(alpha)
@@ -338,7 +364,7 @@ class NoteStats:
     Replaces the v0.5.7 list-based accumulator.  O(1) time and O(1) memory
     per note regardless of how many cents readings accumulate.  Population
     std (ddof=0) is preserved to match np.std default and the _agg_stats
-    contract locked by Phase-0 tests.
+    contract locked by test_agg_stats.py.
 
     Thread-safety note: add() and the property readers are both called on
     the Qt main thread (add via the engine.note_detected slot; readers via
@@ -464,9 +490,12 @@ class TunerWidget(QWidget):
         if self.active:
             norm = max(-1.0, min(1.0, self.cents / mx))
             nx   = sx + sw/2 + norm * sw/2
-            if   abs(self.cents) <= IN_TUNE_CENTS: nc = _themed('ok', alpha)
-            elif abs(self.cents) <= CLOSE_CENTS:   nc = _themed('warn', alpha)
-            else:                       nc = _themed('bad', alpha)
+            if abs(self.cents) <= IN_TUNE_CENTS:
+                nc = _themed('ok', alpha)
+            elif abs(self.cents) <= CLOSE_CENTS:
+                nc = _themed('warn', alpha)
+            else:
+                nc = _themed('bad', alpha)
             p.setBrush(nc)
             p.drawRoundedRect(QRectF(nx - 4, sy - 6, 8, sh + 12), 4, 4)
 
@@ -481,9 +510,12 @@ class TunerWidget(QWidget):
 
         if self.active:
             p.setFont(QFont('Monospace', 32, QFont.Weight.Bold))
-            if   abs(self.cents) <= IN_TUNE_CENTS: cc = _themed('ok', alpha)
-            elif abs(self.cents) <= CLOSE_CENTS:   cc = _themed('warn', alpha)
-            else:                       cc = _themed('bad', alpha)
+            if abs(self.cents) <= IN_TUNE_CENTS:
+                cc = _themed('ok', alpha)
+            elif abs(self.cents) <= CLOSE_CENTS:
+                cc = _themed('warn', alpha)
+            else:
+                cc = _themed('bad', alpha)
             p.setPen(cc)
             p.drawText(QRectF(0, sy + sh + 26, W, 55),
                        Qt.AlignmentFlag.AlignHCenter,
@@ -751,8 +783,9 @@ class DataPanelWidget(QWidget):
             v_lbl = QLabel('—')
             v_lbl.setStyleSheet('color:#d8d8ee;font-family:Monospace;font-size:11px;')
             v_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            self._grid.addWidget(k_lbl, r, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
-            self._grid.addWidget(v_lbl, r, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+            top_left = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+            self._grid.addWidget(k_lbl, r, 0, top_left)
+            self._grid.addWidget(v_lbl, r, 1, top_left)
             self._rows[key] = v_lbl
         self._grid.setColumnStretch(1, 1)
 
@@ -1222,8 +1255,8 @@ class AudioChip(QPushButton):
 
     Clicking opens the picker. State updates are driven by the engine's
     ``state_changed`` signal — the chip never queries PortAudio
-    directly, which keeps the GUI thread off the cold-init path
-    documented in Legolas's perf memo."""
+    directly, which keeps the GUI thread off the slow PortAudio
+    cold-init path."""
 
     def __init__(self, t_func):
         super().__init__()
@@ -1293,8 +1326,8 @@ class AudioRecoveryBanner(QWidget):
     """Inline banner that appears when the engine is in FAILED state.
 
     Sits above the tuner; carries two buttons (Retry, pick a different
-    device). The copy is selected by ``AudioEngineError`` per Frodo's
-    UX memo — never displays raw PortAudio error codes to the user."""
+    device). The copy is selected by ``AudioEngineError``, so the
+    user never sees raw PortAudio error codes."""
 
     def __init__(self, t_func, on_retry, on_pick):
         super().__init__()
@@ -1349,8 +1382,8 @@ class InfoBanner(QWidget):
     """Non-modal info banner with one optional action + a Dismiss button.
 
     Sister widget to ``AudioRecoveryBanner``; used for hot-plug
-    notifications and wrong-instrument hints — anything that previously
-    interrupted Frodo with a modal QMessageBox while he was playing.
+    notifications and wrong-instrument hints — anything that would otherwise
+    interrupt the player with a modal QMessageBox.
 
     Use ``show_message(text, action_label=None, action_callback=None)`` to
     surface a banner; Dismiss always hides it. If no action label is
@@ -1389,7 +1422,7 @@ class InfoBanner(QWidget):
             except Exception:
                 # The action handler is user code; never let an exception
                 # in the action propagate up to the Qt event loop and
-                # tear the window down on Frodo.
+                # tear the window down.
                 pass
 
     def show_message(self, text: str, action_label: str | None = None,
@@ -1918,7 +1951,7 @@ class RangeEditorDialog(QDialog):
         # clickability and keeps the dark theme.
         self._lo_spin.setObjectName('rangeSpin')   # themed via QSpinBox#rangeSpin
         self._hi_spin.setObjectName('rangeSpin')
-        # v0.6 Phase-4 (Item 4): primary input is the note-name QLineEdit;
+        # Primary input is the note-name QLineEdit;
         # the MIDI spinbox is kept visible for power users. Wire-up:
         # the name edit drives the spin (parses on editingFinished), and
         # the spin drives the edit (formats on valueChanged). Cycle guard
@@ -2135,7 +2168,7 @@ class MainWindow(QMainWindow):
         # _on_note increments). Diagnostics readout consumes this; the
         # table-level note count comes from `len(self.stats)`.
         self._notes_count: int = 0
-        # v0.6 Phase-4 (Item 3): wrong-instrument detector. Counts
+        # Wrong-instrument detector. Counts
         # consecutive _on_note calls whose fingered MIDI lands outside the
         # currently selected instrument's range. Reset when a note lands
         # inside the range (false alarm) or when the user changes
@@ -2197,7 +2230,7 @@ class MainWindow(QMainWindow):
                 self._on_interface_appeared)
 
         self._build_ui()
-        # Phase-5 extraction: persistable session state (geometry,
+        # Persistable session state (geometry,
         # splitter, instrument/nickname/display/A4/lang) lives on the
         # SessionStateController. Instantiated here, AFTER _build_ui,
         # because every widget reference it captures must already
@@ -2212,7 +2245,7 @@ class MainWindow(QMainWindow):
             a4_combo=self._a4_combo,
             lang_combo=self._lang_combo,
         )
-        # Phase-5 extraction: TXT / PDF / CSV / PNG-chart export flows and
+        # TXT / PDF / CSV / PNG-chart export flows and
         # their helper dialogs live on ExportController. Live values
         # (instrument, stats, lang, maker, model, nickname) reach the
         # controller via getter-callables so they're read at export time,
@@ -2231,13 +2264,13 @@ class MainWindow(QMainWindow):
             get_nickname=lambda: (self._nick_edit.text()
                                   if hasattr(self, '_nick_edit') else ''),
         )
-        # Phase-5 extraction: intonation-table refresh + matrix paint
+        # Intonation-table refresh + matrix paint
         # pipeline lives on TableController.  The QTimer that drives the
         # 300 ms refresh stays wired to MainWindow._refresh_table (just
         # below) so resizeEvent's deferred refresh path also works
-        # unchanged.  The controller's configure_for_mode() also lands
-        # Legolas W8: QTableWidgetItem instances are allocated once per
-        # layout change and reused across refresh ticks.
+        # unchanged.  The controller's configure_for_mode() allocates the
+        # QTableWidgetItem instances once per layout change and they are
+        # reused across refresh ticks.
         self._table_ctrl = TableController(
             self,
             table=self._table,
@@ -2249,7 +2282,7 @@ class MainWindow(QMainWindow):
             get_display_mode=lambda: self.display,
             get_a4=lambda: float(self._a4_combo.currentData()),
         )
-        # Phase-5 extraction: family/instrument selection, nickname editing,
+        # Family/instrument selection, nickname editing,
         # per-instrument range editor, custom-instrument registration, and
         # the autotune-from-history flow live on InstrumentController.
         # The controller itself is instantiated INSIDE _build_ui (after
@@ -2263,7 +2296,7 @@ class MainWindow(QMainWindow):
         self._seed_expected_notes()
         self._update_record_btn_style()
 
-        # Phase-5 extraction (fifth and final): audio-device picker open,
+        # Audio-device picker open,
         # retry, hot-plug poll, engine-state / devices-changed /
         # interface-appeared Qt slot bodies, and the persist-active-device
         # write-back live on DeviceController. The Qt signal-slot
@@ -2297,7 +2330,7 @@ class MainWindow(QMainWindow):
             self._engine.set_preferred_hint(saved)
             self._engine.start(preferred=saved, samplerate_pref=pref)
 
-        # Hot-plug poller: 1 Hz per Legolas's measurements (cached
+        # Hot-plug poller: 1 Hz (cached
         # query_devices is ~0 ms; only re-init is expensive, and we
         # only re-init when the device set actually changed).
         if AUDIO_OK:
@@ -2478,7 +2511,8 @@ class MainWindow(QMainWindow):
 
         # Buttons
         self._btn_autotune = self._make_btn(self._t('btn_autotune'), '#1a6b3a', self._on_autotune)
-        self._btn_record   = self._make_btn(self._t('btn_stop'),     '#b7770d', self._on_record_toggle)
+        self._btn_record   = self._make_btn(
+            self._t('btn_stop'), '#b7770d', self._on_record_toggle)
         self._btn_reset    = self._make_btn(self._t('btn_reset'),    '#c0392b', self._on_reset)
         self._btn_txt      = self._make_btn(self._t('btn_txt'),      '#2980b9', self._export_txt)
         self._btn_pdf      = self._make_btn(self._t('btn_pdf'),      '#8e44ad', self._export_pdf)
@@ -2486,7 +2520,7 @@ class MainWindow(QMainWindow):
         self._btn_chart    = self._make_btn(self._t('btn_chart'),    '#d35400', self._export_chart)
         self._btn_import   = self._make_btn(self._t('btn_import'),   '#7f8c8d', self._import_csv)
 
-        # AUDIO IN chip — Frodo-UX memo: between Language and Import.
+        # AUDIO IN chip, placed between Language and Import.
         # The chip is the user's at-a-glance health indicator when the
         # tuner goes silent. Clicking opens the picker modal.
         self._audio_chip = AudioChip(self._t)
@@ -2532,8 +2566,8 @@ class MainWindow(QMainWindow):
         self._audio_banner = AudioRecoveryBanner(
             self._t, self._retry_audio, self._open_audio_picker)
         ll3.addWidget(self._audio_banner)
-        # v0.6 Phase-4: non-modal info banner for hot-plug (Item 1) and
-        # wrong-instrument hint (Item 3). Hidden by default; the GUI calls
+        # Non-modal info banner for hot-plug and the
+        # wrong-instrument hint. Hidden by default; the GUI calls
         # show_message() to surface it with an optional Switch action and
         # an always-present Dismiss button.
         self._info_banner = InfoBanner(self._t)
@@ -2555,7 +2589,7 @@ class MainWindow(QMainWindow):
         self._status_lbl.setObjectName('dimLabel')   # themed via QLabel#dimLabel
         ll3.addWidget(self._status_lbl)
 
-        # Sprint 3: drone controls live on the TUNER tab (per the S3 lock),
+        # Drone controls live on the TUNER tab,
         # directly under the readout — quick access while tuning against the
         # drone. The 128-GM voice picker lives in SETUP; the compact 5-preset
         # row + volume + semitone are here.
@@ -2666,16 +2700,15 @@ class MainWindow(QMainWindow):
         # Held for closeEvent persistence and restore-on-launch (v0.5.5).
         self._splitter = splitter
 
-        # ── Navigation shell (Sprint 1) ───────────────────────────────────────
-        # D4: the global toolbar (built above) stays ABOVE a QTabWidget. The
-        # TUNER tab hosts the existing tuner/table splitter VERBATIM — it's the
-        # desktop's centerpiece and is more capable than Android's tuner, so it
-        # stays untouched rather than shrinking. METRO / DECK / SETUP are homes
-        # for later sprints; METRO and DECK are placeholders now but already
-        # carry the status-dot indicator hook (green=running on METRO, pulsing
-        # red=recording on DECK, mirroring Android's TabBar) so Sprint 2/4 only
-        # flips a signal instead of rebuilding the nav. SETUP carries the
-        # audio-output device picker + test-tone control this sprint delivers.
+        # ── Navigation shell ──────────────────────────────────────────────────
+        # The global toolbar (built above) stays ABOVE a QTabWidget. The
+        # TUNER tab hosts the tuner/table splitter as-is — it's the desktop's
+        # centerpiece and is more capable than Android's tuner, so it keeps
+        # its full size. METRO / DECK / SETUP are the other three tabs; METRO
+        # and DECK carry a status-dot indicator (green=running on METRO,
+        # pulsing red=recording on DECK, mirroring Android's TabBar) that the
+        # controllers flip with a signal. SETUP carries the audio-output
+        # device picker, test-tone control and the other settings.
         self._tabs = QTabWidget()
         self._tabs.setDocumentMode(True)
         self._tab_keys = ['tuner', 'metro', 'deck', 'setup']
@@ -2688,12 +2721,12 @@ class MainWindow(QMainWindow):
         self._install_tab_indicators()
         self._tabs.currentChanged.connect(self._on_tab_changed)
         root.addWidget(self._tabs, 1)
-        # Restore the last-active tab (Treebeard's cfg.last_active_tab,
+        # Restore the last-active tab (cfg.last_active_tab,
         # allowlist-coerced upstream). Unknown / fresh-install → TUNER.
         self._restore_active_tab()
 
         # Fensterstil
-        # Themed via sax_theme (Sprint 5). The active palette was set from
+        # Themed via sax_theme. The active palette was set from
         # cfg.theme in __init__ before any widget was built; build_app_qss(DARK)
         # reproduces this exact stylesheet, so dark is byte-for-byte unchanged
         # while night/light re-render from their palettes. Live theme switches
@@ -2703,7 +2736,7 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle(f"{self._t('window_title')} {APP_VERSION}")
 
-        # Phase-5 extraction: InstrumentController owns family/instr/nickname
+        # InstrumentController owns family/instr/nickname
         # work, the range editor, custom-instrument registration, and
         # autotune. Instantiated here at the END of _build_ui because every
         # widget it captures (family_combo, instr_combo, nick_edit,
@@ -2731,14 +2764,13 @@ class MainWindow(QMainWindow):
         self._select_family_for_instrument(self.instrument)
         self._populate_instrument_combo(select_key=self.instrument)
 
-    # ── Navigation shell helpers (Sprint 1) ──────────────────────────────────
+    # ── Navigation shell helpers ─────────────────────────────────────────────
     def _build_setup_tab(self) -> QWidget:
-        """SETUP tab. Sprint 1 delivers the audio-OUTPUT controls: an
-        output-device picker, the duplex-preference toggle (D5), and a
-        test-tone button that proves the output path — Sprint-1 acceptance
-        is a tone playing through the mixer while the tuner keeps reading
-        the mic (D3: readout stays live). Later sprints grow this tab with
-        theme switching and the rest of SETUP parity."""
+        """SETUP tab: audio-OUTPUT controls (output-device picker, the
+        duplex-preference toggle, and a test-tone button that proves the
+        output path — a tone plays through the mixer while the tuner keeps
+        reading the mic), plus drone voice, theme, instrument, nickname,
+        concert pitch, response and mic-gain settings."""
         w = QWidget()
         outer = QVBoxLayout(w)
         outer.setContentsMargins(18, 16, 18, 16)
@@ -2771,7 +2803,7 @@ class MainWindow(QMainWindow):
         og.addRow('', self._cb_prefer_duplex)
         outer.addWidget(out_grp)
 
-        # Drone voice — the full 128-GM picker lives here (per the S3 lock); the
+        # Drone voice — the full 128-GM picker lives here; the
         # TUNER drone bar carries the 5-preset quick row. Both drive the same
         # voice and stay in sync via DroneController.on_state_changed.
         voice_grp = QGroupBox(self._t('setup_drone_voice_group'))
@@ -2801,7 +2833,7 @@ class MainWindow(QMainWindow):
         vg.addRow(self._lbl_drone_voice, self._drone_voice_combo)
         outer.addWidget(voice_grp)
 
-        # Appearance — theme switching (Sprint 5 parity: dark / night / light).
+        # Appearance — theme switching (dark / night / light).
         appear_grp = QGroupBox(self._t('setup_appearance_group'))
         ag = QFormLayout(appear_grp)
         ag.setContentsMargins(12, 10, 12, 10)
@@ -2819,7 +2851,7 @@ class MainWindow(QMainWindow):
         ag.addRow(self._lbl_theme, self._theme_combo)
         outer.addWidget(appear_grp)
 
-        # Instrument — range-editor link (SETUP parity; also reachable via the
+        # Instrument — range-editor link (also reachable via the
         # toolbar gear). No inline stylesheet: it rides the global themed
         # QPushButton QSS so it re-themes on a theme switch (avoids adding to
         # the inline-style tail, task #31).
@@ -2850,7 +2882,7 @@ class MainWindow(QMainWindow):
         ig.addWidget(self._btn_setup_range)
         outer.addWidget(instr_grp)
 
-        # Concert pitch (A4) — SETUP parity with the toolbar Kammerton combo.
+        # Concert pitch (A4) — mirrors the toolbar Kammerton combo.
         # Both combos drive the engine A4 + the (heavy) measurement recalc via
         # the shared _apply_a4, mirrored under blockSignals so the re-derive
         # runs exactly once. Items are language-independent ("NNN Hz"), so no
@@ -2871,7 +2903,7 @@ class MainWindow(QMainWindow):
         outer.addWidget(a4_grp)
 
         # Response — pitch-detection smoothing preset (Fast / Normal / Slow).
-        # SETUP parity with the toolbar Response combo: both drive
+        # Mirrors the toolbar Response combo: both drive
         # cfg.filter_mode + the engine through _apply_filter_mode and stay
         # mirrored (blockSignals) so changing one updates the other without
         # double-routing. No inline stylesheet — rides the themed QComboBox
@@ -2917,7 +2949,7 @@ class MainWindow(QMainWindow):
         mg.addWidget(self._setup_mic_gain_combo)
         # Live plain-language confirmation of what the current gain does — so the
         # control gives a VISIBLE result even though the cents readout is, by
-        # design, unaffected by gain (Frodo W1). Updated on every change + on a
+        # design, unaffected by gain. Updated on every change + on a
         # language switch.
         self._setup_mic_gain_status = QLabel('')
         self._setup_mic_gain_status.setObjectName('setupMicGainStatus')
@@ -2955,7 +2987,7 @@ class MainWindow(QMainWindow):
         outer.addStretch()
         # Register every translatable SETUP widget so _retranslate can re-label
         # the whole tab on a LIVE language switch — previously the SETUP titles
-        # went stale until restart (Frodo W2). Group boxes + form-row labels.
+        # went stale until restart. Group boxes + form-row labels.
         self._setup_i18n_groups = [
             (out_grp, 'setup_output_group'),
             (voice_grp, 'setup_drone_voice_group'),
@@ -3065,8 +3097,8 @@ class MainWindow(QMainWindow):
     def _refresh_output_device_combo(self) -> None:
         """Fill the SETUP output combo: System default first, then the
         engine's output enumeration. hasattr-guarded so the GUI still
-        launches if the engine output mirror hasn't landed yet (the combo
-        then shows only System default)."""
+        launches if the engine has no output enumeration (the combo then
+        shows only System default)."""
         combo = self._out_device_combo
         was_blocked = combo.blockSignals(True)
         combo.clear()
@@ -3212,8 +3244,8 @@ class MainWindow(QMainWindow):
         """Attach status-dot widgets to the METRO and DECK tabs, hidden
         until set_metro_running / set_deck_recording flip them. Mirrors
         Android's TabBar (TabBar.tsx): solid green when the metronome runs,
-        pulsing red while the deck records. Building the hook now (Sprint 1)
-        means Sprints 2/4 only emit a signal, not rebuild the nav."""
+        pulsing red while the deck records. The controllers only emit a
+        signal to flip them."""
         bar = self._tabs.tabBar()
         self._metro_dot = _StatusDot()
         self._metro_dot.set_color('#2ecc71')   # green
@@ -3271,26 +3303,24 @@ class MainWindow(QMainWindow):
         if key in self._tab_keys:
             self._tabs.setCurrentIndex(self._tab_keys.index(key))
 
-    # ── METRO tab (Sprint 2) ──────────────────────────────────────────────────
-    # These mirror Android useMetronome (BPM_MIN/MAX, the four parity presets).
-    # When sax_metronome.py lands, reconcile by importing its authoritative
-    # constants rather than duplicating them here.
+    # ── METRO tab ─────────────────────────────────────────────────────────────
+    # These mirror Android useMetronome (BPM_MIN/MAX, the four presets).
+    # sax_metronome.py holds the authoritative constants; keep these in step.
     METRO_TIME_SIGS = ('2/4', '3/4', '4/4', '6/8')
     METRO_BPM_MIN = 30
     METRO_BPM_MAX = 300
 
     def _build_metro_tab(self) -> QWidget:
-        """The metronome panel. The static UI is built now (Sprint 2); audio is
-        driven by MetronomeController (sax_metronome.py) once it lands. Every
-        controller call is guarded, so the panel renders and the pure-UI
-        controls (BPM display, time-sig, volume) respond even while the
-        controller is absent. Audio actions (start, tap) surface an inline
-        'not available yet' status rather than lying about playing — the same
-        honesty discipline as the test-tone button. The GUI-facing controller
-        API is the channel-blessed contract: bpm/time_sig/volume/running,
+        """The metronome panel. Audio is driven by MetronomeController
+        (sax_metronome.py). Every controller call is guarded, so the panel
+        renders and the pure-UI controls (BPM display, time-sig, volume)
+        respond even while the controller is absent. Audio actions (start,
+        tap) surface an inline 'not available yet' status rather than
+        claiming to play — the same honesty discipline as the test-tone
+        button. The GUI-facing controller API is: bpm/time_sig/volume/running,
         set_bpm/nudge_bpm/set_time_sig/set_volume, register_tap()->Optional[int],
         start/stop/toggle/is_running, on_state_changed."""
-        # Local UI state, seeded from persisted config (Treebeard's Sprint-2
+        # Local UI state, seeded from persisted config (the metronome
         # fields, read defensively).
         self._metro_bpm = self._clamp_bpm(int(getattr(self._cfg, 'last_bpm', 100)))
         self._metro_time_sig = str(getattr(self._cfg, 'last_time_sig', '4/4'))
@@ -3539,11 +3569,11 @@ class MainWindow(QMainWindow):
                 b.blockSignals(bb)
             self._cfg.last_time_sig = ts
 
-    # ── Tape deck (Sprint 4) ──────────────────────────────────────────────────
-    # Android useDeck parity: record the MIC to a single take, play it back
+    # ── Tape deck ─────────────────────────────────────────────────────────────
+    # As in the Android useDeck hook: record the MIC to a single take, play it back
     # through the mixer, export it to a WAV. DeckController (sax_deck.py) owns the
     # state machine + the engine input-recording tap + WAV io; this panel is its
-    # transport and is inert+guarded until the module lands. Honesty discipline:
+    # transport and is inert+guarded if the module is unavailable. Honesty discipline:
     # the pulsing-red dot + a 'recording' state appear ONLY when the controller
     # actually armed the mic input — never on a bare button press.
     #
@@ -3551,19 +3581,19 @@ class MainWindow(QMainWindow):
     # timer. Playback-end and cap-hit transitions are detected there (the audio
     # thread only flips a lock-free .finished flag); pump() performs the
     # transition and fires on_state_changed ON THE GUI THREAD, so buttons are
-    # always relabelled on-thread (Sauron's contract, 3550).
+    # always relabelled on-thread.
     DECK_STATES = ('idle', 'recording', 'have_take', 'playing')
 
     def _build_deck_tab(self) -> QWidget:
         """The DECK tab: Record / Stop / Play / Export transport with
         state-driven enable + labels, an inline status line, and the pulsing-red
-        recording dot (set_deck_recording, built Sprint 1). Wired to
-        DeckController once sax_deck lands; inert + guarded until then."""
+        recording dot (set_deck_recording). Wired to
+        DeckController; inert + guarded if sax_deck is unavailable."""
         self._deck_played_once = False
         self._deck_last_state = None
         self._deck_last_can_record = None
         # Construct the controller (None → inert transport). Mirrors drone/metro,
-        # plus max_seconds (Sauron's contract) from the clamped config field.
+        # plus max_seconds from the clamped config field.
         self._deck_ctrl = None
         if (_DeckController is not None
                 and getattr(self._engine, 'mixer', None) is not None):
@@ -3624,7 +3654,7 @@ class MainWindow(QMainWindow):
         row.addWidget(self._btn_deck_export)
         outer.addLayout(row)
 
-        # Parity note: records the mic only, a single take.
+        # Records the mic only, a single take (as in the Android app).
         hint = QLabel(self._t('deck_hint'))
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         hint.setWordWrap(True)
@@ -3707,7 +3737,7 @@ class MainWindow(QMainWindow):
         self._btn_deck_export.setEnabled(have_take)
 
         # The pulsing-red dot is driven ONLY by a real 'recording' state — never
-        # by a bare button press (the honesty seam Treebeard locks).
+        # by a bare button press (the honesty seam locked by gui_smoke).
         self.set_deck_recording(recording)
 
         key = {'idle': 'deck_status_empty', 'recording': 'deck_status_recording',
@@ -3729,7 +3759,7 @@ class MainWindow(QMainWindow):
 
     def _on_deck_state_changed(self) -> None:
         """Zero-arg slot for DeckController.on_state_changed — always fires on
-        the GUI thread (Sauron marshals playback-end/cap-hit through pump()).
+        the GUI thread (the controller marshals playback-end/cap-hit through pump()).
         Clears stale status and repaints the transport from the new state."""
         self._deck_status.setVisible(False)
         self._sync_deck_transport()
@@ -3847,7 +3877,7 @@ class MainWindow(QMainWindow):
         else:
             self._deck_show_status('deck_export_fail')
 
-    # ── Drone + pitch pipes (Sprint 3) ────────────────────────────────────────
+    # ── Drone + pitch pipes ───────────────────────────────────────────────────
     @staticmethod
     def _drone_voice_fields(v) -> tuple:
         """(id, label, program) for a drone-voice entry, accepting either the
@@ -3864,11 +3894,11 @@ class MainWindow(QMainWindow):
     def _build_drone_bar(self) -> QWidget:
         """The drone strip on the TUNER tab: on/off + 5-preset row + volume +
         semitone steppers + a pitch-pipes launcher. Wired to DroneController
-        (sax_drone.py) once it lands; inert + guarded until then. Turning the
+        (sax_drone.py); inert + guarded if it is unavailable. Turning the
         drone on requires an output stream (honesty discipline — no 'on' state
         if nothing can sound). The 128-GM picker lives in SETUP and stays in
         sync via the controller's on_state_changed (single source of truth)."""
-        # Seed persisted state (Treebeard's Sprint-3 config fields, defensive).
+        # Seed persisted state (the drone config fields, defensive).
         self._drone_voice_id = str(getattr(self._cfg, 'drone_voice_id', 'organ')
                                    or 'organ')
         self._drone_volume = float(getattr(self._cfg, 'drone_volume', 0.5) or 0.5)
@@ -4256,7 +4286,7 @@ class MainWindow(QMainWindow):
             self._layout_combo.blockSignals(False)
 
         # Response combo (toolbar) — re-label Fast/Normal/Slow. The SETUP
-        # parity combo is built once in the active language alongside its
+        # response combo is built once in the active language alongside its
         # SETUP neighbours (drone-voice / theme), which likewise do not
         # live-retranslate; both combos carry the same data values, so
         # _apply_filter_mode keeps them in functional sync regardless.
@@ -4305,7 +4335,7 @@ class MainWindow(QMainWindow):
             self._info_banner.retranslate(self._t)
 
         # SETUP tab is built once, not rebuilt — re-label its titles/labels here
-        # so a live language switch doesn't leave it half-translated (Frodo W2).
+        # so a live language switch doesn't leave it half-translated.
         self._retranslate_setup()
 
         self._refresh_table()
@@ -4314,7 +4344,7 @@ class MainWindow(QMainWindow):
     def _on_note(self, midi_kl: int, freq: float, cents: float):
         if not self._recording:
             return
-        # v0.6 Phase-4 (Item 3): wrong-instrument detector. Run BEFORE the
+        # Wrong-instrument detector. Run BEFORE the
         # OOR drop below so the counter still ticks when the user has
         # "filter to range" enabled — otherwise we'd never count notes
         # outside the range. Compute the fingered MIDI relative to the
@@ -4400,8 +4430,8 @@ class MainWindow(QMainWindow):
         """QTimer entry point — fires every 300 ms.  Decides the layout
         mode (single vs. matrix) here on MainWindow because the choice
         depends on the live viewport width, then hands off to
-        TableController for the actual paint.  v0.6 Phase-5: the per-
-        cell paint pipeline and cell-cache lives on the controller."""
+        TableController for the actual paint; the per-cell
+        paint pipeline and cell cache live on the controller."""
         if not hasattr(self, '_table') or not hasattr(self, '_table_ctrl'):
             return
         desired = self._desired_layout_mode()
@@ -4452,7 +4482,7 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self._refresh_table)
 
     # ── Instrument / Anzeige / A4 ─────────────────────────────────────────────
-    # Phase-5 extraction: the family/instr/nickname slots, range editor,
+    # The family/instr/nickname slots, range editor,
     # custom-instrument registration, and autotune flow now live on
     # InstrumentController. The MainWindow methods below remain as thin
     # delegating wrappers so the Qt signal/slot wiring in _build_ui is
@@ -4480,7 +4510,7 @@ class MainWindow(QMainWindow):
         instrument key (combo select). Owns the side effects that don't
         belong inside the controller: wrong-instrument detector reset,
         info-banner hide, expected-note seed, table refresh."""
-        # v0.6 Phase-4 (Item 3): the wrong-instrument detector is anchored
+        # The wrong-instrument detector is anchored
         # to the *selected* instrument. New selection ⇒ counter resets and
         # the one-shot prompt becomes eligible to fire again.
         self._oor_count = 0
@@ -4586,7 +4616,7 @@ class MainWindow(QMainWindow):
             samplerate=int(getattr(self._cfg, 'audio_device_samplerate', 0) or 0),
         )
 
-    # Phase-5 extraction: audio device handling lives on DeviceController.
+    # Audio device handling lives on DeviceController.
     # The methods below are one-line wrappers — Qt signal/slot connect()
     # bindings and the hot-plug QTimer wiring in __init__ point at
     # MainWindow methods, so we preserve them at MainWindow's surface
@@ -4636,7 +4666,7 @@ class MainWindow(QMainWindow):
         first build, when the combo is still empty). Signals stay blocked
         throughout, so it is safe during construction and live
         re-translation alike. Shared by the toolbar Response combo and the
-        SETUP-tab parity combo so the two never drift in contents."""
+        SETUP-tab response combo so the two never drift in contents."""
         cur = combo.currentData()
         if cur is None:
             cur = getattr(self._cfg, 'filter_mode', FILTER_MODE_DEFAULT)
@@ -4658,7 +4688,7 @@ class MainWindow(QMainWindow):
 
     def _on_setup_filter_mode_changed(self, _idx: int = 0) -> None:
         """SETUP Response combo changed → apply + mirror into the toolbar.
-        Parity with the toolbar Response control (Fast / Normal / Slow)."""
+        Mirrors the toolbar Response control (Fast / Normal / Slow)."""
         self._apply_filter_mode(self._setup_filter_combo.currentData(),
                                 source=self._setup_filter_combo)
 
@@ -4715,7 +4745,7 @@ class MainWindow(QMainWindow):
     def _retranslate_setup(self) -> None:
         """Re-label every translatable SETUP-tab widget on a language switch.
         The tab is built once (never rebuilt), so without this its titles and
-        labels stay in the build-time language until restart (Frodo W2)."""
+        labels stay in the build-time language until restart."""
         for grp, key in getattr(self, '_setup_i18n_groups', []):
             grp.setTitle(self._t(key))
         for lbl, key in getattr(self, '_setup_i18n_labels', []):
@@ -4749,7 +4779,7 @@ class MainWindow(QMainWindow):
 
     def _on_setup_nickname_changed(self) -> None:
         """SETUP nickname edited → mirror into the toolbar + stamp the label.
-        Parity with the toolbar horn-nickname field."""
+        Mirrors the toolbar horn-nickname field."""
         self._apply_nickname(self._setup_nick_edit.text(),
                              source=self._setup_nick_edit)
 
@@ -4888,7 +4918,7 @@ class MainWindow(QMainWindow):
                                         label=self._nick_edit.text().strip())
         sax_config.save_config(self._cfg)
 
-    # _ask_custom_instrument moved to InstrumentController in Phase 5.
+    # _ask_custom_instrument lives on InstrumentController.
     # It was only invoked by _on_add_custom (also extracted), so no
     # MainWindow wrapper is retained — the controller calls itself.
 
@@ -4902,7 +4932,7 @@ class MainWindow(QMainWindow):
 
     def _on_setup_a4_changed(self, idx):
         """SETUP concert-pitch (A4) combo changed → apply + mirror the toolbar.
-        Parity with the toolbar Kammerton selector."""
+        Mirrors the toolbar Kammerton selector."""
         self._apply_a4(float(self._setup_a4_combo.itemData(idx)))
 
     def _apply_a4(self, new_a4) -> None:
@@ -4925,7 +4955,7 @@ class MainWindow(QMainWindow):
                 _combo.blockSignals(True)
                 _combo.setCurrentIndex(_target)
                 _combo.blockSignals(False)
-        # v0.6 Phase-4 (Item 3): A4 change recalibrates midi assignments,
+        # A4 change recalibrates midi assignments,
         # so the wrong-instrument counter resets too.
         self._oor_count = 0
         self._oor_banner_shown = False
@@ -4971,8 +5001,8 @@ class MainWindow(QMainWindow):
                                 a4_hz=new_a4,
                                 label=self._nick_edit.text().strip())
         self._refresh_table()
-        # Sprint 3: keep the drone + pitch-pipe reference frequencies tuned to
-        # the new concert pitch (acceptance: pads sound correct at current A4).
+        # Keep the drone + pitch-pipe reference frequencies tuned to the new
+        # concert pitch (pads must sound correct at the current A4).
         for _c in (getattr(self, '_drone_ctrl', None),
                    getattr(self, '_pipes_ctrl', None)):
             if _c is not None and hasattr(_c, 'set_a4'):
@@ -4991,7 +5021,9 @@ class MainWindow(QMainWindow):
                                     a4_hz=self._engine.a4,
                                     label=self._nick_edit.text().strip())
             self._btn_record.setText(self._t('btn_stop'))
-            self._btn_record.setStyleSheet(self._btn_record.styleSheet().replace('#2ecc71', '#b7770d').replace('#27ae60', '#b7770d'))
+            self._btn_record.setStyleSheet(
+                self._btn_record.styleSheet()
+                .replace('#2ecc71', '#b7770d').replace('#27ae60', '#b7770d'))
             self._update_record_btn_style()
             self._status_lbl.setText(self._t('no_signal'))
         else:
@@ -5089,7 +5121,7 @@ class MainWindow(QMainWindow):
         self._instr_ctrl.on_autotune()
 
     # ── Instrument-Modell-Dialog ──────────────────────────────────────────────
-    # The maker/model prompt was extracted to ExportController in Phase 5;
+    # The maker/model prompt lives on ExportController;
     # it's invoked internally by each export_* flow on the controller.
     # MainWindow no longer needs a wrapper — nothing outside the export
     # flow calls it.
@@ -5119,10 +5151,10 @@ class MainWindow(QMainWindow):
             self._t('csv_filter'))
         if not path:
             return
-        # v0.6 Phase-4: confirm before merging into the current session.
+        # Confirm before merging into the current session.
         # The user picked a file but might not realise the import merges
-        # into the live log; Frodo wants a "are you sure?" beat before
-        # potentially mixing somebody else's CSV with his own data.
+        # into the live log; an "are you sure?" beat guards against
+        # mixing somebody else's CSV with their own data.
         from pathlib import Path as _Path
         filename = _Path(path).name
         confirm = QMessageBox.question(
@@ -5193,7 +5225,7 @@ class MainWindow(QMainWindow):
             pass
         # Tear the tape deck down BEFORE the engine stops, so a recording/playing
         # take disarms the input tap and unregisters its mixer source — close()
-        # is idempotent and never raises (Sauron's contract), never orphans.
+        # is idempotent and never raises, never orphans.
         try:
             if getattr(self, '_deck_pump_timer', None) is not None:
                 self._deck_pump_timer.stop()

@@ -1,10 +1,9 @@
 # =============================================================================
 # sax_device.py — DeviceController
 #
-# Extracted from sax_intonation_gui.py in Phase 5 of the refactor — the
-# fifth and final controller extraction.  The controller owns the audio
-# device picker open flow, the retry-on-failure path, the 1 Hz hot-plug
-# poll, the engine-state / devices-changed / interface-appeared Qt slot
+# Extracted from sax_intonation_gui.py as one of the MainWindow controllers.
+# The controller owns the audio device picker open flow, the retry-on-failure
+# path, the 1 Hz hot-plug poll, the engine-state / devices-changed / interface-appeared Qt slot
 # bodies, and the per-active-device write-back to AppConfig.
 #
 # Design notes:
@@ -24,16 +23,19 @@
 #     write-back so MainWindow can do any downstream refresh it needs
 #     (window-title update, etc.) without the controller having to
 #     know about it.
-#   * The war council's TOCTOU finding lives here: the engine-state /
-#     devices-changed / interface-appeared slot bodies read
-#     engine.get_active_device() from inside Qt slots that themselves
-#     fire on engine state changes.  The structural fix for that
-#     (immutable DeviceSnapshot in the signal payload) is a separate
-#     engine-surface change deliberately scoped OUT of this refactor.
-#     The current pattern is preserved here byte-for-byte.
+#   * Known race: the engine-state / devices-changed / interface-appeared
+#     slot bodies read engine.get_active_device() from inside Qt slots
+#     that themselves fire on engine state changes, so the device can
+#     change between the read and its use.  Each slot reads the device
+#     once into a local to narrow the window.  Removing it would need an
+#     immutable DeviceSnapshot in the signal payload, which is an
+#     engine-surface change outside this module.
 #   * The controller's `_audio_ok` flag is captured at construction
-#     time from the GUI module's AUDIO_OK constant so the controller
-#     does not import sax_intonation_gui (no circular import).
+#     time from the GUI module's AUDIO_OK constant.  sax_intonation_gui
+#     imports this module at its top level, so the reverse imports here
+#     (AUDIO_OK, AudioPickerDialog) are function-local: they run after
+#     both modules are loaded and keep the module-level import graph
+#     free of a cycle.
 # =============================================================================
 from __future__ import annotations
 
@@ -50,6 +52,7 @@ from sax_audio_engine import (
 
 if TYPE_CHECKING:
     from PyQt6.QtWidgets import QMainWindow
+
     from sax_config import AppConfig
 
 
@@ -80,7 +83,7 @@ class DeviceController:
         self._get_lang = get_lang
         self._on_active_device_changed = on_active_device_changed
         # AUDIO_OK is captured from the GUI module at construction time
-        # so the controller does not import sax_intonation_gui (would
+        # through a function-local import (a module-level import would
         # cycle).  If sax_intonation_gui imported cleanly to build the
         # window, sounddevice was importable — but the engine's open()
         # can still fail at runtime and surface FAILED via state_changed.
@@ -96,7 +99,7 @@ class DeviceController:
     def persist_active_device(self) -> None:
         """Write the engine's currently-active device back to config.
         Index is deliberately NOT stored — only name + host API + rate,
-        per Gandalf's persistence design."""
+        because device indices change between sessions."""
         dev = self._engine.get_active_device()
         if dev is None:
             return
@@ -186,9 +189,8 @@ class DeviceController:
                                           'audio_sr_notice_shown', False))):
                 self._cfg.audio_sr_notice_shown = True
                 sax_config.save_config(self._cfg)
-                # Surface as a passive status-bar line, not a modal —
-                # Frodo-UX memo: never block the user with a dialog
-                # over sample-rate disclosure.
+                # Surface as a passive status-bar line, not a modal, so a
+                # sample-rate disclosure never blocks the player.
                 if hasattr(w, '_status_lbl'):
                     w._status_lbl.setText(
                         self._t('audio_sr_notice', sr=sr))
@@ -202,13 +204,13 @@ class DeviceController:
 
     def on_interface_appeared(self, device: 'DeviceInfo') -> None:
         """Hot-plug banner for vendor-class interfaces. Polite, non-modal,
-        Frodo-UX memo policy: only fires for matched vendor names so the
-        user isn't trained to dismiss it on every wake-from-sleep.
+        Only fires for matched vendor names so the user isn't trained to
+        dismiss it on every wake-from-sleep.
 
-        v0.6 Phase-4 (Item 1): the previous QMessageBox.exec() was modal
-        and froze pitch detection on the note Frodo was blowing while the
-        dialog was up. Now we surface an InfoBanner that he can leave on
-        screen — or click Switch / Dismiss without interrupting playback.
+        The banner is non-modal: a QMessageBox.exec() would block the Qt
+        event loop and freeze pitch detection on the held note while the
+        dialog was up. The user can leave the InfoBanner on screen, or
+        click Switch / Dismiss, without interrupting playback.
         """
         # v0.5.7.6: single-snapshot read. Reading active_device twice
         # opens a TOCTOU window — between the not-None check and the

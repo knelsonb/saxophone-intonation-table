@@ -32,8 +32,8 @@ Noise-floor locking
 The SNR=10 dB case (case 7) returns ~434.6 Hz — not 440 Hz.  The SNR=0 dB
 case (case 8) returns ~27.5 Hz, well below the true pitch.  Both are known
 YIN noise-floor failures.  These tests intentionally lock the *current*
-performance including those failures.  Phase 2 must replicate them exactly
-(bit-identical tau), not fix them.  If a future fix is desired it should be
+performance including those failures.  Any rewrite of the detector must replicate them
+exactly (bit-identical tau), not fix them.  If a future fix is desired it should be
 done as a separate, deliberate change with its own test update.
 """
 from __future__ import annotations
@@ -45,8 +45,7 @@ import pytest
 numpy = pytest.importorskip('numpy')
 import numpy as np  # noqa: E402 — only reached if importorskip passes
 
-from sax_audio_engine import yin_pitch, MAX_FREQ  # noqa: E402
-
+from sax_audio_engine import MAX_FREQ, yin_pitch  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Signal constructors — deterministic, float64 throughout.
@@ -273,7 +272,8 @@ def test_yin_pitch_tmax_lte_tmin_returns_sentinel() -> None:
 
 # ---------------------------------------------------------------------------
 # __main__ block for interactive re-capture.
-# Run:  /tmp/yin-venv/bin/python test_yin_baseline.py
+# Run (from the repo root, with the project venv's python):
+#     python test_yin_baseline.py
 # to reprint all baselines (useful when updating to a new NumPy version).
 # ---------------------------------------------------------------------------
 

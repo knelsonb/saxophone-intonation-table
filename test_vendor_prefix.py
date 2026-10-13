@@ -5,7 +5,7 @@ These tests were written after three consecutive rendering-defect fixes
 (v0.5.7.2, v0.5.7.4, v0.5.7.5) showed the function is high-churn and
 prone to regressions.  Each case locks current behaviour.  Cases where
 current behaviour disagrees with the obviously-correct answer are marked
-``# NOTE: Phase-1 fix needed`` so they can be addressed without touching
+``# NOTE: follow-up`` so they can be addressed without touching
 this file.
 
 Import notes
@@ -28,7 +28,6 @@ import pytest
 pytest.importorskip('PyQt6', reason='PyQt6 not installed; skipping vendor-prefix tests')
 
 from sax_intonation_gui import _promote_vendor_prefix  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # Parametrised table
@@ -122,7 +121,7 @@ CASES = [
     # ------------------------------------------------------------------
     # 9. None input — the guard ``if not name: return name`` treats None
     #    as falsy and returns it unchanged.  This is current behaviour;
-    #    NOTE: Phase-1 consideration — a str-typed function should perhaps
+    #    NOTE: follow-up — a str-typed function should perhaps
     #    raise TypeError on None rather than silently returning None.
     # ------------------------------------------------------------------
     pytest.param(
@@ -176,7 +175,7 @@ CASES = [
     #     and Step 3 re-prefixes it.  For a bare "FIIO DSP Audio" the result
     #     is "FIIO · DSP Audio" (vendor stripped, then re-hoisted).
     #
-    # NOTE: Phase-1 — the docstring and the code disagree.  If the intent
+    # NOTE: follow-up — the docstring and the code disagree.  If the intent
     #     is to return "FIIO DSP Audio" unchanged, a guard such as
     #     ``if m.start() == 0: return name`` should be added.  Current
     #     behaviour locks here as "FIIO · DSP Audio".

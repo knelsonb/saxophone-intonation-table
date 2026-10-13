@@ -1,4 +1,4 @@
-"""Acceptance net for ``sax_drone`` (parity Sprint 3).
+"""Acceptance net for ``sax_drone``.
 
 Two tiers:
   * PURE tier (always runs) — the GM preset catalog, voice resolution +
@@ -8,9 +8,6 @@ Two tiers:
     DroneController: it actually sounds, reports the audible-tail-aware
     active_midi (the wire that makes sounding_midis() non-empty), and respects
     semitone/volume. Runs on the full-dep venv / CI.
-
-Pre-written against Sauron's firm S3 contract (msg 3430), verified against the
-landed module.
 """
 from __future__ import annotations
 
@@ -200,7 +197,7 @@ def test_set_voice_changes_program():
 
 
 # ===========================================================================
-# Live duck-attach path (Sauron's 3474 catch / Orchestrator 3481 hard gate):
+# Live duck-attach path:
 # the duck only fires for the USER if DroneController is built with engine= so
 # enable -> engine.attach_duck_consumer(source) runs. The e2e/coordination_step
 # tests attach a consumer MANUALLY, bypassing this GUI-construction path — so

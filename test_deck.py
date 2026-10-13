@@ -1,12 +1,6 @@
-"""Acceptance net for ``sax_deck`` (parity Sprint 4 — the tape deck).
+"""Acceptance net for ``sax_deck`` (the tape deck).
 
-Pre-written against Sauron's FIRM sax_deck.py contract (channel msgs 3549/3550)
-and Gandalf's FIRM engine input-tap contract (3541/3544), skip-guarded with
-``importorskip('sax_deck')`` so it stays inert until the module lands and then
-auto-activates with zero churn — the test-seam-handshake discipline that ran
-zero-churn for the mixer / D3 / metronome / drone lanes.
-
-Two firm tiers (both run on system-python — sax_deck is numpy + stdlib ``wave``
+Tiers (all run on system-python — sax_deck is numpy + stdlib ``wave``
 + sax_mixer, no PyQt6 / sounddevice / tinysoundfont):
 
   * WAV tier — the pure module-level ``write_wav`` / ``read_wav`` (stdlib wave,
@@ -18,10 +12,8 @@ Two firm tiers (both run on system-python — sax_deck is numpy + stdlib ``wave`
     idle/recording/have-take, empty-take, re-record-discard, truncation,
     can_record() honesty, cap-hit finalize via pump().
 
-The play()/DeckPlaybackSource/playback-end transitions are in the PART 2
-section below — held pending Sauron's answers to 3 zero-churn questions
-(DeckPlaybackSource ctor sig; whether play() needs engine.output_running;
-on_state_changed arity). They land here the moment those are confirmed.
+The play()/DeckPlaybackSource/playback-end transitions are in the
+DeckPlaybackSource tier further down.
 """
 from __future__ import annotations
 
@@ -35,8 +27,7 @@ import pytest
 # One LSB is 1/32767; round-trip error is bounded by half an LSB.
 _PCM_LSB = 1.0 / 32767.0
 
-sax_deck = pytest.importorskip(
-    "sax_deck", reason="sax_deck not landed yet (Sauron's S4 lane); auto-activates on land")
+sax_deck = pytest.importorskip("sax_deck", reason="sax_deck module")
 
 from sax_mixer import Mixer  # noqa: E402  (after the skip-guard by design)
 
@@ -53,7 +44,7 @@ def test_write_wav_header_is_mono_16bit_pcm(tmp_path):
     sax_deck.write_wav(str(p), samples, sr)
     assert p.exists(), "write_wav must create the file"
     with wave.open(str(p), "rb") as w:
-        assert w.getnchannels() == 1, "mic take is mono (parity)"
+        assert w.getnchannels() == 1, "mic take is mono"
         assert w.getsampwidth() == 2, "16-bit PCM"
         assert w.getframerate() == sr, "framerate must be the take samplerate"
         assert w.getnframes() == len(samples), "one frame per captured sample"
@@ -112,14 +103,15 @@ def test_read_wav_recovers_written_samplerate(tmp_path):
 # STATE-MACHINE tier — DeckController transitions (fake engine, no real mic).
 # ===========================================================================
 class _FakeEngine:
-    """Minimal stand-in for the engine input-tap surface DeckController drives
-    (Gandalf's firmed API, 3541/3544). No real mic / sounddevice."""
+    """Minimal stand-in for the engine input-tap surface DeckController
+    drives. No real mic / sounddevice."""
 
     def __init__(self, *, input_open=True, take=None, sr=48000, truncated=False):
         self.input_running = bool(input_open)
         self.output_running = True
         self._armed = False
-        self._take = np.zeros(0, dtype=np.float32) if take is None else np.asarray(take, dtype=np.float32)
+        self._take = (np.zeros(0, dtype=np.float32) if take is None
+                      else np.asarray(take, dtype=np.float32))
         self._sr = sr
         self._truncated = truncated
         self.calls: list[tuple] = []
@@ -222,7 +214,7 @@ def test_truncated_flag_surfaces_as_take_truncated():
 
 def test_can_record_mirrors_engine_input_running():
     """can_record() is the honest pre-click probe (backed by engine.input_running)
-    so Frodo can pre-disable the button before a doomed start_record()."""
+    so the GUI can pre-disable the button before a doomed start_record()."""
     eng = _FakeEngine(input_open=True)
     d = _deck(eng)
     assert d.can_record() is True
@@ -246,7 +238,7 @@ def test_cap_hit_auto_disarm_finalizes_to_have_take_via_pump():
 
 
 def test_on_state_changed_fires_on_transitions():
-    """The GUI callback must fire on transitions so Frodo relabels buttons +
+    """The GUI callback must fire on transitions so the GUI relabels buttons +
     drives the dot. Arity-agnostic (callback pulls .state itself)."""
     fired: list[bool] = []
     eng = _FakeEngine(input_open=True, take=np.ones(50, dtype=np.float32) * 0.2)
@@ -276,7 +268,7 @@ def test_close_is_idempotent_and_never_raises(drive):
 
 # ===========================================================================
 # DeckPlaybackSource tier — the MixerSource that replays a take.
-# (Pinned to the LANDED ctor: DeckPlaybackSource(take, capture_sr, output_sr,
+# (Pinned to the ctor: DeckPlaybackSource(take, capture_sr, output_sr,
 #  max_block, gain=1.0); active_midi always None; .finished; render additive.)
 # ===========================================================================
 def test_playback_source_active_midi_is_none():
@@ -331,7 +323,7 @@ def test_playback_source_resamples_when_rates_differ():
     """A 48 kHz take through a 24 kHz output consumes ~2 capture samples per
     output sample, so it finishes in ~half the output samples — and stays
     audible + bounded. Asserts the resample PROPERTY (bounded, finishes), not
-    an exact sample count, so Sauron keeps interpolation-impl freedom."""
+    an exact sample count, so the interpolation implementation stays free to change."""
     n = 1000
     take = (np.sin(2 * np.pi * np.arange(n) / 50.0) * 0.5).astype(np.float32)
     src = sax_deck.DeckPlaybackSource(take, 48000, 24000, 4096)
@@ -533,7 +525,8 @@ def test_export_writes_valid_loadable_wav(tmp_path):
     back, sr = sax_deck.read_wav(str(p))
     assert sr == 48000
     assert len(back) == len(take)
-    assert np.max(np.abs(back - take)) <= _PCM_LSB + 1e-6, "exported take round-trips within int16 quant"
+    assert np.max(np.abs(back - take)) <= _PCM_LSB + 1e-6, (
+        "exported take round-trips within int16 quant")
 
 
 def test_export_with_no_take_returns_false(tmp_path):

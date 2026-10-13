@@ -1,8 +1,7 @@
 """Round-trip + tolerant-coercion tests for ``sax_config``.
 
-Phase-0 discovery flagged the gap this file fills: before the parity
-sprint there was NO test exercising ``save_config`` → ``load_config`` or
-the ``_as_*`` coercers directly, even though every field is read back from
+This file exercises ``save_config`` → ``load_config`` and the ``_as_*``
+coercers directly, because every field is read back from
 a user-editable ``~/.intonation_analyzer/config.json`` that can be stale,
 partial, or corrupt.  The governing contract (sax_config.py module
 docstring) is *a corrupt or missing field falls back to its default,
@@ -154,7 +153,7 @@ def test_partial_config_fills_new_field_defaults(isolated_config):
     # Old field preserved …
     assert cfg.audio_device_name == "Old Mic"
     assert cfg.last_lang == "de"
-    # … new parity-sprint fields fall back to defaults, no crash.
+    # … newer fields fall back to defaults, no crash.
     assert cfg.output_device_name == ""
     assert cfg.output_device_host_api == ""
     assert cfg.output_device_samplerate == 0
@@ -259,14 +258,14 @@ def test_last_active_tab_coercion(isolated_config, raw, expected):
 
 def test_last_active_tab_values_match_allowlist():
     """The coercer's allowlist must equal the exported TAB_VALUES set so
-    Frodo's nav shell and the coercer can never drift apart."""
+    the nav shell and the coercer can never drift apart."""
     for tab in sax_config.TAB_VALUES:
         assert sax_config._as_active_tab(tab) == tab, (
             f"TAB_VALUES member {tab!r} not accepted by _as_active_tab")
 
 
 # ---------------------------------------------------------------------------
-# 7. v0.8.0 metronome fields — coercion + clamp (parity Sprint 2).
+# 7. v0.8.0 metronome fields — coercion + clamp.
 # ---------------------------------------------------------------------------
 def test_metro_fields_roundtrip(isolated_config):
     cfg = AppConfig(last_bpm=144, last_time_sig="3/4", click_volume=0.4)
@@ -324,7 +323,7 @@ def test_mic_gain_db_clamped_to_range(isolated_config, raw, expected):
 
 
 # ---------------------------------------------------------------------------
-# v0.11.0 theme field (Sprint 5) -- coerced via sax_theme.coerce_theme_name.
+# v0.11.0 theme field -- coerced via sax_theme.coerce_theme_name.
 # ---------------------------------------------------------------------------
 def test_theme_roundtrip(isolated_config):
     for name in ("dark", "night", "light"):
@@ -412,7 +411,7 @@ def test_time_sig_values_match_allowlist():
 
 
 # ---------------------------------------------------------------------------
-# 8. v0.10.0 tape-deck fields — round-trip + clamp/coercion (parity Sprint 4).
+# 8. v0.10.0 tape-deck fields — round-trip + clamp/coercion.
 # deck_max_seconds bounds the engine's preallocated mic-capture buffer, so an
 # out-of-range / corrupt value must clamp into [1, 600] — never propagate a
 # 0-or-negative length (np.zeros(0) = a dead recorder) or a runaway size.

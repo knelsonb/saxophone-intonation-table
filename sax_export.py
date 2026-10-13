@@ -1,7 +1,7 @@
 # =============================================================================
 # sax_export.py — ExportController
 #
-# Extracted from sax_intonation_gui.py in Phase 5 of the refactor. The
+# Extracted from sax_intonation_gui.py as a MainWindow controller. The
 # controller owns the four file-export flows (TXT / PDF / CSV / PNG
 # chart) and the two helper dialogs (CSV slice picker,
 # instrument-model prompt) that used to be inlined on MainWindow.
@@ -33,22 +33,30 @@
 from __future__ import annotations
 
 import datetime
-from xml.sax.saxutils import escape as _xml_escape
 from typing import TYPE_CHECKING, Callable
+from xml.sax.saxutils import escape as _xml_escape
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QFormLayout, QLabel, QLineEdit, QComboBox,
-    QDialogButtonBox, QFileDialog, QMessageBox,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFileDialog,
+    QFormLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QVBoxLayout,
 )
 
 import sax_instruments
-from sax_theme import CLOSE_CENTS, IN_TUNE_CENTS
-from sax_intonation_log import MeasurementLog
 from sax_intonation_chart import render_intonation_chart
+from sax_intonation_log import MeasurementLog
+from sax_theme import CLOSE_CENTS, IN_TUNE_CENTS
 
 if TYPE_CHECKING:
     from PyQt6.QtWidgets import QMainWindow
+
     from sax_config import AppConfig
 
 
@@ -86,7 +94,11 @@ class ExportController:
         # Local imports keep the module decoupled from the GUI file's
         # internal helpers while still using the same implementations.
         from sax_intonation_gui import (
-            TRANSP_MAP, CHROMA, format_cents, midi_note_name, _today,
+            CHROMA,
+            TRANSP_MAP,
+            _today,
+            format_cents,
+            midi_note_name,
         )
         w = self._w
         model_info = self._ask_instrument_model()
@@ -148,15 +160,19 @@ class ExportController:
 
     def export_pdf(self) -> None:
         from sax_intonation_gui import (
-            TRANSP_MAP, CHROMA, format_cents, midi_note_name, _today,
+            CHROMA,
+            TRANSP_MAP,
+            _today,
+            format_cents,
+            midi_note_name,
         )
         w = self._w
         try:
-            from reportlab.lib.pagesizes import A4 as RL_A4
             from reportlab.lib import colors
+            from reportlab.lib.pagesizes import A4 as RL_A4
+            from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
             from reportlab.lib.units import mm
-            from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
         except ImportError:
             QMessageBox.critical(w, self._t('err_title'), self._t('reportlab_err'))
             return
@@ -308,7 +324,9 @@ class ExportController:
 
     def export_chart(self) -> None:
         from sax_intonation_gui import (
-            TRANSP_MAP, midi_note_name, _today,
+            TRANSP_MAP,
+            _today,
+            midi_note_name,
         )
         w = self._w
         with w._lock:
@@ -342,7 +360,7 @@ class ExportController:
         disp_griff = (w.display == 'griff')
         sr_now = w._engine_sample_rate()
         a4 = self._engine.a4
-        # v0.6 Phase-4 (Item 7): pass fingered MIDI per note so the chart
+        # Pass fingered MIDI per note so the chart
         # renderer can colour out-of-range bars distinctly.
         lo_f, hi_f = sax_instruments.fingered_range(instrument)
         notes = []
@@ -649,6 +667,8 @@ class ExportController:
     def _make_bar_ascii(cents, w=16):
         half = w // 2
         fill = int(min(1.0, abs(cents) / 40.0) * half)
-        if cents > 1:  return ' '*half + '|' + '#'*fill + '.'*(half-fill)
-        if cents < -1: return '.'*(half-fill) + '#'*fill + '|' + ' '*half
+        if cents > 1:
+            return ' '*half + '|' + '#'*fill + '.'*(half-fill)
+        if cents < -1:
+            return '.'*(half-fill) + '#'*fill + '|' + ' '*half
         return ' '*half + '|' + ' '*half

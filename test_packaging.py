@@ -1,6 +1,6 @@
-"""Packaging acceptance net (parity Sprint 3) — the #1 freeze trap, locked.
+"""Packaging acceptance net — the #1 freeze trap, locked.
 
-The flagged risk of the whole parity effort: a PyInstaller onefile must bundle
+The main packaging risk: a PyInstaller onefile must bundle
 AND, at runtime, find the 32 MB GeneralUser-GS.sf2 — but a path relative to
 __file__/CWD that works in a dev checkout does NOT exist in the frozen binary
 (assets unpack to sys._MEIPASS). sax_assets.asset_path closes that. This file:
@@ -9,12 +9,12 @@ __file__/CWD that works in a dev checkout does NOT exist in the frozen binary
     PyInstaller build): asset_path must resolve under sys._MEIPASS when frozen,
     and under the module dir otherwise.
   * Confirms the SF2 is present in the dev layout asset_path resolves to.
-  * Runs Gandalf's frozen-chain smoke (tools/tsf_pack_smoke.py) as a subprocess
+  * Runs the frozen-chain smoke (tools/tsf_pack_smoke.py) as a subprocess
     in dev — the SAME import-tsf -> asset_path -> sfload -> synth -> non-silent
     chain the frozen binary runs — so the runtime chain is locked without a
     multi-minute build. (The actual frozen onefile build stays a CI gate via
-    that same script, proven 2026-05-28: 108 MB artifact, _tinysoundfont .so +
-    SF2 both bundled, GM-19 synth non-silent, exit 0.)
+    that same script: it checks that the _tinysoundfont extension and the SF2
+    are both bundled and that a GM-19 note synthesises non-silent.)
 """
 from __future__ import annotations
 
@@ -112,7 +112,7 @@ def test_soundfont_asset_present_and_sized():
 
 
 # ---------------------------------------------------------------------------
-# 3. The runtime SF2-load -> synth chain (Gandalf's smoke, run in dev).
+# 3. The runtime SF2-load -> synth chain (the pack smoke, run in dev).
 #    Needs tinysoundfont -> venv/CI only.
 # ---------------------------------------------------------------------------
 def test_pack_smoke_chain_synthesizes_non_silent():
@@ -137,12 +137,12 @@ def test_pack_smoke_chain_synthesizes_non_silent():
 
 # ---------------------------------------------------------------------------
 # 4. Guard-imported modules must be in the spec hiddenimports (REL-FROZEN-SMOKE).
-#    The Sprint 1-4 audio controllers are imported under try/except in the GUI
+#    The audio controllers are imported under try/except in the GUI
 #    (so the dev app degrades gracefully if one is absent). PyInstaller's static
 #    analysis CANNOT see a guarded import, so each must be declared in the spec's
 #    hiddenimports or the frozen binary ships that tab INERT — exactly the
-#    war-council bug where sax_deck was missing and the whole Deck tab would have
-#    been dead (_DeckController=None) in the onefile. This locks it deterministically,
+#    case where sax_deck was missing from the spec and the whole Deck tab would
+#    have been dead (_DeckController=None) in the onefile. This locks it deterministically,
 #    no PyInstaller build required.
 # ---------------------------------------------------------------------------
 def _guard_imported_sax_modules() -> set:
@@ -184,4 +184,4 @@ def test_guard_imported_modules_are_in_spec_hiddenimports():
     assert not missing, (
         f"guard-imported modules NOT in intonation_analyzer.spec hiddenimports: "
         f"{sorted(missing)} — PyInstaller would ship them INERT in the frozen "
-        f"binary (the war-council sax_deck-missing bug class)")
+        f"binary (the sax_deck-missing-from-spec bug class)")

@@ -33,7 +33,6 @@ import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-
 XML = Path(__file__).resolve().parent / 'instruments.xml'
 
 

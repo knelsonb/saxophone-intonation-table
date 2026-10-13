@@ -1,7 +1,7 @@
 # =============================================================================
 # sax_session_state.py — SessionStateController
 #
-# Extracted from sax_intonation_gui.py in Phase 5 of the refactor. The
+# Extracted from sax_intonation_gui.py as a MainWindow controller. The
 # controller owns the round-trip of MainWindow's persistable session
 # state — window geometry, splitter widths, the currently-selected
 # instrument / nickname / display mode / A4 / language — through the
@@ -30,8 +30,12 @@ from PyQt6.QtGui import QGuiApplication
 
 if TYPE_CHECKING:
     from PyQt6.QtWidgets import (
-        QMainWindow, QSplitter, QComboBox, QLineEdit,
+        QComboBox,
+        QLineEdit,
+        QMainWindow,
+        QSplitter,
     )
+
     from sax_config import AppConfig
 
 

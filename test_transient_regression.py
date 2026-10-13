@@ -28,8 +28,8 @@ import numpy as np
 import pytest
 
 import sim_harness as H
-from sax_mixer import TestToneSource
 from sax_metronome import ClickSource
+from sax_mixer import TestToneSource
 
 pp = pytest.importorskip("sax_pitch_pipes", reason="pitch pipes module")
 PitchPipeSource = pp.PitchPipeSource

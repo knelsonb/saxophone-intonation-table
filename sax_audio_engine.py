@@ -48,8 +48,8 @@ from typing import Optional
 
 import numpy as np
 
-from sax_mixer import Mixer, TestToneSource
 from sax_coordination import OutputCoordinator
+from sax_mixer import Mixer, TestToneSource
 
 try:
     import sounddevice as sd
@@ -121,7 +121,7 @@ A4_DEFAULT = 440.0
 #   normal  — practice & tuning long tones (the default)
 #   slow    — instrument setup, repair, cataloging intonation maps
 #
-# Lock latency  ~ confirm * HOP_MS + edge_hops * HOP_MS
+# First reading ~ (confirm + 2 * edge_hops) * HOP_MS
 # Smoothing     ~ window * HOP_MS over the same-MIDI window
 #
 #   window     — recent valid detections kept for confirmation/median
@@ -136,14 +136,15 @@ FILTER_PRESETS = {
 }
 FILTER_MODE_DEFAULT = 'normal'
 
-# Per-host-API attempt timeout. Legolas measured stream open at 30–400 ms
+# Per-host-API attempt timeout. Stream open measured at 30–400 ms
 # typical; 800 ms is the upper end we'll wait before declaring the host
 # API hung and moving on.
 HOST_API_OPEN_TIMEOUT_S = 0.8
 
 # Windows host-API preference order. WASAPI first because it's the
 # modern shared-mode path that coexists with other apps. WDM-KS last,
-# and only if the user explicitly opted in — see Aragorn memo on GLE 0xAA.
+# and only if the user explicitly opted in (WDM-KS can fail with Windows
+# GetLastError 0xAA, ERROR_BUSY).
 WIN_HOST_API_ORDER = ('Windows WASAPI', 'MME', 'Windows DirectSound')
 WIN_HOST_API_ORDER_WITH_KS = WIN_HOST_API_ORDER + ('Windows WDM-KS',)
 
@@ -371,8 +372,8 @@ def query_input_devices() -> list[DeviceInfo]:
 def _probe_default_input_index() -> Optional[int]:
     """Return the system default input device index, or None.
 
-    Guards against the ``Error querying device -1`` crash documented in
-    Aragorn's memo. Never raises.
+    Guards against sounddevice's ``Error querying device -1`` when the system
+    has no default input device. Never raises.
     """
     if not AUDIO_OK:
         return None
@@ -512,7 +513,7 @@ class AudioEngine:
         self._transitioning = False
         self._reset_filter_state()
 
-        # ---- output side (Sprint 1 audio-output foundation) ----------------
+        # ---- output side (audio-output foundation) -------------------------
         # Separate sd.OutputStream is the PRIMARY path (D5): it matches the
         # common topology (mic on one device, playback on another), keeps the
         # proven input lifecycle untouched, and owns the sample-accurate
@@ -542,15 +543,15 @@ class AudioEngine:
         self.last_output_error_message: str = ''
         self._out_underflow_count: int = 0
 
-        # ---- D3 mic-coordination (Sprint 3 consumer of the S1 policy) ------
+        # ---- D3 mic-coordination --------------------------------------------
         # The coordinator is PURE policy (sax_coordination); the engine is its
         # CONSUMER. Each detection hop the input callback runs one coordination
         # step: vote-exclude the output's sounding MIDIs from the incumbent
         # lock, and push the ducked gain target to the attached duck consumer
         # (the drone source). Inert until something pitched is sounding —
         # get_sounding_output_midis() is empty, so it excludes nothing and the
-        # duck stays fully open — so wiring it changes nothing until a drone
-        # plays (Sprint 3 makes sounding_midis() non-empty).
+        # duck stays fully open — so it changes nothing until a drone or
+        # pitch pipe plays.
         self.coordinator = OutputCoordinator(samplerate=DEFAULT_SAMPLE_RATE)
         # The source whose gain the duck drives (drone). Attached by the
         # DroneController on enable; duck-typed (anything with set_duck_target).
@@ -559,15 +560,15 @@ class AudioEngine:
         # _preferred_hint on the input side. No caller sets it at present, so
         # recovery falls through to the vendor-class / default device choice.
         self._preferred_output_hint: Optional[DeviceSelection] = None
-        # Handle for the engine-managed test tone (Sprint-1 acceptance), so
+        # Handle for the engine-managed test tone, so
         # start/stop_test_tone are idempotent and don't leak sources.
         self._test_tone_handle = None
 
-        # ---- Sprint 4 tape-deck input-recording tap -----------------------
-        # The deck records the MIC (not the mixer output — Android parity) to
-        # a single take. The engine is pure MECHANISM: a bounded preallocated
-        # capture buffer the input hot path slice-assigns into while armed.
-        # Sauron's DeckController (policy) drives start/stop and owns the
+        # ---- tape-deck input-recording tap --------------------------------
+        # The deck records the MIC (not the mixer output, as in the Android
+        # app) to a single take. The engine is pure MECHANISM: a bounded
+        # preallocated capture buffer the input hot path slice-assigns into
+        # while armed. DeckController (policy) drives start/stop and owns the
         # state machine, WAV encode, and playback source — it never touches
         # the audio callback. A bounded buffer gives ZERO drop until cap and
         # ZERO hot-path alloc (no drain-pump, no chunk queue). The cap is
@@ -912,7 +913,7 @@ class AudioEngine:
         """
         return self._stream is not None
 
-    # ---- tape-deck input recording (Sprint 4) -----------------------------
+    # ---- tape-deck input recording ----------------------------------------
     # Pure MECHANISM: a bounded preallocated mic-capture buffer the input hot
     # path (_on_input) slice-assigns into while armed. Policy — the state
     # machine, WAV encode, and playback source — lives in
@@ -1118,7 +1119,7 @@ class AudioEngine:
         # and FAILED/RUNNING transitions.
         self.open_device(sel)
 
-    # ---- output path (Sprint 1 audio-output foundation) -------------------
+    # ---- output path ------------------------------------------------------
     # Mirrors the input lifecycle on a separate sd.OutputStream (D5). Never
     # raises across its public surface; failure becomes status
     # (output_running=False + last_output_error*). All entry points run on the
@@ -1287,8 +1288,8 @@ class AudioEngine:
     def start_test_tone(self, freq: float = 440.0) -> Optional[object]:
         """Register a sine TestToneSource on the mixer and return its handle.
 
-        Sprint-1 acceptance vehicle ("a test tone plays through the mixer
-        while the tuner still reads the mic"). Idempotent: a second call
+        Proves the output path ("a test tone plays through the mixer while
+        the tuner still reads the mic"). Idempotent: a second call
         replaces the previous tone rather than stacking. Returns None if no
         output stream is running (nothing would be heard)."""
         if not self.output_running:
@@ -1763,7 +1764,8 @@ class AudioEngine:
         """
         # Recompute block/hop so HOP_MS stays ~46 ms at the new rate.
         hop = max(256, int(round(samplerate * HOP_MS / 1000.0)))
-        # BLOCK_SIZE = 8 × HOP_SIZE keeps the ~370 ms YIN window.
+        # block = 8 × hop (as DEFAULT_BLOCK_SIZE = 8 × DEFAULT_HOP_SIZE)
+        # keeps the ~370 ms YIN window at every sample rate.
         block = hop * 8
 
         # v0.5.7.7: 'cancelled' lets the main thread tell a slow worker
@@ -1931,7 +1933,7 @@ class AudioEngine:
         to lock "no unbounded alloc in the hot path". ``sr`` defaults to
         the active negotiated rate. Acquires self._lock briefly but
         releases it before YIN runs; like the callback it must never
-        raise. The Sprint-4 deck tap lives at the TOP of the locked
+        raise. The deck tap lives at the TOP of the locked
         section (before the emissions-pause gate) so an armed take
         captures every mic frame even across a transient A4-remap pause.
         """
@@ -1954,11 +1956,10 @@ class AudioEngine:
             # Update the ring buffer + read filter snapshot under
             # the lock. YIN runs outside the lock.
             with engine._lock:
-                # ---- Sprint 4 deck input-recording tap ------------------
+                # ---- deck input-recording tap ---------------------------
                 # Capture EVERY mic frame while armed, BEFORE the
                 # emissions-pause gate below, so a transient A4-remap pause
-                # never punches a hole in the take (Sauron + Treebeard
-                # ratified continuous capture). Bounded prealloc sink +
+                # never punches a hole in the take. Bounded prealloc sink +
                 # slice-assign: no hot-path alloc. Overflow clamps at cap,
                 # marks the take full, and auto-disarms — the deck pump()
                 # reads is_input_recording()==False as "cap hit".
