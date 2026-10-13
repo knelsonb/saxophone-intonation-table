@@ -1883,6 +1883,18 @@ class AudioEngine:
         self._set_state(AudioEngineState.RUNNING)
         return True, AudioEngineError.NONE, ''
 
+    # PortAudio error codes (PaErrorCode in portaudio.h) that pick a
+    # category on their own. Every other code falls through to
+    # HOSTAPI_FAILURE, which the open loop treats as "try the next rate":
+    # that covers paInvalidChannelCount (-9998), paSampleFormatNotSupported
+    # (-9994) and paBadIODeviceCombination (-9993).
+    _PA_CODE_KINDS = {
+        -9997: AudioEngineError.UNSUPPORTED_RATE,   # paInvalidSampleRate
+        -9999: AudioEngineError.DEVICE_BUSY,        # paUnanticipatedHostError
+        -9985: AudioEngineError.DEVICE_BUSY,        # paDeviceUnavailable
+        -9996: AudioEngineError.NO_DEVICE,          # paInvalidDevice
+    }
+
     @staticmethod
     def _classify_error(exc: BaseException) -> AudioEngineError:
         msg = str(exc).lower()
@@ -1891,16 +1903,22 @@ class AudioEngine:
         text = msg
         if isinstance(code, tuple) and code:
             text = ' '.join(str(c).lower() for c in code)
-        if 'invalid sample rate' in text or '-9998' in text:
+        # Whole-number matches only, so -99970 is not read as -9997.
+        codes = {int(m) for m in re.findall(r'(?<!\d)-\d+(?!\d)', text)}
+        kinds = {AudioEngine._PA_CODE_KINDS[c] for c in codes
+                 if c in AudioEngine._PA_CODE_KINDS}
+        if ('invalid sample rate' in text
+                or AudioEngineError.UNSUPPORTED_RATE in kinds):
             return AudioEngineError.UNSUPPORTED_RATE
-        if any(s in text for s in (
+        if (any(s in text for s in (
                 'device unavailable', 'busy', 'unanticipated host error',
-                '0xaa', '-9999', '-9993', '-9994', '-9996',
-                'wdmsyncioctl')):
+                '0xaa', 'wdmsyncioctl'))
+                or AudioEngineError.DEVICE_BUSY in kinds):
             return AudioEngineError.DEVICE_BUSY
-        if any(s in text for s in (
+        if (any(s in text for s in (
                 'device not found', 'no device', 'invalid device',
-                'querying device -1')):
+                'querying device -1'))
+                or AudioEngineError.NO_DEVICE in kinds):
             return AudioEngineError.NO_DEVICE
         # The bare '-1' code: match it as a standalone token only, so
         # '-10', '-12', '-1000' don't get misrouted here (they belong in
