@@ -33,7 +33,6 @@ directly against a real ``Mixer`` with no audio hardware (see test_metronome.py)
 from __future__ import annotations
 
 import math
-import threading
 import time
 from typing import Callable, List, Optional
 

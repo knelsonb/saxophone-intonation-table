@@ -218,10 +218,6 @@ class PitchPipesController:
             except Exception:
                 pass
 
-    def is_sounding(self, midi: int) -> bool:
-        src = self._pads.get(int(midi))
-        return src is not None and src._env_target > 0.0
-
     def active_midis(self) -> frozenset[int]:
         """MIDIs currently held on (excludes pads that are only releasing)."""
         return frozenset(m for m, s in self._pads.items() if s._env_target > 0.0)

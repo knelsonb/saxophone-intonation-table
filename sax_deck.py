@@ -54,7 +54,6 @@ engine — no audio hardware, no mock stream (see test_deck.py).
 
 from __future__ import annotations
 
-import math
 import os
 import wave
 from enum import Enum
@@ -389,12 +388,6 @@ class DeckController:
     @property
     def take_truncated(self) -> bool:
         return self._take_truncated
-
-    @property
-    def take_duration_s(self) -> float:
-        if self._take is None or self._take_sr <= 0:
-            return 0.0
-        return self._take.shape[0] / float(self._take_sr)
 
     @property
     def last_take_path(self) -> Optional[str]:

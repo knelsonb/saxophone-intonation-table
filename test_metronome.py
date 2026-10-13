@@ -18,7 +18,6 @@ import numpy as np
 import pytest
 
 from sax_mixer import Mixer
-import sax_metronome as M
 from sax_metronome import (
     BPM_MIN, BPM_MAX, beat_onset_sample, bpm_from_tap_times, beats_per_bar,
     clamp_bpm, clamp_volume, ClickSource, MetronomeController,

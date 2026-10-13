@@ -239,10 +239,6 @@ class TableController:
         lo_oct = max(0, lo_oct)
         return (lo_oct, hi_oct)
 
-    def _matrix_octave_count(self) -> int:
-        lo, hi = self._matrix_octave_range()
-        return hi - lo + 1
-
     # -------------------------------------------------------------------------
     # Internal helpers
     # -------------------------------------------------------------------------

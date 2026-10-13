@@ -46,7 +46,6 @@ import sax_instruments
 from sax_theme import CLOSE_CENTS, IN_TUNE_CENTS
 from sax_intonation_log import MeasurementLog
 from sax_intonation_chart import render_intonation_chart
-from sax_i18n import STRINGS
 
 if TYPE_CHECKING:
     from PyQt6.QtWidgets import QMainWindow

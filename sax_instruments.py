@@ -141,16 +141,6 @@ def register_custom(key: str, transp: int,
     _CUSTOMS.append((key, transp, name_de, name_en))
 
 
-def clear_customs() -> None:
-    """Remove all custom instruments (used by tests)."""
-    global _CUSTOMS
-    _CUSTOMS = []
-
-
-def has_customs() -> bool:
-    return bool(_CUSTOMS)
-
-
 _CUSTOM_FAMILY_KEY = 'custom'
 
 
@@ -163,13 +153,6 @@ def families() -> list[tuple[str, str, str]]:
     if _CUSTOMS:
         out.append((_CUSTOM_FAMILY_KEY, 'Eigene', 'Custom'))
     return out
-
-
-def family_display_name(family_key: str, lang: str = 'en') -> str:
-    for (k, de, en) in families():
-        if k == family_key:
-            return de if lang == 'de' else en
-    return family_key
 
 
 def instruments_in(family_key: str) -> list[tuple[str, str, str]]:

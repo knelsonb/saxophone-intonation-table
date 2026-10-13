@@ -42,8 +42,7 @@ import math
 import re
 import sys
 import threading
-import time
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
@@ -556,8 +555,9 @@ class AudioEngine:
         # The source whose gain the duck drives (drone). Attached by the
         # DroneController on enable; duck-typed (anything with set_duck_target).
         self._duck_consumer = None
-        # Persisted (name, host_api) hint for output hot-plug auto-recovery,
-        # mirroring _preferred_hint on the input side.
+        # (name, host_api) hint for output hot-plug auto-recovery, mirroring
+        # _preferred_hint on the input side. No caller sets it at present, so
+        # recovery falls through to the vendor-class / default device choice.
         self._preferred_output_hint: Optional[DeviceSelection] = None
         # Handle for the engine-managed test tone (Sprint-1 acceptance), so
         # start/stop_test_tone are idempotent and don't leak sources.
@@ -1161,14 +1161,6 @@ class AudioEngine:
         self.output_running = False
         self.last_output_error = AudioEngineError.NONE
         self.last_output_error_message = ''
-
-    def set_preferred_output_hint(self, sel: Optional[DeviceSelection]) -> None:
-        """Stash the persisted output (name, host_api) for hot-plug recovery,
-        mirroring set_preferred_hint on the input side."""
-        if sel and sel.name:
-            self._preferred_output_hint = sel
-        else:
-            self._preferred_output_hint = None
 
     def refresh_output_devices(self) -> list[DeviceInfo]:
         """Poll the output device list. Mirror of refresh_devices for output.

@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import importlib
 import sys
-import threading
 import time
 import types
 

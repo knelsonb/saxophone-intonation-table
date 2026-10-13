@@ -28,14 +28,14 @@ from pathlib import Path
 import numpy as np
 
 try:
-    import sounddevice as sd
+    import sounddevice as sd  # noqa: F401  (import probe: sets AUDIO_OK)
     AUDIO_OK = True
 except Exception:
     AUDIO_OK = False
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QTableWidget, QTableWidgetItem, QHeaderView,
+    QPushButton, QLabel, QTableWidget, QHeaderView,
     QComboBox, QSizePolicy, QFileDialog, QMessageBox,
     QAbstractItemView, QGroupBox, QSplitter,
     QDialog, QLineEdit, QDialogButtonBox, QFormLayout,
@@ -43,19 +43,16 @@ from PyQt6.QtWidgets import (
     QTabWidget, QTabBar, QSlider,
 )
 from PyQt6.QtCore import (
-    Qt, QTimer, pyqtSignal, QObject, QRectF, QPointF, QLocale, QByteArray,
+    Qt, QTimer, pyqtSignal, QRectF, QPointF, QLocale,
 )
 from PyQt6.QtGui import QPainter, QColor, QFont, QPen, QIcon, QGuiApplication
 
 from sax_intonation_log import MeasurementLog
-from sax_intonation_chart import render_intonation_chart
 import sax_instruments
 from sax_instruments import (
     families as instrument_families,
-    instruments_in,
     transp_map as build_transp_map,
     display_name as instrument_display_name,
-    family_of as instrument_family_of,
     register_custom,
 )
 import sax_config
@@ -132,7 +129,6 @@ from sax_audio_engine import (
     AudioEngine,
     AudioEngineState,
     AudioEngineError,
-    AudioEngineDiagnostics,
     DeviceInfo,
     DeviceSelection,
     FILTER_PRESETS as _FILTER_PRESETS_EXT,
@@ -147,8 +143,6 @@ from sax_audio_engine import (
     DEFAULT_BLOCK_SIZE as _DEFAULT_BLOCK_SIZE_EXT,
     SAMPLERATE_PREF_VALUES as _SAMPLERATE_PREF_VALUES_EXT,
     SAMPLERATE_CANDIDATES as _SAMPLERATE_CANDIDATES_EXT,
-    cents_dev as _cents_dev_ext,
-    query_input_devices,
     VENDOR_REGEX,
 )
 
@@ -1538,7 +1532,7 @@ class AudioPickerDialog(QDialog):
         self.resize(560, 600)
 
     def _build(self) -> None:
-        from PyQt6.QtWidgets import QListWidget, QListWidgetItem
+        from PyQt6.QtWidgets import QListWidget
         root = QVBoxLayout(self)
         root.setContentsMargins(14, 12, 14, 12)
         root.setSpacing(8)
@@ -4594,13 +4588,10 @@ class MainWindow(QMainWindow):
 
     # Phase-5 extraction: audio device handling lives on DeviceController.
     # The methods below are one-line wrappers — Qt signal/slot connect()
-    # bindings (lines ~2156-2160) and the QTimer wiring (~2249) point at
+    # bindings and the hot-plug QTimer wiring in __init__ point at
     # MainWindow methods, so we preserve them at MainWindow's surface
     # so PyQt's runtime slot type-check sees the exact bound-method
     # signature it saw before the extraction.
-    def _persist_active_device(self) -> None:
-        self._device_ctrl.persist_active_device()
-
     def _open_audio_picker(self) -> None:
         self._device_ctrl.open_audio_picker()
 

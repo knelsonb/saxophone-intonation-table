@@ -27,7 +27,7 @@ the module-level "active" pointer needs no lock.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 
 
 # Cents thresholds shared by every view (tuner, table, PDF, chart): within
@@ -86,9 +86,6 @@ class ThemePalette:
     grid: str             # gridlines, dividers, axis ticks in painted views
     accent_muted: str     # darker accent fill (needle base, selected cell)
     bad_surface: str      # error-tinted input background (invalid field fill)
-
-    def as_dict(self) -> dict:
-        return {f.name: getattr(self, f.name) for f in fields(self)}
 
 
 # ---------------------------------------------------------------------------

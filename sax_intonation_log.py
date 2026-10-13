@@ -35,7 +35,7 @@ import threading
 import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Optional
 
 
 _CHROMA = ['C', 'C#/Db', 'D', 'D#/Eb', 'E', 'F',
@@ -219,11 +219,6 @@ class MeasurementLog:
                 run.model = model
             if label:
                 run.label = label
-
-    @property
-    def current_run_id(self) -> Optional[str]:
-        with self._lock:
-            return self._current_run_id
 
     # -- measurement intake ----------------------------------------------
     def add_measurement(self, midi_sounding: int, midi_fingered: int,
@@ -566,13 +561,6 @@ def _write_raw(w, measurements: list[Measurement],
         ])
         n += 1
     return n
-
-
-def _aggregate(measurements: Iterable[Measurement], key_fn):
-    buckets: dict = {}
-    for m in measurements:
-        buckets.setdefault(key_fn(m), []).append(m.cents)
-    return buckets
 
 
 def _write_per_run_note(w, measurements: list[Measurement],

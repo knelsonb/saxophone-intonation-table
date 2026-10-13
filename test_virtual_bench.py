@@ -13,7 +13,6 @@ drone-pitch + deck-timing + input-latency benches build on this in follow-ups.
 """
 from __future__ import annotations
 
-import math
 
 import numpy as np
 import pytest

@@ -37,7 +37,6 @@
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, Callable
 
 import numpy as np
 
@@ -56,10 +55,6 @@ from sax_instruments import (
     family_of as instrument_family_of,
     register_custom,
 )
-
-if TYPE_CHECKING:
-    from PyQt6.QtWidgets import QMainWindow, QComboBox, QLineEdit as _QLineEdit
-    from sax_config import AppConfig
 
 
 class InstrumentController:
