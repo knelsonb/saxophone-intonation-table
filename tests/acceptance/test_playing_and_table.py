@@ -131,15 +131,7 @@ def test_a_low_brass_pedal_with_a_weak_fundamental_reads_the_right_note(make_app
     assert abs(rows[0].mean) <= 2 and rows[0].n >= 10, rows[0]
 
 
-@pytest.mark.parametrize("a4", [
-    440,
-    pytest.param(431, marks=pytest.mark.xfail(strict=True, reason=(
-        "Sauron-11: 27 Hz detection floor clips piano A0 at A4=431 (26.94 Hz), "
-        "reads +5 ct"))),
-    pytest.param(430, marks=pytest.mark.xfail(strict=True, reason=(
-        "Sauron-11: 27 Hz detection floor clips piano A0 at A4=430 (26.88 Hz), "
-        "reads +9 ct"))),
-])
+@pytest.mark.parametrize("a4", [440, 431, 430])
 def test_the_lowest_piano_a_reads_in_tune_at_any_concert_pitch(make_app, a4):
     """A piano tuned to a lower concert pitch still has an A0 the app can read."""
     app = make_app(config=on("piano"))

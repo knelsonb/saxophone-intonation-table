@@ -149,10 +149,6 @@ _A4_NOTES = (21, 33, 45, 69, 84, 93, 100, 108)
 
 # (a4, sr, midi) -> measured behaviour.
 KNOWN_A4_EDGES: dict[tuple[float, int, int], str] = {
-    # MIN_FREQ is 27.0 Hz, above A0 at A4=430 (26.88 Hz). The lowest period YIN
-    # may search is clamped, so the note comes out sharp.
-    (430.0, 44100, 21): '+9.45 ct, A0 at A4=430 (26.88 Hz) sits below MIN_FREQ',
-    (430.0, 48000, 21): '+9.77 ct, A0 at A4=430 (26.88 Hz) sits below MIN_FREQ',
     (430.0, 44100, 100): '+3.60 ct',
     (450.0, 44100, 100): '+4.02 ct',
     (450.0, 44100, 108): '+13.99 ct',

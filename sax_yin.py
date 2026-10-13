@@ -17,7 +17,7 @@ import numpy as np
 # Detection band. 25.5 Hz sits below piano A0 at the lowest selectable concert
 # pitch (A4 = 430 Hz puts A0 at 26.88 Hz), so the lag search always reaches the
 # period of the lowest catalog note with a sample to spare for interpolation.
-MIN_FREQ = 27.0
+MIN_FREQ = 25.5
 # 4500 Hz covers C8 at A4 = 450 Hz plus about 50 cents (the C8/C#8 rounding
 # boundary is near 4409 Hz there). The precise upper bound is the MIDI-range
 # gate in the detector; this one only keeps the lag search away from lags of a
