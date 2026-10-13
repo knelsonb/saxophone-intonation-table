@@ -582,3 +582,120 @@ def test_bar_delegate_and_table_use_shared_thresholds(tmp_path):
     assert "bad" in out["bars"]["15.0"]
     assert out["mean_text"] == "+5"
     assert out["mean_color"] == "#3a9e5f"
+
+
+# ---------------------------------------------------------------------------
+# 1.8  Unhandled exceptions are logged and reported instead of aborting
+# ---------------------------------------------------------------------------
+def test_crash_log_is_capped_at_line_boundary(tmp_path):
+    import sax_crash
+    log = tmp_path / "crash.log"
+    for i in range(200):
+        sax_crash.append_crash_log(f"Traceback {i}\n  line\nError: {i}",
+                                   path=log, max_bytes=2048)
+    data = log.read_bytes()
+    assert len(data) <= 2048
+    # Truncation drops whole lines only: no partial line at the start.
+    import re
+    for line in data.decode("utf-8").splitlines():
+        assert re.fullmatch(r"=== .* ===|Traceback \d+|  line|Error: \d+|",
+                            line), line
+    assert b"Error: 199" in data and b"Error: 0\n" not in data
+
+
+def test_excepthook_logs_and_reports(tmp_path, monkeypatch):
+    import sax_crash
+    monkeypatch.setattr(sax_config, "CONFIG_DIR", tmp_path / "cfg")
+    shown = []
+    hook = sax_crash.make_excepthook(lambda path, details: shown.append(
+        (path, details)))
+    try:
+        raise ValueError("boom-in-slot")
+    except ValueError:
+        hook(*sys.exc_info())
+    log = tmp_path / "cfg" / "crash.log"
+    assert "boom-in-slot" in log.read_text(encoding="utf-8")
+    assert shown and shown[0][0] == log and "boom-in-slot" in shown[0][1]
+
+
+def test_excepthook_survives_unwritable_log(tmp_path, monkeypatch):
+    import sax_crash
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("x", encoding="utf-8")
+    monkeypatch.setattr(sax_config, "CONFIG_DIR", blocker)
+    shown = []
+    hook = sax_crash.make_excepthook(lambda path, details: shown.append(path))
+    try:
+        raise ValueError("boom")
+    except ValueError:
+        hook(*sys.exc_info())
+    assert shown == [None]
+
+
+def _run_script(tmp_path: Path, body: str) -> subprocess.CompletedProcess:
+    home = tmp_path / "home"
+    home.mkdir()
+    script = tmp_path / "case.py"
+    script.write_text(
+        "import os, sys\n"
+        f"os.environ['HOME'] = {str(home)!r}\n"
+        f"os.environ['USERPROFILE'] = {str(home)!r}\n"
+        f"sys.path.insert(0, {str(_REPO)!r})\n" + textwrap.dedent(body),
+        encoding="utf-8")
+    env = dict(os.environ)
+    env["QT_QPA_PLATFORM"] = "offscreen"
+    return subprocess.run([sys.executable, str(script)], capture_output=True,
+                          text=True, env=env, timeout=120)
+
+
+def test_excepthook_before_qapplication_logs(tmp_path):
+    proc = _run_script(tmp_path, '''
+        import sax_crash
+        sax_crash.install()
+        raise RuntimeError("boom-before-qt")
+    ''')
+    log = tmp_path / "home" / ".intonation_analyzer" / "crash.log"
+    assert proc.returncode == 1
+    assert "boom-before-qt" in log.read_text(encoding="utf-8")
+
+
+def test_thread_exceptions_are_logged(tmp_path):
+    proc = _run_script(tmp_path, '''
+        import threading, sax_crash
+        sax_crash.install()
+        t = threading.Thread(target=lambda: 1 / 0, name="worker-x")
+        t.start(); t.join()
+    ''')
+    log = tmp_path / "home" / ".intonation_analyzer" / "crash.log"
+    assert proc.returncode == 0
+    text = log.read_text(encoding="utf-8")
+    assert "worker-x" in text and "ZeroDivisionError" in text
+
+
+@requires_qt
+def test_exception_in_slot_shows_dialog_instead_of_aborting(tmp_path):
+    proc = _run_script(tmp_path, '''
+        import sax_crash
+        sax_crash.install()
+        sax_crash.set_lang_source(lambda: "de")
+        from PyQt6.QtCore import QTimer
+        from PyQt6.QtWidgets import QApplication, QMessageBox
+        shown = []
+        QMessageBox.exec = lambda self: shown.append(
+            (self.windowTitle(), self.text())) or 0
+        app = QApplication([])
+
+        def bad():
+            raise RuntimeError("boom-in-slot")
+
+        QTimer.singleShot(0, bad)
+        for _ in range(5):
+            app.processEvents()
+        print("SHOWN", shown, flush=True)
+        os._exit(0)
+    ''')
+    assert proc.returncode == 0, proc.stderr
+    assert "Unerwarteter Fehler" in proc.stdout
+    assert "crash.log" in proc.stdout
+    log = tmp_path / "home" / ".intonation_analyzer" / "crash.log"
+    assert "boom-in-slot" in log.read_text(encoding="utf-8")

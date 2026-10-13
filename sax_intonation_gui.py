@@ -20,7 +20,12 @@ from array import array
 if __name__ == '__main__':
     sys.modules.setdefault('sax_intonation_gui', sys.modules[__name__])
 
-import datetime
+# Install the crash handler before anything else is imported, so even a
+# failing import or an error before QApplication exists is logged.
+if __name__ == '__main__':
+    import sax_crash
+    sax_crash.install()
+
 import math
 import threading
 from pathlib import Path
@@ -5298,6 +5303,10 @@ def _load_app_icon() -> QIcon | None:
 
 
 if __name__ == '__main__':
+    # Until the window exists the crash dialog follows the system locale, as
+    # the window's own first-launch default does.
+    sax_crash.set_lang_source(
+        lambda: 'de' if QLocale.system().name().startswith('de') else 'en')
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setApplicationDisplayName(APP_NAME)
@@ -5306,6 +5315,7 @@ if __name__ == '__main__':
     if icon is not None:
         app.setWindowIcon(icon)
     win = MainWindow()
+    sax_crash.set_lang_source(lambda: win.lang)
     if icon is not None:
         win.setWindowIcon(icon)
     win.show()

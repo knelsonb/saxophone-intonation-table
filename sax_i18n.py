@@ -371,6 +371,10 @@ STRINGS = {
         'deck_export_filter':     'WAV-Audio (*.wav)',
         'deck_export_done':       'Aufnahme exportiert.',
         'deck_export_fail':       'Datei konnte nicht geschrieben werden.',
+        # Unexpected error (sax_crash)
+        'crash_title':            'Unerwarteter Fehler',
+        'crash_msg':              'Es ist ein unerwarteter Fehler aufgetreten. Die Details stehen in:\n{path}\n\nDas Programm läuft weiter; speichere oder exportiere deine Messungen, falls etwas nicht mehr funktioniert.',
+        'crash_msg_no_log':       'Es ist ein unerwarteter Fehler aufgetreten. Das Fehlerprotokoll konnte nicht geschrieben werden; die Details stehen unten.\n\nDas Programm läuft weiter; speichere oder exportiere deine Messungen, falls etwas nicht mehr funktioniert.',
     },
     'en': {
         'window_title': 'Intonation Analyzer',
@@ -705,6 +709,10 @@ STRINGS = {
         'deck_export_filter':     'WAV audio (*.wav)',
         'deck_export_done':       'Take exported.',
         'deck_export_fail':       "Couldn't write the file.",
+        # Unexpected error (sax_crash)
+        'crash_title':            'Unexpected error',
+        'crash_msg':              'An unexpected error occurred. The details are in:\n{path}\n\nThe app keeps running; save or export your measurements if something stops working.',
+        'crash_msg_no_log':       "An unexpected error occurred. The crash log couldn't be written; the details are below.\n\nThe app keeps running; save or export your measurements if something stops working.",
     },
 }
 
