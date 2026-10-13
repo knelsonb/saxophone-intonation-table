@@ -39,4 +39,12 @@ line-length = 100
 target-version = "py310"
 
 [tool.ruff.lint]
-extend-select = ["I"]
+select = ["E", "F", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+# The UI string tables hold long German and English sentences on single lines;
+# wrapping them would split each message across several literals.
+"sax_i18n.py" = ["E501"]
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
