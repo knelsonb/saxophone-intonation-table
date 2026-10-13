@@ -116,6 +116,8 @@ class Table(_Part):
         return r
 
     def discard(self, name: str, confirm: bool = True) -> None:
+        """Right-click the note's row (list layout) or cell (matrix layout)
+        and choose discard."""
         self._d.table_discard(name, confirm)
         self._done()
 
@@ -126,6 +128,12 @@ class Table(_Part):
     @property
     def caption(self) -> str:
         return self._d.table_caption()
+
+    @property
+    def columns(self) -> list[str]:
+        """Column headers as shown: the list layout's six titles, or one
+        octave label per column of the matrix layout."""
+        return self._d.table_columns()
 
     @property
     def total_measurements(self) -> int:

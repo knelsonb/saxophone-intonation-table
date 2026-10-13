@@ -95,6 +95,7 @@ from .model import (
     MetronomeState,
     Reading,
     Row,
+    note_spellings,
 )
 from .tones import note_to_midi
 
@@ -593,21 +594,49 @@ class AppDriver:
 
     def table_discard(self, name: str, confirm: bool) -> None:
         w = self.win
-        if w._layout_mode != "single":
-            raise NotImplementedError("discard is only scripted for the list layout")
-        rows = self.table_rows(played_only=False)
-        index = next((i for i, r in enumerate(rows)
-                      if r.is_named(name) and r.n > 0), None)
-        if index is None:
-            raise HarnessError(f"no played row named {name!r} in the table")
         t = w._table
-        item = t.item(index, 0)
+        if w._layout_mode == "single":
+            rows = self.table_rows(played_only=False)
+            index = next((i for i, r in enumerate(rows)
+                          if r.is_named(name) and r.n > 0), None)
+            if index is None:
+                raise HarnessError(f"no played row named {name!r} in the table")
+            item = t.item(index, 0)
+        else:
+            item = self._matrix_cell(name)
         t.scrollToItem(item)
         pos = t.visualRect(t.indexFromItem(item)).center()
         with self.dialogs.scope():
             self.dialogs.expect_menu(self.t("ctx_discard"))
             self.dialogs.expect("question", "Yes" if confirm else "No", optional=True)
             t.customContextMenuRequested.emit(pos)
+
+    def _matrix_cell(self, name: str):
+        """The matrix cell showing played data for ``name`` (fingered or
+        sounding spelling). Uses the cell UserRole payload dicts painted by
+        the table controller; a cell below the minimum count has no mean and
+        is not offered, as nothing is shown in it."""
+        from PyQt6.QtCore import Qt
+        self.settle()
+        t = self.win._table
+        for r in range(t.rowCount()):
+            for c in range(t.columnCount()):
+                item = t.item(r, c)
+                pay = item.data(Qt.ItemDataRole.UserRole) if item else None
+                if not isinstance(pay, dict) or not pay.get("n") or pay.get("mean") is None:
+                    continue
+                if any(name in note_spellings(pay[k])
+                       for k in ("fingered_name", "sounding_name")):
+                    return item
+        raise HarnessError(f"no played cell named {name!r} in the matrix")
+
+    def table_columns(self) -> list[str]:
+        """Column header labels as displayed (``_table`` horizontal header):
+        the six list columns, or one octave label per matrix column."""
+        self.settle()
+        t = self.win._table
+        return [t.horizontalHeaderItem(c).text() if t.horizontalHeaderItem(c) else ""
+                for c in range(t.columnCount())]
 
     def stats_total_n(self) -> int:
         with self.win._lock:
