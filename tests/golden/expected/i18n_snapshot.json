@@ -15,7 +15,6 @@
       "audio_chip_none",
       "audio_chip_opening",
       "audio_chip_tip",
-      "audio_disabled",
       "audio_error",
       "audio_error_title",
       "audio_picker_apis_more",
@@ -30,7 +29,6 @@
       "audio_picker_use",
       "audio_sr_notice",
       "audio_toast_dismiss",
-      "audio_toast_interface",
       "audio_toast_switch",
       "autotune_clamp",
       "autotune_confirm",
@@ -61,6 +59,9 @@
       "col_sounding",
       "col_std",
       "col_tendency",
+      "crash_msg",
+      "crash_msg_no_log",
+      "crash_title",
       "csv_all_instruments",
       "csv_all_nicks",
       "csv_all_runs",
@@ -157,19 +158,10 @@
       "gear_tip",
       "grp_a4",
       "grp_display",
-      "grp_family",
       "grp_filter",
       "grp_instrument",
       "grp_language",
-      "grp_layout",
       "grp_nickname",
-      "grp_subinstrument",
-      "instr_bb_bass",
-      "instr_bb_soprano",
-      "instr_bb_tenor",
-      "instr_c",
-      "instr_eb_alto",
-      "instr_eb_bari",
       "instr_long_bb_bass",
       "instr_long_bb_soprano",
       "instr_long_bb_tenor",
@@ -179,7 +171,6 @@
       "layout_auto",
       "layout_matrix",
       "layout_single",
-      "matrix_oct_center",
       "matrix_oct_label",
       "matrix_oct_rel_label",
       "metro_bpm",
@@ -200,8 +191,6 @@
       "model_label_model",
       "model_placeholder_maker",
       "model_placeholder_model",
-      "nav_deck_recording",
-      "nav_metro_running",
       "nav_tab_deck",
       "nav_tab_deck_tip",
       "nav_tab_metro",
@@ -245,10 +234,12 @@
       "range_mode_note_sound",
       "range_note_name_hint",
       "range_note_name_invalid",
+      "range_out_of_midi",
       "range_preview_fmt",
       "range_restore_default",
       "range_restore_fallback",
       "range_save",
+      "range_save_failed",
       "reportlab_err",
       "reset_msg",
       "reset_title",
@@ -267,8 +258,6 @@
       "setup_output_default",
       "setup_output_device",
       "setup_output_group",
-      "setup_output_none",
-      "setup_output_pick",
       "setup_prefer_duplex",
       "setup_prefer_duplex_tip",
       "setup_range_edit",
@@ -278,7 +267,6 @@
       "setup_testtone_stop",
       "setup_testtone_tip",
       "setup_theme",
-      "setup_title",
       "show_diagnostics",
       "show_diagnostics_tip",
       "spectro_title",
@@ -286,13 +274,9 @@
       "table_empty_hint",
       "table_matrix_title",
       "table_summary",
-      "table_title",
       "theme_dark",
       "theme_light",
       "theme_night",
-      "transp_info_bb",
-      "transp_info_c",
-      "transp_info_eb",
       "txt_a4",
       "txt_col_header",
       "txt_col_mean",
@@ -341,9 +325,6 @@
       "audio_sr_notice": [
         "sr"
       ],
-      "audio_toast_interface": [
-        "name"
-      ],
       "autotune_clamp": [
         "clamped",
         "rounded"
@@ -383,6 +364,9 @@
         "instr",
         "maker",
         "model"
+      ],
+      "crash_msg": [
+        "path"
       ],
       "csv_import_confirm_body": [
         "filename"
@@ -442,6 +426,10 @@
       "range_editor_title": [
         "name"
       ],
+      "range_out_of_midi": [
+        "hi",
+        "lo"
+      ],
       "range_preview_fmt": [
         "hi_name",
         "lo_name",
@@ -451,6 +439,10 @@
       "range_restore_fallback": [
         "hi",
         "lo"
+      ],
+      "range_save_failed": [
+        "err",
+        "path"
       ],
       "samplerate_unsupported": [
         "rate"
@@ -532,7 +524,6 @@
       "audio_chip_none",
       "audio_chip_opening",
       "audio_chip_tip",
-      "audio_disabled",
       "audio_error",
       "audio_error_title",
       "audio_picker_apis_more",
@@ -547,7 +538,6 @@
       "audio_picker_use",
       "audio_sr_notice",
       "audio_toast_dismiss",
-      "audio_toast_interface",
       "audio_toast_switch",
       "autotune_clamp",
       "autotune_confirm",
@@ -578,6 +568,9 @@
       "col_sounding",
       "col_std",
       "col_tendency",
+      "crash_msg",
+      "crash_msg_no_log",
+      "crash_title",
       "csv_all_instruments",
       "csv_all_nicks",
       "csv_all_runs",
@@ -674,19 +667,10 @@
       "gear_tip",
       "grp_a4",
       "grp_display",
-      "grp_family",
       "grp_filter",
       "grp_instrument",
       "grp_language",
-      "grp_layout",
       "grp_nickname",
-      "grp_subinstrument",
-      "instr_bb_bass",
-      "instr_bb_soprano",
-      "instr_bb_tenor",
-      "instr_c",
-      "instr_eb_alto",
-      "instr_eb_bari",
       "instr_long_bb_bass",
       "instr_long_bb_soprano",
       "instr_long_bb_tenor",
@@ -696,7 +680,6 @@
       "layout_auto",
       "layout_matrix",
       "layout_single",
-      "matrix_oct_center",
       "matrix_oct_label",
       "matrix_oct_rel_label",
       "metro_bpm",
@@ -717,8 +700,6 @@
       "model_label_model",
       "model_placeholder_maker",
       "model_placeholder_model",
-      "nav_deck_recording",
-      "nav_metro_running",
       "nav_tab_deck",
       "nav_tab_deck_tip",
       "nav_tab_metro",
@@ -762,10 +743,12 @@
       "range_mode_note_sound",
       "range_note_name_hint",
       "range_note_name_invalid",
+      "range_out_of_midi",
       "range_preview_fmt",
       "range_restore_default",
       "range_restore_fallback",
       "range_save",
+      "range_save_failed",
       "reportlab_err",
       "reset_msg",
       "reset_title",
@@ -784,8 +767,6 @@
       "setup_output_default",
       "setup_output_device",
       "setup_output_group",
-      "setup_output_none",
-      "setup_output_pick",
       "setup_prefer_duplex",
       "setup_prefer_duplex_tip",
       "setup_range_edit",
@@ -795,7 +776,6 @@
       "setup_testtone_stop",
       "setup_testtone_tip",
       "setup_theme",
-      "setup_title",
       "show_diagnostics",
       "show_diagnostics_tip",
       "spectro_title",
@@ -803,13 +783,9 @@
       "table_empty_hint",
       "table_matrix_title",
       "table_summary",
-      "table_title",
       "theme_dark",
       "theme_light",
       "theme_night",
-      "transp_info_bb",
-      "transp_info_c",
-      "transp_info_eb",
       "txt_a4",
       "txt_col_header",
       "txt_col_mean",
@@ -858,9 +834,6 @@
       "audio_sr_notice": [
         "sr"
       ],
-      "audio_toast_interface": [
-        "name"
-      ],
       "autotune_clamp": [
         "clamped",
         "rounded"
@@ -900,6 +873,9 @@
         "instr",
         "maker",
         "model"
+      ],
+      "crash_msg": [
+        "path"
       ],
       "csv_import_confirm_body": [
         "filename"
@@ -959,6 +935,10 @@
       "range_editor_title": [
         "name"
       ],
+      "range_out_of_midi": [
+        "hi",
+        "lo"
+      ],
       "range_preview_fmt": [
         "hi_name",
         "lo_name",
@@ -968,6 +948,10 @@
       "range_restore_fallback": [
         "hi",
         "lo"
+      ],
+      "range_save_failed": [
+        "err",
+        "path"
       ],
       "samplerate_unsupported": [
         "rate"
