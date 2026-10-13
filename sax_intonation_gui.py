@@ -115,7 +115,7 @@ from sax_instruments import (
     display_name as instrument_display_name,
     families as instrument_families,
     register_custom,
-    transp_map as build_transp_map,
+    transp_map,
 )
 from sax_intonation_log import MeasurementLog
 from sax_paths import AppPaths
@@ -238,18 +238,6 @@ def cent_precision_floor(freq_hz: float, sample_rate: int) -> float:
     if sr <= 0 or freq_hz <= 0:
         return CENT_PREC_TENTHS_MAX
     return 173.0 * float(freq_hz) / sr
-
-
-# Transposition map is now derived from sax_instruments.transp_map(), which
-# includes the original six saxophone/C-instrument keys plus everything else
-# in the catalog. Rebuilt on demand whenever a custom instrument is added.
-TRANSP_MAP: dict[str, int] = build_transp_map()
-
-
-def _rebuild_transp_map() -> None:
-    """Refresh TRANSP_MAP after a custom instrument is registered."""
-    global TRANSP_MAP
-    TRANSP_MAP = build_transp_map()
 
 
 # =============================================================================
@@ -2162,7 +2150,6 @@ class MainWindow(QMainWindow):
         sax_theme.set_active(self._cfg.theme)
         for c in sax_config.load_customs():
             register_custom(c.key, c.transp, c.name_de, c.name_en)
-        _rebuild_transp_map()
 
         # v0.5.5: restore last-session preferences that influence the
         # initial UI build. Geometry, splitter sizes, and nickname text
@@ -2175,13 +2162,13 @@ class MainWindow(QMainWindow):
             # Trust the saved key only if the catalog still knows it; a
             # stale custom instrument that was deleted should fall back
             # rather than crash the combo population.
-            if self._cfg.last_instrument_key in TRANSP_MAP:
+            if self._cfg.last_instrument_key in transp_map():
                 self.instrument = self._cfg.last_instrument_key
         # A saved custom instrument cannot be resolved while its file is
         # unreadable. The session runs on the default instrument, but the
         # saved choice is kept unless the player picks another one.
         keep_saved_instrument = (self._settings.customs_unreadable
-                                 and self._cfg.last_instrument_key not in TRANSP_MAP)
+                                 and self._cfg.last_instrument_key not in transp_map())
         if getattr(self._cfg, 'last_display_mode', '') in ('griff', 'klingend'):
             self.display = self._cfg.last_display_mode
 
@@ -4334,7 +4321,7 @@ class MainWindow(QMainWindow):
         # outside the range. Compute the fingered MIDI relative to the
         # currently selected instrument and bump/reset the counter.
         try:
-            _t_oor = TRANSP_MAP.get(self.instrument, 0)
+            _t_oor = transp_map().get(self.instrument, 0)
             _lo_f, _hi_f = sax_instruments.fingered_range(self.instrument)
             _midi_fingered_oor = midi_kl - _t_oor
             _in_range = (_lo_f <= _midi_fingered_oor <= _hi_f)
@@ -4356,7 +4343,7 @@ class MainWindow(QMainWindow):
         # Drop out-of-range notes when the toggle is off — keeps the table
         # bounded to the instrument's nominal range.
         if not self._cfg.allow_out_of_range:
-            transp = TRANSP_MAP.get(self.instrument, 0)
+            transp = transp_map().get(self.instrument, 0)
             lo_f, hi_f = sax_instruments.fingered_range(self.instrument)
             midi_fingered = midi_kl - transp
             if not (lo_f <= midi_fingered <= hi_f):
@@ -4372,12 +4359,12 @@ class MainWindow(QMainWindow):
         # Per-measurement log. Instrument/A4 are read off the active run
         # inside the log, not from `self`, so a callback firing during a UI
         # change still attributes to the run that was active when it fired.
-        midi_gr = midi_kl - TRANSP_MAP.get(self.instrument, 0)
+        midi_gr = midi_kl - transp_map().get(self.instrument, 0)
         self._log.add_measurement(midi_sounding=midi_kl,
                                    midi_fingered=midi_gr,
                                    cents=cents, freq_hz=freq)
 
-        transp     = TRANSP_MAP.get(self.instrument, 0)
+        transp     = transp_map().get(self.instrument, 0)
         midi_gr    = midi_kl - transp
         kl_name    = midi_note_name(midi_kl)
         gr_name    = midi_note_name(midi_gr)
@@ -4559,7 +4546,7 @@ class MainWindow(QMainWindow):
         """Populate self.stats with empty NoteStats for the current
         instrument's expected fingered range. Existing measurements are
         preserved."""
-        transp = TRANSP_MAP.get(self.instrument, 0)
+        transp = transp_map().get(self.instrument, 0)
         lo, hi = sax_instruments.fingered_range(self.instrument)
         with self._lock:
             for fingered in range(lo, hi + 1):
@@ -5035,7 +5022,7 @@ class MainWindow(QMainWindow):
         if row < 0:
             return
 
-        transp = TRANSP_MAP.get(self.instrument, 0)
+        transp = transp_map().get(self.instrument, 0)
         midi_kl: int | None = None
 
         if self._layout_mode == 'matrix':

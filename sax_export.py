@@ -101,7 +101,6 @@ class ExportController:
 
     # ── Public entry points ───────────────────────────────────────────────
     def export_txt(self) -> None:
-        from sax_intonation_gui import TRANSP_MAP
         w = self._w
         model_info = self._ask_instrument_model()
         if model_info is None:
@@ -115,7 +114,7 @@ class ExportController:
             self._t('txt_filter'))
         if not path:
             return
-        transp = TRANSP_MAP.get(instrument, 0)
+        transp = sax_instruments.transp_map().get(instrument, 0)
         lines = [
             self._t('txt_header'),
             '=' * 54,
@@ -161,7 +160,6 @@ class ExportController:
             QMessageBox.critical(w, self._t('err_title'), str(e))
 
     def export_pdf(self) -> None:
-        from sax_intonation_gui import TRANSP_MAP
         w = self._w
         try:
             from reportlab.lib import colors
@@ -186,7 +184,7 @@ class ExportController:
         if not path:
             return
 
-        transp = TRANSP_MAP.get(instrument, 0)
+        transp = sax_instruments.transp_map().get(instrument, 0)
         doc    = SimpleDocTemplate(path, pagesize=RL_A4,
                                    leftMargin=20*mm, rightMargin=20*mm,
                                    topMargin=20*mm, bottomMargin=20*mm)
@@ -316,7 +314,6 @@ class ExportController:
             QMessageBox.critical(w, self._t('err_title'), str(e))
 
     def export_chart(self) -> None:
-        from sax_intonation_gui import TRANSP_MAP
         w = self._w
         with w._lock:
             # Rows seeded for the instrument range have n == 0 until played;
@@ -345,7 +342,7 @@ class ExportController:
         if not path.lower().endswith('.png'):
             path += '.png'
 
-        transp = TRANSP_MAP.get(instrument, 0)
+        transp = sax_instruments.transp_map().get(instrument, 0)
         disp_griff = (w.display == 'griff')
         sr_now = w._engine_sample_rate()
         a4 = self._engine.a4

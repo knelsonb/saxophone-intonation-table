@@ -60,7 +60,7 @@ from sax_instruments import (
     family_of as instrument_family_of,
     instruments_in,
     register_custom,
-    transp_map as build_transp_map,
+    transp_map,
 )
 
 # Autotune: a note counts toward the suggestion once it has this many samples,
@@ -247,7 +247,7 @@ class InstrumentController:
         """Open the per-instrument range editor for the active instrument.
         Accepts → persist via sax_instruments override DB → notify caller
         so the new bounds take effect immediately."""
-        from sax_intonation_gui import TRANSP_MAP, RangeEditorDialog
+        from sax_intonation_gui import RangeEditorDialog
         w = self._w
         key = w.instrument
         cur_lo, cur_hi = sax_instruments.fingered_range(key)
@@ -259,7 +259,7 @@ class InstrumentController:
         # dialog can render values in whichever notation the user is
         # already reading on the matrix. File format stays fingered.
         display = self._get_display_mode()
-        transp = TRANSP_MAP.get(key, 0)
+        transp = transp_map().get(key, 0)
         dlg = RangeEditorDialog(
             w, self._t, key, name,
             cur_lo, cur_hi, baked_lo, baked_hi, has_baked,
@@ -276,7 +276,6 @@ class InstrumentController:
     # ── Custom-instrument registration ───────────────────────────────────────
     def on_add_custom(self) -> None:
         """Prompt the user for a custom instrument and register it."""
-        from sax_intonation_gui import _rebuild_transp_map
         result = self._ask_custom_instrument()
         if result is None:
             return
@@ -290,7 +289,7 @@ class InstrumentController:
             c.lower() if c.isalnum() else '_' for c in name).strip('_')[:32]
         if not base or base == 'custom_':
             return
-        existing_keys = set(build_transp_map().keys())
+        existing_keys = set(transp_map().keys())
         key = base
         suffix = 2
         while key in existing_keys:
@@ -302,7 +301,6 @@ class InstrumentController:
             key = f"{base}_{suffix}"
             suffix += 1
         register_custom(key, transp, name, name)
-        _rebuild_transp_map()
         # Persist for next session. Strict load: if the existing file can't be
         # read right now, keep the instrument for this session only rather
         # than rewriting the file from an empty list.

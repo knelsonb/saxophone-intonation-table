@@ -15,7 +15,9 @@ values an octave off from current ones; the sounding pitch is unaffected.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
+from types import MappingProxyType
 
 from sax_atomic import atomic_write_json
 from sax_paths import AppPaths
@@ -166,15 +168,32 @@ def instruments_in(family_key: str) -> list[tuple[str, str, str]]:
     return []
 
 
-def transp_map() -> dict[str, int]:
-    """Flat dict of {instrument_key: transp_semitones}, including customs."""
+# transp_map() is read on every detected note, so it is built once per
+# custom-instrument list. register_custom rebinds _CUSTOMS to a new list, which
+# makes the identity of that list the cache key: registering (or a test
+# swapping the list) invalidates the cache with no separate bookkeeping.
+_transp_cache: tuple[list, Mapping[str, int]] | None = None
+
+
+def transp_map() -> Mapping[str, int]:
+    """Read-only {instrument_key: transp_semitones}, including customs.
+
+    Always reflects the instruments registered so far; callers read it at use
+    time rather than keeping a copy, so a custom instrument added mid-session
+    is seen everywhere."""
+    global _transp_cache
+    cached = _transp_cache
+    if cached is not None and cached[0] is _CUSTOMS:
+        return cached[1]
     m: dict[str, int] = {}
     for (_, _de, _en, instrs) in _FAMILIES:
         for (key, transp, _d, _e) in instrs:
             m[key] = transp
     for (key, transp, _d, _e) in _CUSTOMS:
         m[key] = transp
-    return m
+    view = MappingProxyType(m)
+    _transp_cache = (_CUSTOMS, view)
+    return view
 
 
 def display_name(instrument_key: str, lang: str = 'en') -> str:

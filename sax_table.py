@@ -219,12 +219,9 @@ class TableController:
         its octave) we pad one column above so the C a half-step higher
         is visible.  Extra context octaves beyond that are configurable
         via cfg.matrix_extra_octaves."""
-        # Imported lazily to keep this module's import-time graph
-        # decoupled from sax_intonation_gui's heavyweight imports.
-        from sax_intonation_gui import TRANSP_MAP
         instrument = self._get_instrument_key()
         display = self._get_display_mode()
-        transp = TRANSP_MAP.get(instrument, 0)
+        transp = sax_instruments.transp_map().get(instrument, 0)
         lo_f, hi_f = sax_instruments.fingered_range(instrument)
         if display == 'griff':
             lo_midi, hi_midi = lo_f, hi_f
@@ -298,11 +295,10 @@ class TableController:
     # Single-column body
     # -------------------------------------------------------------------------
     def _refresh_single(self) -> None:
-        from sax_intonation_gui import TRANSP_MAP
         w = self._w
         instrument = self._get_instrument_key()
         display = self._get_display_mode()
-        transp = TRANSP_MAP.get(instrument, 0)
+        transp = sax_instruments.transp_map().get(instrument, 0)
         disp_griff = (display == 'griff')
 
         if disp_griff:
@@ -399,11 +395,10 @@ class TableController:
     # Matrix body
     # -------------------------------------------------------------------------
     def _refresh_matrix(self) -> None:
-        from sax_intonation_gui import TRANSP_MAP
         w = self._w
         instrument = self._get_instrument_key()
         display = self._get_display_mode()
-        transp = TRANSP_MAP.get(instrument, 0)
+        transp = sax_instruments.transp_map().get(instrument, 0)
         disp_griff = (display == 'griff')
         lo_f, hi_f = sax_instruments.fingered_range(instrument)
         # Use the span cached by configure_for_mode so the cell layout and

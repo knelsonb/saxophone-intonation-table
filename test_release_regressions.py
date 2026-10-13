@@ -240,6 +240,18 @@ def test_catalog_transpositions(key, transp):
     assert sax_instruments.transp_map()[key] == transp
 
 
+def test_transp_map_sees_a_custom_registered_after_first_use(monkeypatch):
+    # The window, table and exports all read transp_map() at use time; a
+    # custom instrument added mid-session must reach every one of them.
+    import sax_instruments
+    monkeypatch.setattr(sax_instruments, "_CUSTOMS", [])
+    assert "custom_mezzo" not in sax_instruments.transp_map()
+    sax_instruments.register_custom("custom_mezzo", -7, "Mezzo", "Mezzo")
+    assert sax_instruments.transp_map()["custom_mezzo"] == -7
+    with pytest.raises(TypeError):
+        sax_instruments.transp_map()["eb_alto"] = 0     # read-only: shared cache
+
+
 @pytest.mark.parametrize("key, lowest_sounding", [
     ("double_bass", 28),       # E1, open low string
     ("bass_guitar", 28),       # E1
