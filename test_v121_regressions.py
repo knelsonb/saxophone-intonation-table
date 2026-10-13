@@ -409,3 +409,100 @@ def test_window_restores_saved_drone_settings(tmp_path):
     assert out["volume"] == 0.0 and out["slider"] == 0
     assert out["semitones"] == -3
     assert out["voice"] == "cello" and out["setup_voice"] == "cello"
+
+
+# ---------------------------------------------------------------------------
+# 1.5  CSV formula injection
+# ---------------------------------------------------------------------------
+import csv  # noqa: E402
+
+_HOSTILE = {
+    "label": '=HYPERLINK("http://x","y")',
+    "maker": "+cmd|' /C calc'!A0",
+    "model": "@SUM(A1:A2)",
+}
+
+
+def _read_rows(path: Path) -> list[dict]:
+    with path.open(encoding="utf-8", newline="") as f:
+        return list(csv.DictReader(f))
+
+
+def _hostile_log() -> MeasurementLog:
+    log = MeasurementLog()
+    log.start_run(instrument="eb_alto", a4_hz=440.0, **_HOSTILE)
+    log.add_measurement(69, 78, -3.25, 439.2)
+    return log
+
+
+def test_raw_export_neutralises_text_cells(tmp_path):
+    out = tmp_path / "raw.csv"
+    _hostile_log().export_csv(out, mode="raw")
+    row = _read_rows(out)[0]
+    assert row["nickname"] == "'" + _HOSTILE["label"]
+    assert row["maker"] == "'" + _HOSTILE["maker"]
+    assert row["model"] == "'" + _HOSTILE["model"]
+    # Numbers stay numbers: a negative cents value is not a formula.
+    assert row["cents"] == "-3.250"
+    assert row["instrument"] == "eb_alto"
+
+
+@pytest.mark.parametrize("mode,column", [
+    ("per_run_note", "nickname"), ("per_run_note", "maker"),
+    ("per_instrument_note", "nicknames"), ("per_nickname_note", "nickname"),
+])
+def test_aggregate_exports_neutralise_text_cells(tmp_path, mode, column):
+    out = tmp_path / f"{mode}.csv"
+    _hostile_log().export_csv(out, mode=mode)
+    cell = _read_rows(out)[0][column]
+    assert cell.startswith("'"), f"{mode}.{column} exported as {cell!r}"
+
+
+@pytest.mark.parametrize("value", [
+    "=1+1", "+1", "-1", "@x", "\t=1", "\r=1", "'=1", "''=1",
+])
+def test_csv_safe_round_trips(value):
+    from sax_intonation_log import _csv_import_text, _csv_safe
+    escaped = _csv_safe(value)
+    assert escaped.startswith("'")
+    # Import strips control characters, so compare against that form.
+    assert _csv_import_text(escaped) == value.replace("\t", "").replace("\r", "")
+
+
+def test_csv_safe_leaves_plain_text_alone():
+    from sax_intonation_log import _csv_import_text, _csv_safe
+    for value in ("MarkVI", "'quoted", "2026-10-13T10:00:00", ""):
+        assert _csv_safe(value) == value
+        assert _csv_import_text(value) == value
+
+
+def test_export_import_export_is_stable_and_safe(tmp_path):
+    first = tmp_path / "first.csv"
+    _hostile_log().export_csv(first, mode="raw")
+    reloaded = MeasurementLog()
+    runs, rows, skipped = reloaded.import_raw_csv(first)
+    assert (runs, rows, skipped) == (1, 1, 0)
+    run = reloaded.runs()[0]
+    assert (run.label, run.maker, run.model) == (
+        _HOSTILE["label"], _HOSTILE["maker"], _HOSTILE["model"])
+    second = tmp_path / "second.csv"
+    reloaded.export_csv(second, mode="raw")
+    assert second.read_text(encoding="utf-8") == first.read_text(encoding="utf-8")
+
+
+def test_import_strips_control_characters(tmp_path):
+    header = MeasurementLog.RAW_CSV_HEADER
+    row = ["2026-10-13T10:00:00", "abc123", "2026-10-13T10:00:00", "eb_alto",
+           "=evil\x07\x1b[31m", "440.00", "69", "A4", "78", "F#5", "1.000",
+           "440.250", "Sel\x00mer", "Mark\x85VI"]
+    path = tmp_path / "in.csv"
+    with path.open("w", encoding="utf-8", newline="") as f:
+        csv.writer(f).writerows([header, row])
+    log = MeasurementLog()
+    assert log.import_raw_csv(path)[:2] == (1, 1)
+    run = log.runs()[0]
+    assert run.label == "=evil[31m"
+    assert (run.maker, run.model) == ("Selmer", "MarkVI")
+    out = tmp_path / "out.csv"
+    log.export_csv(out, mode="raw")
+    assert _read_rows(out)[0]["nickname"] == "'=evil[31m"

@@ -32,6 +32,7 @@ import datetime
 import io
 import json
 import math
+import re
 import threading
 import uuid
 from dataclasses import asdict, dataclass, replace
@@ -81,6 +82,36 @@ class Measurement:
 # ---------------------------------------------------------------------------
 # Log
 # ---------------------------------------------------------------------------
+
+# A spreadsheet that opens a CSV runs any cell starting with one of these as
+# a formula (=HYPERLINK(...), +cmd|..., @SUM(...)); TAB and CR are on the list
+# because some importers strip them and then see the next character.
+_FORMULA_TRIGGERS = ("=", "+", "-", "@", "\t", "\r")
+_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
+def _needs_quote_prefix(text: str) -> bool:
+    """True when ``text`` starts with a formula trigger, possibly behind
+    quote characters. Values that already start with quotes are covered too,
+    so the prefix can be removed again on import without ambiguity."""
+    return text.lstrip("'").startswith(_FORMULA_TRIGGERS)
+
+
+def _csv_safe(value) -> str:
+    """Text cell for CSV export: prefix a single quote when a spreadsheet
+    would otherwise evaluate it. Numeric columns are written unchanged."""
+    text = "" if value is None else str(value)
+    return "'" + text if _needs_quote_prefix(text) else text
+
+
+def _csv_import_text(value: str) -> str:
+    """Undo _csv_safe and drop control characters from an imported text
+    cell, so an export -> import -> export cycle is stable and a crafted
+    file cannot smuggle control characters into the log."""
+    if value.startswith("'") and _needs_quote_prefix(value[1:]):
+        value = value[1:]
+    return _CONTROL_CHARS.sub("", value)
+
 
 def _read_csv_text(path: Path) -> str:
     """Decode an import file. UTF-8 (with or without the BOM Excel adds) is
@@ -395,6 +426,11 @@ class MeasurementLog:
                     (timestamp, run_id, run_started_at, instrument, nickname,
                      a4_hz_s, midi_sounding_s, _sounding, midi_fingered_s,
                      _fingered, cents_s, freq_s, maker, model) = row
+                (timestamp, run_id, run_started_at, instrument, nickname,
+                 maker, model) = (
+                    _csv_import_text(v) for v in (
+                        timestamp, run_id, run_started_at, instrument,
+                        nickname, maker, model))
                 if not run_id or run_id in existing_runs:
                     skipped += 1
                     continue
@@ -559,16 +595,16 @@ def _write_raw(w, measurements: list[Measurement],
     for m in measurements:
         run = runs.get(m.run_id)
         w.writerow([
-            m.timestamp, m.run_id,
-            run.started_at if run else "",
-            m.instrument,
-            run.label if run else "",
+            _csv_safe(m.timestamp), _csv_safe(m.run_id),
+            _csv_safe(run.started_at if run else ""),
+            _csv_safe(m.instrument),
+            _csv_safe(run.label if run else ""),
             f"{m.a4_hz:.2f}",
             m.midi_sounding, midi_note_name(m.midi_sounding),
             m.midi_fingered, midi_note_name(m.midi_fingered),
             f"{m.cents:.3f}", f"{m.freq_hz:.3f}",
-            run.maker if run else "",
-            run.model if run else "",
+            _csv_safe(run.maker if run else ""),
+            _csv_safe(run.model if run else ""),
         ])
         n += 1
     return n
@@ -598,17 +634,17 @@ def _write_per_run_note(w, measurements: list[Measurement],
         run = runs.get(run_id)
         rep = repr_measurement[(run_id, midi)]
         w.writerow([
-            run_id,
-            run.started_at if run else "",
-            rep.instrument,
-            run.label if run else "",
+            _csv_safe(run_id),
+            _csv_safe(run.started_at if run else ""),
+            _csv_safe(rep.instrument),
+            _csv_safe(run.label if run else ""),
             f"{rep.a4_hz:.2f}",
             midi, midi_note_name(midi),
             midi_note_name(rep.midi_fingered),
             len(vals),
             f"{mean:.3f}", f"{std:.3f}", f"{mn:.3f}", f"{mx:.3f}",
-            run.maker if run else "",
-            run.model if run else "",
+            _csv_safe(run.maker if run else ""),
+            _csv_safe(run.model if run else ""),
         ])
         n_rows += 1
     return n_rows
@@ -637,8 +673,8 @@ def _write_per_instrument_note(w, measurements: list[Measurement],
             if rid in runs and runs[rid].label
         })
         w.writerow([
-            instrument,
-            ";".join(nick_set),
+            _csv_safe(instrument),
+            _csv_safe(";".join(nick_set)),
             midi, midi_note_name(midi),
             midi_note_name(fingered[(instrument, midi)]),
             len(runs_seen[(instrument, midi)]),
@@ -673,8 +709,8 @@ def _write_per_nickname_note(w, measurements: list[Measurement],
     for (nick, midi), vals in sorted(buckets.items()):
         mean, std, mn, mx = _agg_stats(vals)
         w.writerow([
-            nick or "(unnamed)",
-            ";".join(sorted(instrument_seen[(nick, midi)])),
+            _csv_safe(nick or "(unnamed)"),
+            _csv_safe(";".join(sorted(instrument_seen[(nick, midi)]))),
             midi, midi_note_name(midi),
             midi_note_name(fingered[(nick, midi)]),
             len(runs_seen[(nick, midi)]),
@@ -702,7 +738,7 @@ def _write_instrument_avg(w, measurements: list[Measurement],
     for midi, vals in sorted(buckets.items()):
         mean, std, mn, mx = _agg_stats(vals)
         w.writerow([
-            instrument, midi,
+            _csv_safe(instrument), midi,
             midi_note_name(midi),
             midi_note_name(fingered[midi]),
             len(runs_seen[midi]),
@@ -731,7 +767,7 @@ def _write_overall(w, measurements: list[Measurement]) -> int:
         mean, std, mn, mx = _agg_stats(vals)
         w.writerow([
             midi, midi_note_name(midi),
-            ";".join(sorted(instruments_seen[midi])),
+            _csv_safe(";".join(sorted(instruments_seen[midi]))),
             len(runs_seen[midi]),
             len(vals),
             f"{mean:.3f}", f"{std:.3f}", f"{mn:.3f}", f"{mx:.3f}",
