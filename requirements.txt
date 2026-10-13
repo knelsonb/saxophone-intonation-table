@@ -1,5 +1,5 @@
-# Runtime dependencies. Compatible-release pins keep CI builds reproducible
-# without freezing patch versions.
+# Runtime dependencies. Compatible-release ranges accept newer minor and patch
+# releases, so two builds of the same tag can resolve different versions.
 PyQt6~=6.7
 numpy~=2.0
 sounddevice~=0.5

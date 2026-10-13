@@ -48,6 +48,11 @@ a = Analysis(
     binaries=sd_binaries + tsf_binaries,
     datas=[
         (str(HERE / 'assets'), 'assets'),
+        # Licence notices travel inside the binary; the Windows release is a
+        # bare .exe with nothing alongside it.
+        (str(HERE / 'LICENSE'), '.'),
+        (str(HERE / 'NOTICE.md'), '.'),
+        (str(HERE / 'THIRD_PARTY_NOTICES.md'), '.'),
         *sd_datas,
     ],
     hiddenimports=[
