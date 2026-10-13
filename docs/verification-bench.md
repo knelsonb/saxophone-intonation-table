@@ -27,8 +27,7 @@ detection passes; they are not a measure of live latency in milliseconds.
 runs the full pytest suite, this bench included, before it builds any binary;
 its test job installs `tinysoundfont`, so the SF2 drone sections run there too.
 
-Related: `docs/parity-sprint-plan.md` (parent plan) · `docs/v1.1-hardening.md` (the
-hardening goal this grew out of) · `docs/response-modes.md` (engine filter presets).
+Related: `docs/response-modes.md` (engine filter presets).
 
 ---
 

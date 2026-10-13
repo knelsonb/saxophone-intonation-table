@@ -1,11 +1,9 @@
 """i18n key-coverage / de-en parity net for sax_i18n.STRINGS.
 
-The v1.0 acceptance criterion (docs/parity-sprint-plan.md §"Sprint 5") is "no
-English-only strings across the new features" — every translation key must exist
-in BOTH languages with a non-empty value. This locks that invariant so any later
-string addition (e.g. the SETUP-parity controls) that forgets one language, or
-leaves it blank, fails loudly instead of silently shipping a half-translated
-control. Pure Python; runs under system python.
+Every translation key must exist in BOTH languages with a non-empty value, so
+no control ships English-only. This locks that invariant: any later string
+addition that forgets one language, or leaves it blank, fails loudly instead of
+silently shipping a half-translated control. Pure Python; runs under system python.
 """
 from __future__ import annotations
 

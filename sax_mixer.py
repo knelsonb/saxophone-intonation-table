@@ -1,14 +1,14 @@
 """
-Pull-based software mixer for the audio-output foundation (Sprint 1).
+Pull-based software mixer for the audio-output foundation.
 
 Three of the four parity features (metronome, drone, pitch pipes) and the
 tape deck's playback are *output* consumers. Rather than give each its own
 stream, the engine owns ONE output path and a single numpy mixer that sums
 the per-block contributions of however many sources are currently sounding.
-Building the output path once, correctly, is the whole point of Sprint 1 —
-see docs/parity-sprint-plan.md §2.
+Building the output path once keeps every source on one sample clock, so
+their timing cannot drift apart.
 
-Design contract (locked in the parity sprint, "Gandalf's contract"):
+Design contract:
 
 * **Sample-accurate, drift budget zero.** The mixer owns a monotonic sample
   clock (``clock``) that advances by exactly ``frames`` on every ``render``.
