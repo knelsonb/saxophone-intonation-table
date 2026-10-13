@@ -1580,6 +1580,11 @@ class AudioPickerDialog(QDialog):
         # also disconnect the signal in closeEvent as a second line of
         # defence.
         self._closing_event: threading.Event = threading.Event()
+        # True while this dialog holds a WaitCursor override. Released in
+        # _restore_cursor, which every exit path calls: a dialog closed
+        # before the sr-reopen worker reports back must not leave the
+        # application stuck on the busy cursor.
+        self._cursor_overridden = False
         self._sr_reopen_done.connect(
             self._on_sr_reopen_done, Qt.ConnectionType.QueuedConnection)
         self.setWindowTitle(self._t('audio_picker_title'))
@@ -1707,7 +1712,9 @@ class AudioPickerDialog(QDialog):
         # Block the GUI from issuing more re-opens until this one lands.
         self._sr_switch_in_flight = True
         self._sr_combo.setEnabled(False)
-        QGuiApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        if not self._cursor_overridden:
+            QGuiApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            self._cursor_overridden = True
 
         # v0.5.7.3: capture the event by closure (not self.) so the
         # worker can check it even if the dialog is mid-teardown. The
@@ -1741,10 +1748,7 @@ class AudioPickerDialog(QDialog):
         """Runs on the GUI thread (QueuedConnection). Re-enables the
         combo, surfaces the inline error on UNSUPPORTED_RATE, and
         reverts the selection if the new pref was refused."""
-        try:
-            QGuiApplication.restoreOverrideCursor()
-        except Exception:
-            pass
+        self._restore_cursor()
         failed_rate = (
             self._engine.state == AudioEngineState.FAILED
             and self._engine.last_error == AudioEngineError.UNSUPPORTED_RATE
@@ -1799,14 +1803,27 @@ class AudioPickerDialog(QDialog):
         except (TypeError, RuntimeError):
             # Already disconnected or signal/slot already torn down.
             pass
+        self._restore_cursor()
         super().closeEvent(event)
 
     def done(self, result: int) -> None:
         """``accept()`` / ``reject()`` route through here, so set the
         closing flag here too. closeEvent isn't always called on
-        programmatic accept/reject paths."""
+        programmatic accept/reject paths. The worker's completion signal is
+        skipped once closing, so the cursor is released here."""
         self._closing_event.set()
+        self._restore_cursor()
         super().done(result)
+
+    def _restore_cursor(self) -> None:
+        """Pop this dialog's WaitCursor override, once."""
+        if not self._cursor_overridden:
+            return
+        self._cursor_overridden = False
+        try:
+            QGuiApplication.restoreOverrideCursor()
+        except Exception:
+            pass
 
     def _on_toggle_show_all(self, checked: bool) -> None:
         self._cfg.show_all_host_apis = bool(checked)
@@ -4723,8 +4740,12 @@ class MainWindow(QMainWindow):
         re-translation alike. Shared by the toolbar Response combo and the
         SETUP-tab response combo so the two never drift in contents."""
         cur = combo.currentData()
-        if cur is None:
-            cur = getattr(self._cfg, 'filter_mode', FILTER_MODE_DEFAULT)
+        if cur not in _FILTER_PRESETS:
+            # Seed from the engine: it ignores an unknown mode, so it holds
+            # the mode actually in use.
+            cur = getattr(self._engine, 'filter_mode', FILTER_MODE_DEFAULT)
+        if cur not in _FILTER_PRESETS:
+            cur = FILTER_MODE_DEFAULT
         combo.blockSignals(True)
         combo.clear()
         combo.addItem(self._t('filter_fast'),   'fast')
@@ -4885,7 +4906,12 @@ class MainWindow(QMainWindow):
         btn_en = make_btn('EN', 'en')
 
         def switch(target):
+            # A checkable button unchecks itself when clicked while active,
+            # so re-sync both buttons on every click, including the no-op
+            # click on the language already in use.
             if self.lang == target:
+                btn_de.setChecked(self.lang == 'de')
+                btn_en.setChecked(self.lang == 'en')
                 return
             # Flip via the main window's combo so all subscribers (the main
             # toolbar, labels, etc.) update too.

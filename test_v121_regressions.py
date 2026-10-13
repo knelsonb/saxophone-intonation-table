@@ -763,3 +763,80 @@ def test_diagnostics_timers_run_only_while_visible(tmp_path):
     assert out["other_tab"] == [False, False]
     assert out["back"] == [True, True]
     assert out["off"] == [False, False]
+
+
+# ---------------------------------------------------------------------------
+# 1.11  Picker cursor, language toggle, unknown filter mode
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("raw,expected", [
+    ("fast", "fast"), ("SLOW", "slow"), ("turbo", "normal"), (None, "normal"),
+    (3, "normal"),
+])
+def test_filter_mode_coercion(isolated_config, raw, expected):
+    isolated_config.write_text(json.dumps({"filter_mode": raw}),
+                               encoding="utf-8")
+    assert sax_config.load_config().filter_mode == expected
+
+
+def test_filter_mode_values_match_engine_presets():
+    from sax_audio_engine import FILTER_PRESETS
+    assert sax_config.FILTER_MODE_VALUES == set(FILTER_PRESETS)
+
+
+@requires_qt
+def test_response_combo_shows_the_engine_mode(tmp_path):
+    out = _run_gui(tmp_path, '''
+        from PyQt6.QtWidgets import QComboBox
+        out["engine"] = win._engine.filter_mode
+        out["toolbar"] = win._filter_combo.currentData()
+        out["setup"] = win._setup_filter_combo.currentData()
+        # Even with a bad value in memory, a freshly filled combo shows the
+        # mode the engine runs.
+        win._cfg.filter_mode = "turbo"
+        combo = QComboBox()
+        win._populate_filter_combo(combo)
+        out["fresh"] = combo.currentData()
+    ''', config={"filter_mode": "turbo"})
+    assert out["engine"] == "normal"
+    assert out["toolbar"] == out["setup"] == out["fresh"] == "normal"
+
+
+@requires_qt
+def test_clicking_active_language_keeps_it_checked(tmp_path):
+    out = _run_gui(tmp_path, '''
+        from PyQt6.QtWidgets import QDialog, QPushButton, QVBoxLayout
+        dlg = QDialog(win)
+        win._add_dialog_lang_toggle(dlg, QVBoxLayout(dlg))
+        btns = {b.text(): b for b in dlg.findChildren(QPushButton)}
+        btns[win.lang.upper()].click()
+        out["lang"] = win.lang
+        out["checked"] = sorted(t for t, b in btns.items() if b.isChecked())
+    ''', config={"last_lang": "en"})
+    assert out["lang"] == "en"
+    assert out["checked"] == ["EN"]
+
+
+@requires_qt
+def test_picker_restores_wait_cursor_when_closed_mid_reopen(tmp_path):
+    out = _run_gui(tmp_path, '''
+        import threading
+        from PyQt6.QtGui import QGuiApplication
+        from sax_audio_engine import DeviceInfo
+        release = threading.Event()
+        dev = DeviceInfo(index=0, name="Mic", host_api="ALSA",
+                         max_input_channels=1, default_samplerate=48000.0)
+        win._engine.get_active_device = lambda: dev
+        win._engine.stop = lambda: None
+        win._engine.open_device = lambda *a, **k: release.wait(10)
+        dlg = G.AudioPickerDialog(win, win._t, win._engine, win._cfg, None)
+        idx = dlg._sr_combo.findData("48000")
+        dlg._sr_combo.setCurrentIndex(idx)
+        app.processEvents()
+        out["busy_while_reopening"] = QGuiApplication.overrideCursor() is not None
+        dlg.reject()
+        app.processEvents()
+        out["after_close"] = QGuiApplication.overrideCursor() is not None
+        release.set()
+    ''')
+    assert out["busy_while_reopening"]
+    assert not out["after_close"], "wait cursor left on after the dialog closed"

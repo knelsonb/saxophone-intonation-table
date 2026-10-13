@@ -303,6 +303,19 @@ def _as_time_sig(v) -> str:
     return "4/4"
 
 
+# Pitch-detection response presets. Must match FILTER_PRESETS in
+# sax_audio_engine (test_v121_regressions checks); kept here so loading the
+# config does not import the audio engine.
+FILTER_MODE_VALUES = frozenset(("fast", "normal", "slow"))
+
+
+def _as_filter_mode(v) -> str:
+    """Coerce the saved response preset into FILTER_MODE_VALUES. Anything
+    else degrades to 'normal', the mode the engine would use anyway."""
+    s = "" if v is None else str(v).strip().lower()
+    return s if s in FILTER_MODE_VALUES else "normal"
+
+
 DRONE_VOICE_DEFAULT = "organ"
 
 
@@ -371,7 +384,7 @@ def load_config() -> AppConfig:
         matrix_extra_octaves=max(0, min(4, _as_int(data.get("matrix_extra_octaves"), 0))),
         layout_mode_preference=_as_str(
             data.get("layout_mode_preference"), "auto"),
-        filter_mode=_as_str(data.get("filter_mode"), "normal"),
+        filter_mode=_as_filter_mode(data.get("filter_mode")),
         mic_gain_db=max(-24.0, min(24.0, _as_float(data.get("mic_gain_db"), 0.0))),
         min_n_visible=max(0, _as_int(data.get("min_n_visible"), 5)),
         show_diagnostics=_as_bool(data.get("show_diagnostics"), False),
