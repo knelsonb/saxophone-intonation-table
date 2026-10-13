@@ -219,8 +219,7 @@ class TableController:
         else:
             lo_midi, hi_midi = lo_f + transp, hi_f + transp
         # Played-note expansion (only when OOR is allowed).
-        with self._w._lock:
-            played = [m for m, st in self._get_stats().items() if st.n > 0]
+        played = [m for m, st in self._get_stats().items() if st.n > 0]
         if played and self._cfg.allow_out_of_range:
             if display == 'griff':
                 played = [m - transp for m in played]
@@ -300,8 +299,7 @@ class TableController:
             hdrs + [self._t('col_mean'), self._t('col_std'),
                     self._t('col_n'), self._t('col_tendency')])
 
-        with w._lock:
-            raw_items = sorted(self._get_stats().items())
+        raw_items = sorted(self._get_stats().items())
 
         # Min-N filter: rows with 1..min_n-1 measurements are below
         # threshold and hidden as noise. N=0 seeded blanks still show so
@@ -422,8 +420,7 @@ class TableController:
         self._table.setVerticalHeaderLabels(
             [c.split('/')[0] for c in CHROMA])
 
-        with w._lock:
-            stats_by_midi = dict(self._get_stats())
+        stats_by_midi = dict(self._get_stats())
         active_midi = self._active_midi_now()
         a4 = self._engine.a4
 

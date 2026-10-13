@@ -320,15 +320,11 @@ class InstrumentController:
 
     # ── Autotune ─────────────────────────────────────────────────────────────
     def on_autotune(self) -> None:
-        # The autotune flow reads the live stats dict via the getter; the
-        # lock that guards it lives on MainWindow because the audio
-        # callback's _on_note path holds it too. Reach back for the lock
-        # via the documented attribute — the controller does not own a
-        # parallel lock.
+        # The live stats dict comes through the getter; like every reader
+        # of it, this runs on the Qt thread.
         w = self._w
         stats = self._get_stats()
-        with w._lock:
-            note_stats = [(st.mean, st.n) for st in stats.values()]
+        note_stats = [(st.mean, st.n) for st in stats.values()]
         # Count progress so the blocker is actionable. ``qualified`` = notes
         # meeting the sample threshold; ``touched`` = distinct notes that have
         # ANY samples. Both are shown to the user when there isn't enough data.
@@ -370,7 +366,6 @@ class InstrumentController:
             # via on_a4_changed). This matches the v0.5.x behaviour
             # before the extraction.
             self._set_a4(float(a4_clamped))
-            with w._lock:
-                stats.clear()
+            stats.clear()
             if self._on_a4_changed is not None:
                 self._on_a4_changed()

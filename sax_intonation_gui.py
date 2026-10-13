@@ -26,7 +26,6 @@ if __name__ == '__main__':
 import csv
 import datetime
 import math
-import threading
 from pathlib import Path
 
 from PyQt6.QtCore import QLocale, Qt, QTimer
@@ -150,8 +149,10 @@ class MainWindow(QMainWindow):
         # affects fresh installs and first-launches.
         self.instrument = 'bb_tenor'
         self.display    = 'griff'
+        # Per-note statistics behind the table. Main-thread only: the engine's
+        # note_detected signal is delivered queued, so _on_note runs on the
+        # Qt thread like every other reader and writer, and needs no lock.
         self.stats: dict[int, NoteStats] = {}
-        self._lock = threading.Lock()
         self._recording = True   # Aufnahme läuft beim Start
         self._active_midi: int | None = None
         self._active_midi_at: datetime.datetime | None = None
@@ -2237,13 +2238,11 @@ class MainWindow(QMainWindow):
             midi_fingered = midi_kl - transp
             if not (lo_f <= midi_fingered <= hi_f):
                 return
-        with self._lock:
-            if midi_kl not in self.stats:
-                self.stats[midi_kl] = NoteStats()
-            self.stats[midi_kl].add(cents, freq)
-        # Bump the diagnostics counter outside the lock — single thread
-        # writes it, single thread reads via the timer; integer add is
-        # atomic enough for a display-only counter.
+        if midi_kl not in self.stats:
+            self.stats[midi_kl] = NoteStats()
+        self.stats[midi_kl].add(cents, freq)
+        # Diagnostics counter: every emitted note, including ones the table
+        # later discards.
         self._notes_count += 1
         # Per-measurement log. Instrument/A4 are read off the active run
         # inside the log, not from `self`, so a callback firing during a UI
@@ -2384,8 +2383,8 @@ class MainWindow(QMainWindow):
 
     def _on_a4_changed_external(self) -> None:
         """Called by InstrumentController after the autotune flow has
-        applied a new A4. The autotune body already cleared self.stats
-        under the lock; here we refresh the table so the new baseline
+        applied a new A4. The autotune body already cleared self.stats;
+        here we refresh the table so the new baseline
         paints. The drone and pitch pipes were retuned by _instr_set_a4."""
         a4 = float(self._engine.a4)
         self._seed_expected_notes()
@@ -2428,11 +2427,10 @@ class MainWindow(QMainWindow):
         preserved."""
         transp = transp_map().get(self.instrument, 0)
         lo, hi = sax_instruments.fingered_range(self.instrument)
-        with self._lock:
-            for fingered in range(lo, hi + 1):
-                sounding = fingered + transp
-                if sounding in SAX_MIDI and sounding not in self.stats:
-                    self.stats[sounding] = NoteStats()
+        for fingered in range(lo, hi + 1):
+            sounding = fingered + transp
+            if sounding in SAX_MIDI and sounding not in self.stats:
+                self.stats[sounding] = NoteStats()
 
     def _on_oor_toggled(self, checked: bool) -> None:
         """Persist the choice and refresh the table so the matrix can
@@ -2728,22 +2726,17 @@ class MainWindow(QMainWindow):
         # so the wrong-instrument counter resets too.
         self._oor_count = 0
         self._oor_banner_shown = False
-        # Wave-1 bug #5: A4-change race. The audio callback can fire
-        # _on_note between the moment we build `remapped` and the moment
-        # we assign it to self.stats, dropping a measurement into the
-        # old dict that's about to be discarded — or worse, into a
-        # half-built dict. pause_emissions() tells the engine to drop
-        # incoming detections while we rebuild; we hold self._lock
-        # across the swap so any future emission seeing the new stats
-        # never partially-overlaps with the rebuild.
+        # _on_note runs on this (Qt) thread, so no reading can land in the
+        # middle of the rebuild below. pause_emissions() stops the engine
+        # emitting while the reference changes; a reading it queued before
+        # the pause still arrives afterwards, measured against the old A4.
         self._engine.pause_emissions()
         try:
             self._push_a4(new_a4)
             # Re-derive from the frequencies behind the CURRENT table only.
             # The log also holds earlier sessions, other instruments, imports
             # and notes the user reset or deleted; none of those belong here.
-            with self._lock:
-                table_freqs = [f for st in self.stats.values() for f in st.freqs]
+            table_freqs = [f for st in self.stats.values() for f in st.freqs]
             remapped: dict[int, NoteStats] = {}
             for f in table_freqs:
                 # Non-positive / non-finite freqs carry no tuning information
@@ -2754,8 +2747,7 @@ class MainWindow(QMainWindow):
                 if midi_round in SAX_MIDI:
                     ns = remapped.setdefault(midi_round, NoteStats())
                     ns.add(cents, f)
-            with self._lock:
-                self.stats = remapped
+            self.stats = remapped
         finally:
             self._engine.resume_emissions()
         # Re-seed expected blank rows on top of the remapped data so the
@@ -2831,8 +2823,7 @@ class MainWindow(QMainWindow):
             else:
                 midi_kl = midi_visible
             # Only offer the action if this cell actually holds played data.
-            with self._lock:
-                st = self.stats.get(midi_kl)
+            st = self.stats.get(midi_kl)
             if st is None or st.n == 0:
                 return
         else:
@@ -2840,9 +2831,8 @@ class MainWindow(QMainWindow):
             # min-N filter (sax_table hides rows with 1..min_n-1 readings), so
             # index the same filtered list or the row maps to another note.
             min_n = max(0, int(getattr(self._cfg, 'min_n_visible', 0)))
-            with self._lock:
-                keys = sorted(k for k, s in self.stats.items()
-                              if s.n == 0 or s.n >= min_n)
+            keys = sorted(k for k, s in self.stats.items()
+                          if s.n == 0 or s.n >= min_n)
             if row >= len(keys):
                 return
             midi_kl = keys[row]
@@ -2861,8 +2851,7 @@ class MainWindow(QMainWindow):
                 self._t('ctx_discard_confirm', note=note_str),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
             ) == QMessageBox.StandardButton.Yes:
-                with self._lock:
-                    self.stats.pop(midi_kl, None)
+                self.stats.pop(midi_kl, None)
                 self._refresh_table()
 
     # ── Reset ─────────────────────────────────────────────────────────────────
@@ -2871,8 +2860,7 @@ class MainWindow(QMainWindow):
             self, self._t('reset_title'), self._t('reset_msg'),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         ) == QMessageBox.StandardButton.Yes:
-            with self._lock:
-                self.stats.clear()
+            self.stats.clear()
             # Reset implies "I might be switching instruments" — clear the
             # cached maker/model so the next export re-prompts.
             self._instr_info_asked = False

@@ -182,8 +182,7 @@ def test_matrix_span_follows_display_and_played_notes(tmp_path):
         st = NoteStats()
         for _ in range(6):
             st.add(0.0, 55.0)
-        with win._lock:
-            win.stats[33] = st
+        win.stats[33] = st
         win._refresh_table()
         lo, hi = ctrl.painted_octave_span()
         out["played_live"] = list(ctrl._matrix_octave_range())
@@ -203,8 +202,7 @@ def test_matrix_span_follows_display_and_played_notes(tmp_path):
         st2 = NoteStats()
         for _ in range(6):
             st2.add(0.0, 146.8)
-        with win._lock:
-            win.stats[midi] = st2
+        win.stats[midi] = st2
         win._refresh_table()
         lo, _hi = ctrl.painted_octave_span()
         row, col = midi % 12, (midi // 12 - 1) - lo
@@ -573,9 +571,8 @@ def test_bar_delegate_and_table_use_shared_thresholds(tmp_path):
         st = NoteStats()
         for _ in range(5):
             st.add(5.4, 440.0)
-        with win._lock:
-            win.stats.clear()
-            win.stats[69] = st
+        win.stats.clear()
+        win.stats[69] = st
         win._refresh_table()
         out["mean_text"] = win._table.item(0, 2).text()
         out["mean_color"] = win._table.item(0, 2).foreground().color().name()

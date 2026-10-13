@@ -138,10 +138,9 @@ class ExportController:
                     n='N'),
             '-' * 62,
         ]
-        with w._lock:
-            # Rows seeded for the instrument range have n == 0 until played;
-            # exports list measured notes only.
-            items = sorted((k, st) for k, st in self._get_stats().items() if st.n > 0)
+        # Rows seeded for the instrument range have n == 0 until played;
+        # exports list measured notes only.
+        items = sorted((k, st) for k, st in self._get_stats().items() if st.n > 0)
         sr_now = w._engine_sample_rate()
         a4 = self._engine.a4
         for midi_kl, st in items:
@@ -210,10 +209,9 @@ class ExportController:
             self._t('pdf_created', dt=datetime.datetime.now().strftime('%d.%m.%Y %H:%M')), ts_sub))
         story.append(Spacer(1, 10*mm))
 
-        with w._lock:
-            # Rows seeded for the instrument range have n == 0 until played;
-            # exports list measured notes only.
-            items = sorted((k, st) for k, st in self._get_stats().items() if st.n > 0)
+        # Rows seeded for the instrument range have n == 0 until played;
+        # exports list measured notes only.
+        items = sorted((k, st) for k, st in self._get_stats().items() if st.n > 0)
 
         if not items:
             story.append(Paragraph(self._t('pdf_no_data'), styles['Normal']))
@@ -315,10 +313,9 @@ class ExportController:
 
     def export_chart(self) -> None:
         w = self._w
-        with w._lock:
-            # Rows seeded for the instrument range have n == 0 until played;
-            # exports list measured notes only.
-            items = sorted((k, st) for k, st in self._get_stats().items() if st.n > 0)
+        # Rows seeded for the instrument range have n == 0 until played;
+        # exports list measured notes only.
+        items = sorted((k, st) for k, st in self._get_stats().items() if st.n > 0)
 
         if not items:
             QMessageBox.information(w, self._t('export_title'),

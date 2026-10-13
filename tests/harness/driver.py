@@ -676,8 +676,7 @@ class AppDriver:
                 for c in range(t.columnCount())]
 
     def stats_total_n(self) -> int:
-        with self.win._lock:
-            return sum(s.n for s in self.win.stats.values())
+        return sum(s.n for s in self.win.stats.values())
 
     # =================================================================== tuner
     def tuner_reading(self) -> Reading:
