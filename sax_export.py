@@ -43,6 +43,7 @@ from PyQt6.QtWidgets import (
 )
 
 import sax_instruments
+from sax_theme import CLOSE_CENTS, IN_TUNE_CENTS
 from sax_intonation_log import MeasurementLog
 from sax_intonation_chart import render_intonation_chart
 from sax_i18n import STRINGS
@@ -102,11 +103,10 @@ class ExportController:
         if not path:
             return
         transp = TRANSP_MAP.get(instrument, 0)
-        instr_key = f'instr_long_{instrument}'
         lines = [
             self._t('txt_header'),
             '=' * 54,
-            self._t('txt_instr', name=self._t(instr_key)),
+            self._t('txt_instr', name=self._w._instr_label(instrument)),
         ]
         if maker:
             lines.append(self._t('txt_maker', maker=maker))
@@ -188,7 +188,7 @@ class ExportController:
                                   fontSize=11, textColor=colors.HexColor('#555'), spaceAfter=2)
 
         story.append(Paragraph(self._t('pdf_title'), ts_title))
-        story.append(Paragraph(self._t(f'instr_long_{instrument}'), ts_sub))
+        story.append(Paragraph(_xml_escape(self._w._instr_label(instrument)), ts_sub))
         if maker:
             story.append(Paragraph(self._t('pdf_maker', maker=_xml_escape(maker)), ts_sub))
         if model:
@@ -248,8 +248,8 @@ class ExportController:
                 ('BOTTOMPADDING',(0,0), (-1,-1), 4),
             ])
             for r, (_, st) in enumerate(items, 1):
-                c = (colors.HexColor('#1b5e20') if abs(st.mean) <= 5 else
-                     colors.HexColor('#e65100') if abs(st.mean) <= 12 else
+                c = (colors.HexColor('#1b5e20') if abs(st.mean) <= IN_TUNE_CENTS else
+                     colors.HexColor('#e65100') if abs(st.mean) <= CLOSE_CENTS else
                      colors.HexColor('#b71c1c'))
                 ts.add('TEXTCOLOR', (2,r), (2,r), c)
                 ts.add('FONTNAME',  (2,r), (2,r), 'Helvetica-Bold')
@@ -356,7 +356,7 @@ class ExportController:
             notes.append((display_name, st.mean, st.std, st.n, note_freq,
                           midi_gr, in_range))
 
-        instr_long = self._t(f'instr_long_{instrument}')
+        instr_long = self._w._instr_label(instrument)
         dt = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
         if maker or model:
             subtitle = self._t('chart_subtitle_id',

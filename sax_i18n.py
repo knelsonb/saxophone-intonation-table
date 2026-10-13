@@ -40,9 +40,9 @@ STRINGS = {
         'filter_fast':      'Schnell (Live-Spiel)',
         'filter_normal':    'Normal (Üben)',
         'filter_slow':      'Langsam (Einrichtung/Reparatur)',
-        'filter_tip':       'Tonhöhen-Glättung.\nSchnell: ~140 ms Reaktion, minimale Glättung — Rückmeldung beim Tonleiterspiel.\nNormal (Standard): ~230 ms Reaktion, Anstoßgeräusch unterdrückt — lange Töne stimmen.\nLangsam: ~460 ms Reaktion, tiefe Mittelung — Stimmung für Instrumenten-Einrichtung und Reparatur.\nAlle Modi schneiden Anblas-Chiff und Auslass-Pitch-Drift weg; Langsam schneidet am meisten.',
+        'filter_tip':       'Tonhöhen-Glättung.\nSchnell: ~190 ms bis zur ersten Anzeige, minimale Glättung — Rückmeldung beim Tonleiterspiel.\nNormal (Standard): ~330 ms bis zur ersten Anzeige, Anstoßgeräusch unterdrückt — lange Töne stimmen.\nLangsam: ~650 ms bis zur ersten Anzeige, tiefe Mittelung — Stimmung für Instrumenten-Einrichtung und Reparatur.\nAlle Modi schneiden Anblas-Chiff und Auslass-Pitch-Drift weg; Langsam schneidet am meisten.',
         'min_n_label':      'Mindest-Messungen pro Ton:',
-        'min_n_tip':        'Töne mit weniger als dieser Anzahl Messungen werden ausgeblendet.\nVerhindert, dass kurze Versehen die Tabelle füllen.',
+        'min_n_tip':        'Tabellenzeilen mit weniger als dieser Anzahl Messungen werden ausgeblendet.\nHält kurze Versehen aus der Tabelle; Exporte und Kammerton-Ermittlung nutzen alle gespielten Töne.',
         # Diagnose-Panel (Spektrogramm + Live-Werte)
         'show_diagnostics':     'Spektrumanalysator & Diagnose anzeigen',
         'show_diagnostics_tip': 'Blendet einen Live-Spektrumanalysator und ein Diagnose-Feld unter dem Stimmgerät ein.\nNützlich zum Beobachten von Obertönen und zur Fehlersuche.',
@@ -69,10 +69,11 @@ STRINGS = {
         'custom_dlg_title': 'Eigenes Instrument',
         'custom_dlg_info':  ('Ein eigenes Instrument hinzufügen. Die Transposition '
                               'ist die Differenz in Halbtönen vom gegriffenen C '
-                              'zum klingenden Ton (Bb-Tenor = -2, Eb-Alt = +3).'),
+                              'zum klingenden Ton, einschließlich Oktave (Bb-Sopran = -2, Eb-Alt = -9, Bb-Tenor = -14).'),
         'custom_lbl_name':  'Anzeigename:',
         'custom_lbl_transp':'Transposition (Halbtöne):',
         'custom_err_name':  'Bitte einen Namen angeben.',
+        'custom_err_chars': 'Der Name braucht mindestens einen Buchstaben oder eine Ziffer.',
         'welcome_title':    'Willkommen beim Intonations-Analysator',
         'welcome_info':     ('Beim Spielen werden Cent-Abweichungen erkannt und '
                               'pro Ton statistisch ausgewertet.\n\n'
@@ -162,7 +163,7 @@ STRINGS = {
         'table_title':   'Intonationstabelle',
         'table_summary': 'Intonationstabelle  –  {notes} Töne  |  {total} Messungen',
         'table_empty_hint': 'Intonationstabelle  –  spiel einen Ton, dann erscheinen hier Mittelwert und Standardabweichung pro Ton.',
-        'table_matrix_title': 'Intonationsmatrix  –  {played} von {total} Zählen gespielt',
+        'table_matrix_title': 'Intonationsmatrix  –  {played} von {total} Zellen gespielt',
         'matrix_oct_label':   'Okt {n}',
         'matrix_oct_rel_label': 'Okt {n:+d}',
         'matrix_oct_center':    'Okt 0 (Mitte)',
@@ -183,8 +184,8 @@ STRINGS = {
         'autotune_nodata':     'Bitte mindestens 3 Töne mit je ≥ 5 Messungen spielen,\nbevor der optimale Kammerton berechnet werden kann.',
         'autotune_result':     ('<b>Ergebnis der Kammertonanalyse</b><br><br>'
                                 'Töne ausgewertet: <b>{notes}</b> (je ≥ 5 Messungen)<br>'
-                                'Mittlere Abweichung (gewichtet): <b>{sign}{offset:.1f} ct</b><br>'
-                                'Arithm. Mittel (zur Kontrolle): {sign2}{mean:.1f} ct<br><br>'
+                                'Gewichteter Median der Abweichung: <b>{sign}{offset:.1f} ct</b><br>'
+                                'Gewichteter Mittelwert (zur Kontrolle): {sign2}{mean:.1f} ct<br><br>'
                                 'Aktueller Kammerton: <b>{current:.0f} Hz</b><br>'
                                 'Optimaler Kammerton: <b>{optimal:.2f} Hz</b>  →  gerundet <b>{rounded} Hz</b><br><br>'),
         'autotune_clamp':      ('<i>Hinweis: {rounded} Hz liegt außerhalb des einstellbaren Bereichs '
@@ -209,7 +210,7 @@ STRINGS = {
         'pdf_filter':      'PDF-Dateien (*.pdf)',
         'pdf_saved':       'PDF gespeichert:\n{path}',
         'pdf_title':       'Intonations-Analysator',
-        'pdf_transp':      'Transposition: gegriffenes C klingt {note} (+{n} Halbtöne)',
+        'pdf_transp':      'Transposition: gegriffenes C klingt {note} ({n:+d} Halbtöne)',
         'pdf_no_transp':   'Keine Transposition (C-Instrument)',
         'pdf_a4':          'Kammerton: A = {hz:.0f} Hz',
         'pdf_created':     'Erstellt: {dt}',
@@ -272,9 +273,9 @@ STRINGS = {
         'audio_toast_switch':      'Wechseln',
         'audio_toast_dismiss':     'Ignorieren',
         'audio_banner_interface_appeared': 'Neues Interface erkannt: {name}. Wechseln?',
-        'wrong_instrument_banner_body':    'Die meisten deiner letzten 12 Töne liegen außerhalb des Tonumfangs von {instrument}. Ist das richtige Instrument ausgewählt?',
+        'wrong_instrument_banner_body':    'Du spielst gerade außerhalb des Tonumfangs von {instrument}. Ist das richtige Instrument ausgewählt?',
         'autotune_nodata_progress':        'Aktuell haben {qualified} von 3 Tönen mindestens 5 Messungen ({touched} verschiedene Töne insgesamt). Weiter spielen!',
-        'audio_sr_notice':         'Audio läuft mit {sr} Hz — das Gerät unterstützt 44100 Hz nicht.',
+        'audio_sr_notice':         'Audio läuft mit {sr} Hz.',
         # v0.5.5 — per-instrument range editor
         'gear_tip':                'Erlaubte Töne für dieses Instrument bearbeiten',
         'range_editor_title':      'Tonumfang bearbeiten — {name}',
@@ -339,7 +340,7 @@ STRINGS = {
         'metro_stop':            'Stopp',
         'metro_nudge_down_tip':  '−1 BPM',
         'metro_nudge_up_tip':    '+1 BPM',
-        'metro_unavailable':     'Metronom-Wiedergabe ist noch nicht verfügbar.',
+        'metro_unavailable':     'Das Metronom braucht ein Ausgabegerät — wähle eines unter EINSTELLUNGEN › Audioausgang.',
         # Bordun (Drone) + Stimmpfeife (Pitch pipes) — Sprint 3
         'drone_group':            'Bordun',
         'drone_on_tip':           'Bordun ein-/ausschalten — klingt den Zielton, gegen den du stimmst.',
@@ -347,7 +348,8 @@ STRINGS = {
         'drone_semitone':         'Halbton',
         'drone_semitone_down_tip':'−1 Halbton',
         'drone_semitone_up_tip':  '+1 Halbton',
-        'drone_unavailable':      'Bordun-Wiedergabe ist noch nicht verfügbar.',
+        'drone_sine_fallback':    'Der SoundFont-Synthesizer (tinysoundfont) ist nicht installiert — der Bordun nutzt die reine Sinusstimme.',
+        'drone_unavailable':      'Der Bordun braucht ein Ausgabegerät — wähle eines unter EINSTELLUNGEN › Audioausgang.',
         'setup_drone_voice_group':'Bordun-Klang',
         'setup_drone_voice':      'Stimme',
         'setup_instrument_group': 'Instrument',
@@ -368,8 +370,8 @@ STRINGS = {
         'theme_light':            'Hell',
         'pipes_launch':           'Stimmpfeife',
         'pipes_title':            'Stimmpfeife',
-        'pipes_tip':              'Tippe ein Feld für einen Referenzton; nochmal tippen stoppt ihn.',
-        'pipes_unavailable':      'Stimmpfeifen-Wiedergabe ist noch nicht verfügbar.',
+        'pipes_tip':              'Klicke ein Feld für einen Referenzton; ein zweiter Klick stoppt ihn.',
+        'pipes_unavailable':      'Die Stimmpfeifen brauchen ein Ausgabegerät — wähle eines unter EINSTELLUNGEN › Audioausgang.',
         # Bandmaschine (Tape deck) — Sprint 4. Nimmt nur das Mikrofon auf.
         'deck_group':             'Bandmaschine',
         'deck_record':            'Aufnehmen',
@@ -386,7 +388,7 @@ STRINGS = {
         'deck_status_have_take':  'Aufnahme bereit.',
         'deck_status_playing':    'Wiedergabe läuft …',
         'deck_unavailable':       'Aufnahme nicht verfügbar — kein Mikrofoneingang.',
-        'deck_play_unavailable':  'Wiedergabe ist noch nicht verfügbar.',
+        'deck_play_unavailable':  'Die Wiedergabe braucht ein Ausgabegerät — wähle eines unter EINSTELLUNGEN › Audioausgang.',
         'deck_export_title':      'Aufnahme exportieren',
         'deck_export_filter':     'WAV-Audio (*.wav)',
         'deck_export_done':       'Aufnahme exportiert.',
@@ -409,9 +411,9 @@ STRINGS = {
         'filter_fast':      'Fast (live play)',
         'filter_normal':    'Normal (practice)',
         'filter_slow':      'Slow (setup/repair)',
-        'filter_tip':       'Pitch-detection response.\nFast: ~140 ms lock, minimal smoothing — feedback while playing scales.\nNormal (default): ~230 ms lock, attack transient suppressed — tuning long tones.\nSlow: ~460 ms lock, deep averaging — measuring true sustained pitch for instrument setup and repair.\nAll modes truncate attack chiff and release pitch-drop; Slow truncates the most.',
+        'filter_tip':       'Pitch-detection response.\nFast: ~190 ms to first reading, minimal smoothing — feedback while playing scales.\nNormal (default): ~330 ms to first reading, attack transient suppressed — tuning long tones.\nSlow: ~650 ms to first reading, deep averaging — measuring true sustained pitch for instrument setup and repair.\nAll modes truncate attack chiff and release pitch-drop; Slow truncates the most.',
         'min_n_label':      'Min measurements per note:',
-        'min_n_tip':        'Notes with fewer than this many measurements are hidden.\nKeeps brief slips out of the analysis.',
+        'min_n_tip':        'Table rows with fewer than this many measurements are hidden.\nKeeps brief slips out of the table; exports and autotune use every played note.',
         # Diagnostics panel (spectrogram + live values)
         'show_diagnostics':     'Show spectrum analyzer & diagnostics',
         'show_diagnostics_tip': 'Reveals a live spectrum analyzer and a diagnostics readout below the tuner.\nUseful for inspecting overtones and troubleshooting.',
@@ -438,10 +440,11 @@ STRINGS = {
         'custom_dlg_title': 'Custom instrument',
         'custom_dlg_info':  ('Add a custom instrument. Transposition is the '
                               'number of semitones from written C to sounding '
-                              'pitch (Bb tenor = -2, Eb alto = +3).'),
+                              'pitch, including the octave (Bb soprano = -2, Eb alto = -9, Bb tenor = -14).'),
         'custom_lbl_name':  'Display name:',
         'custom_lbl_transp':'Transposition (semitones):',
         'custom_err_name':  'Please enter a name.',
+        'custom_err_chars': 'The name needs at least one letter or digit.',
         'welcome_title':    'Welcome to Intonation Analyzer',
         'welcome_info':     ('As you play, cent deviations are detected and '
                               'aggregated per note.\n\n'
@@ -541,8 +544,8 @@ STRINGS = {
         'autotune_nodata':     'Please play at least 3 notes with ≥ 5 measurements each\nbefore the optimal concert pitch can be calculated.',
         'autotune_result':     ('<b>Concert Pitch Analysis Result</b><br><br>'
                                 'Notes evaluated: <b>{notes}</b> (each ≥ 5 measurements)<br>'
-                                'Weighted mean deviation: <b>{sign}{offset:.1f} ct</b><br>'
-                                'Arithmetic mean (reference): {sign2}{mean:.1f} ct<br><br>'
+                                'Weighted median deviation: <b>{sign}{offset:.1f} ct</b><br>'
+                                'Weighted mean (for comparison): {sign2}{mean:.1f} ct<br><br>'
                                 'Current concert pitch: <b>{current:.0f} Hz</b><br>'
                                 'Optimal concert pitch: <b>{optimal:.2f} Hz</b>  →  rounded <b>{rounded} Hz</b><br><br>'),
         'autotune_clamp':      ('<i>Note: {rounded} Hz is outside the selectable range '
@@ -566,7 +569,7 @@ STRINGS = {
         'pdf_filter':      'PDF files (*.pdf)',
         'pdf_saved':       'PDF saved:\n{path}',
         'pdf_title':       'Intonation Analyzer',
-        'pdf_transp':      'Transposition: fingered C sounds as {note} (+{n} semitones)',
+        'pdf_transp':      'Transposition: fingered C sounds as {note} ({n:+d} semitones)',
         'pdf_no_transp':   'No transposition (C instrument)',
         'pdf_a4':          'Concert pitch: A = {hz:.0f} Hz',
         'pdf_created':     'Created: {dt}',
@@ -616,10 +619,10 @@ STRINGS = {
         'audio_picker_apis_more':  '{n} APIs',
         'audio_picker_no_devices': 'No input devices found.',
         'audio_picker_row_meta':   '{api} · {ch} ch · {sr:.0f} Hz',
-        'audio_banner_no_device':  'No audio input found. Plug in a microphone or interface and tap Retry.',
-        'audio_banner_disconnect': 'Audio device disconnected: "{name}". Pick a different device, or plug it back in and tap Retry.',
-        'audio_banner_busy':       '"{name}" is busy — another app is using it. Close that app and tap Retry, or pick a different device.',
-        'audio_banner_unsupported_rate': 'Sample rate not supported by this device. Pick a different device or tap Retry.',
+        'audio_banner_no_device':  'No audio input found. Plug in a microphone or interface and click Retry.',
+        'audio_banner_disconnect': 'Audio device disconnected: "{name}". Pick a different device, or plug it back in and click Retry.',
+        'audio_banner_busy':       '"{name}" is busy — another app is using it. Close that app and click Retry, or pick a different device.',
+        'audio_banner_unsupported_rate': 'Sample rate not supported by this device. Pick a different device or click Retry.',
         'audio_banner_unknown':    'Audio error: {msg}',
         'audio_banner_retry':      'Retry',
         'audio_banner_pick':       'Pick different device',
@@ -627,9 +630,9 @@ STRINGS = {
         'audio_toast_switch':      'Switch',
         'audio_toast_dismiss':     'Dismiss',
         'audio_banner_interface_appeared': 'New interface detected: {name}. Switch to it?',
-        'wrong_instrument_banner_body':    'Most of your last 12 notes are outside the {instrument} range. Is this the right instrument selected?',
+        'wrong_instrument_banner_body':    'You are playing outside the {instrument} range. Is this the right instrument selected?',
         'autotune_nodata_progress':        'Currently {qualified} of 3 notes have at least 5 measurements ({touched} different notes so far). Keep playing!',
-        'audio_sr_notice':         'Running at {sr} Hz — this device does not support 44100 Hz.',
+        'audio_sr_notice':         'Audio is running at {sr} Hz.',
         # v0.5.5 — per-instrument range editor
         'gear_tip':                'Edit allowed notes for this instrument',
         'range_editor_title':      'Edit range — {name}',
@@ -692,7 +695,7 @@ STRINGS = {
         'metro_stop':            'Stop',
         'metro_nudge_down_tip':  '−1 BPM',
         'metro_nudge_up_tip':    '+1 BPM',
-        'metro_unavailable':     "Metronome playback isn't available yet.",
+        'metro_unavailable':     "The metronome needs an output device — pick one under SETUP › Audio output.",
         # Drone + Pitch pipes — Sprint 3
         'drone_group':            'Drone',
         'drone_on_tip':           'Toggle the drone — sounds the target pitch you tune against.',
@@ -700,7 +703,8 @@ STRINGS = {
         'drone_semitone':         'Semitone',
         'drone_semitone_down_tip':'−1 semitone',
         'drone_semitone_up_tip':  '+1 semitone',
-        'drone_unavailable':      "Drone playback isn't available yet.",
+        'drone_sine_fallback':    'The SoundFont synth (tinysoundfont) is not installed — the drone is using the pure-sine voice.',
+        'drone_unavailable':      "The drone needs an output device — pick one under SETUP › Audio output.",
         'setup_drone_voice_group':'Drone voice',
         'setup_drone_voice':      'Voice',
         'setup_instrument_group': 'Instrument',
@@ -720,8 +724,8 @@ STRINGS = {
         'theme_light':            'Light',
         'pipes_launch':           'Pitch pipes',
         'pipes_title':            'Pitch pipes',
-        'pipes_tip':              'Tap a pad to sound a reference tone; tap again to stop.',
-        'pipes_unavailable':      "Pitch-pipe playback isn't available yet.",
+        'pipes_tip':              'Click a pad to sound a reference tone; click again to stop.',
+        'pipes_unavailable':      "The pitch pipes need an output device — pick one under SETUP › Audio output.",
         # Tape deck — Sprint 4. Records the mic only.
         'deck_group':             'Tape deck',
         'deck_record':            'Record',
@@ -738,7 +742,7 @@ STRINGS = {
         'deck_status_have_take':  'Take ready.',
         'deck_status_playing':    'Playing …',
         'deck_unavailable':       "Recording isn't available — no microphone input.",
-        'deck_play_unavailable':  "Playback isn't available yet.",
+        'deck_play_unavailable':  "Playback needs an output device — pick one under SETUP › Audio output.",
         'deck_export_title':      'Export take',
         'deck_export_filter':     'WAV audio (*.wav)',
         'deck_export_done':       'Take exported.',

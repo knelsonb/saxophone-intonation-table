@@ -2,15 +2,14 @@
 Instrument catalog: families, sub-instruments, transposition values, and
 display names in DE + EN.
 
-Transposition convention matches the original app: `transp = sounding_midi -
-fingered_midi`. For most instruments this is the smallest interval that
-fits — for instance Bb instruments are -2 (major 2nd below) regardless of
-octave register. Bass-register instruments get the octave added so the
-displayed sounding pitch reads in the right octave.
+Transposition convention: `transp = sounding_midi - fingered_midi`, including
+the octave, so the sounding name reads in the right register (Eb alto -9,
+Bb tenor -14, Eb baritone -21; double bass and bass guitar -12; recorders +12).
+Values follow MuseScore's `transposeChromatic` for each instrument.
 
-The original six saxophone/C-instrument keys (`eb_alto`, `eb_bari`,
-`bb_tenor`, `bb_soprano`, `bb_bass`, `c`) are preserved with identical
-transposition values so old CSV exports round-trip cleanly.
+v0.4.2 corrected the saxophone values (alto +3 -> -9, tenor -2 -> -14,
+baritone -9 -> -21). Logs and CSVs written before that carry `midi_fingered`
+values an octave off from current ones; the sounding pitch is unaffected.
 """
 
 from __future__ import annotations
@@ -73,7 +72,7 @@ _FAMILIES = [
     ('horn', 'Horn', 'Horn', [
         ('horn_f',           -7, 'F-Horn',              'F Horn'),
         ('horn_bb',          -2, 'Bb-Horn',             'Bb Horn'),
-        ('horn_eb_alto',     +3, 'Eb-Althorn',          'Eb Alto Horn'),
+        ('horn_eb_alto',     -9, 'Eb-Althorn',          'Eb Alto Horn'),
         ('mellophone_f',     -7, 'Mellophon F',         'Mellophone F'),
     ]),
     ('trombone', 'Posaune', 'Trombone', [
@@ -101,7 +100,7 @@ _FAMILIES = [
         ('contrabassoon',   -12, 'Kontrafagott',        'Contrabassoon'),
     ]),
     ('recorder', 'Blockflöte', 'Recorder', [
-        ('rec_sopranino_f',  +5, 'Sopranino-Blockflöte (F)', 'Sopranino Recorder (F)'),
+        ('rec_sopranino_f', +12, 'Sopranino-Blockflöte (F)', 'Sopranino Recorder (F)'),
         ('rec_soprano_c',   +12, 'Sopran-Blockflöte (C)',    'Soprano Recorder (C)'),
         ('rec_alto_f',        0, 'Alt-Blockflöte (F)',       'Alto Recorder (F)'),
         ('rec_tenor_c',       0, 'Tenor-Blockflöte (C)',     'Tenor Recorder (C)'),
@@ -111,12 +110,12 @@ _FAMILIES = [
         ('violin',            0, 'Violine',             'Violin'),
         ('viola',             0, 'Viola',               'Viola'),
         ('cello',             0, 'Violoncello',         'Cello'),
-        ('double_bass',       0, 'Kontrabass',          'Double Bass'),
+        ('double_bass',     -12, 'Kontrabass',          'Double Bass'),
         ('mandolin',          0, 'Mandoline',           'Mandolin'),
     ]),
     ('plucked', 'Zupfinstrumente', 'Plucked', [
         ('guitar',            0, 'Gitarre',             'Guitar'),
-        ('bass_guitar',       0, 'Bassgitarre',         'Bass Guitar'),
+        ('bass_guitar',     -12, 'Bassgitarre',         'Bass Guitar'),
         ('ukulele',           0, 'Ukulele',             'Ukulele'),
         ('banjo',             0, 'Banjo',               'Banjo'),
         ('harp',              0, 'Harfe',               'Harp'),
@@ -279,7 +278,7 @@ _RANGES: dict[str, tuple[int, int]] = {
     'tuba_eb':                ( 26,  64),   # MS via eb-tuba
     'tuba_cc':                ( 26,  60),   # MS via c-tuba
     'tuba_bbb':               ( 28,  58),   # MS via bb-tuba
-    'sousaphone_bbb':         ( 44,  74),   # MS via bb-sousaphone
+    'sousaphone_bbb':         ( 30,  60),   # MS via bb-sousaphone
     # Double reeds
     'oboe':                   ( 58,  87),   # MS via oboe
     'oboe_damore':            ( 59,  87),   # MS via oboe-d'amore
@@ -287,8 +286,8 @@ _RANGES: dict[str, tuple[int, int]] = {
     'bassoon':                ( 34,  69),   # MS via bassoon
     'contrabassoon':          ( 34,  69),   # MS via contrabassoon
     # Recorders
-    'rec_sopranino_f':        ( 77, 100),   # MS via sopranino-recorder
-    'rec_soprano_c':          ( 72,  93),   # MS via soprano-recorder
+    'rec_sopranino_f':        ( 65,  88),   # MS via sopranino-recorder
+    'rec_soprano_c':          ( 60,  81),   # MS via soprano-recorder
     'rec_alto_f':             ( 65,  88),   # MS via alto-recorder
     'rec_tenor_c':            ( 60,  81),   # MS via tenor-recorder
     'rec_bass_f':             ( 53,  74),   # MS via bass-recorder
@@ -376,7 +375,9 @@ def load_range_overrides() -> dict[str, tuple[int, int]]:
     try:
         with _RANGES_FILE.open("r", encoding="utf-8") as f:
             data = json.load(f)
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError):
+        # ValueError covers JSONDecodeError and undecodable bytes; this runs
+        # at import time, so any escape here stops the app from starting.
         _OVERRIDES = out
         return out
     if not isinstance(data, dict):

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import math
 
+from sax_theme import CLOSE_CENTS, IN_TUNE_CENTS
 from PyQt6.QtCore import QPointF, QRectF, Qt
 from PyQt6.QtGui import (
     QColor, QFont, QPainter, QPen, QPixmap, QPolygonF,
@@ -289,9 +290,9 @@ def _draw_bars(p: QPainter,
         m = abs(mean)
         if not note_in_range:
             col = QColor(140, 140, 150)
-        elif m <= 5:
+        elif m <= IN_TUNE_CENTS:
             col = QColor(60, 220, 100)
-        elif m <= 15:
+        elif m <= CLOSE_CENTS:
             col = QColor(255, 200, 40)
         else:
             col = QColor(240, 80, 80)

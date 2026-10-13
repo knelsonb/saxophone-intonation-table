@@ -10,7 +10,7 @@ licence; versions are those resolved at build time from `requirements.txt`.
 | [python-sounddevice](https://github.com/spatialaudio/python-sounddevice) | Audio input and output | MIT |
 | [PortAudio](https://www.portaudio.com/) | Audio backend bundled with sounddevice | MIT-style PortAudio licence |
 | [ReportLab](https://www.reportlab.com/) | PDF export | BSD 3-Clause |
-| [tinysoundfont](https://pypi.org/project/tinysoundfont/) | SoundFont synthesis for the drone and pitch pipes | MIT |
+| [tinysoundfont](https://pypi.org/project/tinysoundfont/) | SoundFont synthesis for the drone voices | MIT |
 | [GeneralUser GS 2.0.3](https://www.schristiancollins.com/generaluser.php) by S. Christian Collins | General MIDI SoundFont (`assets/GeneralUser-GS.sf2`) | GeneralUser GS License v2.0, reproduced in `assets/GeneralUser-GS-LICENSE.txt` |
 | Qt FlowLayout example | Basis of `sax_flow_layout.py` | BSD 3-Clause (The Qt Company) |
 

@@ -40,6 +40,7 @@ from PyQt6.QtWidgets import (
 )
 
 import sax_instruments
+from sax_theme import CLOSE_CENTS, IN_TUNE_CENTS
 
 if TYPE_CHECKING:
     from PyQt6.QtWidgets import QMainWindow, QTableWidget
@@ -333,8 +334,8 @@ class TableController:
             if has_data:
                 played_n += 1
 
-            col = (QColor('#3a9e5f') if abs(mean) <= 5 else
-                   QColor('#c8a020') if abs(mean) <= 12 else QColor('#c03030'))
+            col = (QColor('#3a9e5f') if abs(mean) <= IN_TUNE_CENTS else
+                   QColor('#c8a020') if abs(mean) <= CLOSE_CENTS else QColor('#c03030'))
             dim_col = QColor('#555')
 
             # Nominal frequency for this MIDI: drives the precision floor.

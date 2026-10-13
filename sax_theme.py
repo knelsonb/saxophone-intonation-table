@@ -29,6 +29,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, fields
 
+
+# Cents thresholds shared by every view (tuner, table, PDF, chart): within
+# IN_TUNE_CENTS is green, within CLOSE_CENTS amber, beyond that red.
+IN_TUNE_CENTS = 5
+CLOSE_CENTS = 12
+
 __all__ = [
     "ThemePalette",
     "DARK", "NIGHT", "LIGHT",

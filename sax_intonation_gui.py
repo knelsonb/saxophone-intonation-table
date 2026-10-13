@@ -10,8 +10,16 @@ Starten:
 """
 
 import csv
+from array import array
 import os
 import sys
+
+# Launched as a script, this file runs as __main__; controllers that import
+# sax_intonation_gui would otherwise load a second copy with its own
+# TRANSP_MAP, and in-session custom instruments would never reach the window.
+if __name__ == '__main__':
+    sys.modules.setdefault('sax_intonation_gui', sys.modules[__name__])
+
 import math
 import threading
 import datetime
@@ -52,6 +60,7 @@ from sax_instruments import (
 )
 import sax_config
 import sax_theme
+from sax_theme import CLOSE_CENTS, IN_TUNE_CENTS
 from sax_i18n import STRINGS
 from sax_session_state import SessionStateController
 from sax_export import ExportController
@@ -223,13 +232,6 @@ def format_cents(value_cents: float, freq_hz: float,
 CHROMA = ['C', 'C#/Db', 'D', 'D#/Eb', 'E', 'F',
           'F#/Gb', 'G', 'G#/Ab', 'A', 'A#/Bb', 'B']
 
-TRANSP     = {'eb': 3, 'bb': 2, 'c': 0}
-# MIDI-Bereiche pro Saxophon-Typ (gegriffene Töne, klingende Noten)
-# Bass-Sax (Bb):  klingt Bb0 (22) – F#3 (54)   → gegriffen A1–E4  (21–52)
-# Bariton (Eb):   klingt Db2 (37) – Ab4 (68)   → gegriffen Bb2–F5 (46–65 + Höhe)
-# Tenor (Bb):     klingt Ab2 (44) – Eb5 (75)   → gegriffen G3–D6  (55–74)
-# Alt (Eb):       klingt Db3 (49) – Ab5 (80)   → gegriffen Bb3–F6 (58–77)
-# Sopran (Bb):    klingt Ab3 (56) – Eb6 (87)   → gegriffen G4–D7  (67–86)
 SAX_MIDI   = range(21, 109)  # v0.6: widened from 21..91 to 21..108 to cover
                              # the full catalog (piccolo, recorder, piano,
                              # banjo upper registers).  Must mirror
@@ -358,8 +360,14 @@ class NoteStats:
         self._n:    int   = 0
         self._mean: float = 0.0
         self._m2:   float = 0.0
+        # Raw detected frequencies behind this row. A concert-pitch change
+        # re-derives cents from these, so the table keeps exactly the notes it
+        # held (after any Reset or per-note delete). 8 bytes per reading.
+        self.freqs = array('d')
 
-    def add(self, c: float) -> None:
+    def add(self, c: float, freq: float | None = None) -> None:
+        if freq is not None:
+            self.freqs.append(freq)
         self._n += 1
         delta        = c - self._mean
         self._mean  += delta / self._n
@@ -454,15 +462,16 @@ class TunerWidget(QWidget):
         p.setBrush(_themed('grid'))
         p.drawRoundedRect(QRectF(sx, sy, sw, sh), 8, 8)
 
-        zw = sw * (10.0 / mx) / 2
+        # Half-width of IN_TUNE_CENTS on a scale spanning -mx..+mx over sw.
+        zw = sw * (IN_TUNE_CENTS / mx) / 2
         p.setBrush(_themed('ok', 140))
         p.drawRoundedRect(QRectF(sx + sw/2 - zw, sy, zw*2, sh), 6, 6)
 
         if self.active:
             norm = max(-1.0, min(1.0, self.cents / mx))
             nx   = sx + sw/2 + norm * sw/2
-            if   abs(self.cents) <= 5:  nc = _themed('ok', alpha)
-            elif abs(self.cents) <= 15: nc = _themed('warn', alpha)
+            if   abs(self.cents) <= IN_TUNE_CENTS: nc = _themed('ok', alpha)
+            elif abs(self.cents) <= CLOSE_CENTS:   nc = _themed('warn', alpha)
             else:                       nc = _themed('bad', alpha)
             p.setBrush(nc)
             p.drawRoundedRect(QRectF(nx - 4, sy - 6, 8, sh + 12), 4, 4)
@@ -478,8 +487,8 @@ class TunerWidget(QWidget):
 
         if self.active:
             p.setFont(QFont('Monospace', 32, QFont.Weight.Bold))
-            if   abs(self.cents) <= 5:  cc = _themed('ok', alpha)
-            elif abs(self.cents) <= 15: cc = _themed('warn', alpha)
+            if   abs(self.cents) <= IN_TUNE_CENTS: cc = _themed('ok', alpha)
+            elif abs(self.cents) <= CLOSE_CENTS:   cc = _themed('warn', alpha)
             else:                       cc = _themed('bad', alpha)
             p.setPen(cc)
             p.drawText(QRectF(0, sy + sh + 26, W, 55),
@@ -1095,8 +1104,8 @@ class MatrixCellDelegate(QStyledItemDelegate):
             return
 
         # ----- Mid strip: mean (color) + ±std ------------------------
-        col = (_themed('ok') if abs(mean) <= 5 else
-               _themed('warn') if abs(mean) <= 12 else _themed('bad'))
+        col = (_themed('ok') if abs(mean) <= IN_TUNE_CENTS else
+               _themed('warn') if abs(mean) <= CLOSE_CENTS else _themed('bad'))
         mid_h = 18
         mid_y = r.top() + top_h
         painter.setPen(col)
@@ -2698,7 +2707,7 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(sax_theme.build_app_qss(sax_theme.active()))
         self._sync_qpalette()
 
-        self.setWindowTitle(self._t('window_title'))
+        self.setWindowTitle(f"{self._t('window_title')} {APP_VERSION}")
 
         # Phase-5 extraction: InstrumentController owns family/instr/nickname
         # work, the range editor, custom-instrument registration, and
@@ -3381,6 +3390,7 @@ class MainWindow(QMainWindow):
         vol_l = QHBoxLayout(vol_grp)
         vol_l.setContentsMargins(12, 8, 12, 8)
         self._metro_vol_slider = QSlider(Qt.Orientation.Horizontal)
+        self._metro_vol_slider.setAccessibleName(self._t('metro_volume'))
         self._metro_vol_slider.setRange(0, 100)
         vol0 = int(round(float(getattr(self._cfg, 'click_volume', 1.0)) * 100))
         self._metro_vol_slider.setValue(max(0, min(100, vol0)))
@@ -3929,6 +3939,7 @@ class MainWindow(QMainWindow):
         vlbl.setObjectName('dimLabel')
         row2.addWidget(vlbl)
         self._drone_vol_slider = QSlider(Qt.Orientation.Horizontal)
+        self._drone_vol_slider.setAccessibleName(self._t('drone_volume'))
         self._drone_vol_slider.setRange(0, 100)
         self._drone_vol_slider.setValue(max(0, min(100,
             int(round(self._drone_volume * 100)))))
@@ -3991,6 +4002,23 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
         self._drone_ctrl.set_enabled(True)   # fires on_state_changed
+        self._report_drone_fallback()
+
+    def _report_drone_fallback(self) -> None:
+        """If the SoundFont synth could not load, the drone switched to the
+        pure-sine voice; say so and point the voice picker at it."""
+        ctrl = self._drone_ctrl
+        if ctrl is None or not getattr(ctrl, 'synth_fallback', False):
+            return
+        combo = getattr(self, '_drone_voice_combo', None)
+        if combo is not None:
+            idx = combo.findData(ctrl.voice_id)
+            if idx >= 0:
+                blocked = combo.blockSignals(True)
+                combo.setCurrentIndex(idx)
+                combo.blockSignals(blocked)
+        self._drone_status.setText(self._t('drone_sine_fallback'))
+        self._drone_status.setVisible(True)
 
     def _drone_revert_toggle(self) -> None:
         blocked = self._btn_drone_on.blockSignals(True)
@@ -4184,7 +4212,12 @@ class MainWindow(QMainWindow):
 
     def _retranslate(self):
         """Aktualisiert alle beschrifteten Widgets ohne Neuaufbau."""
-        self.setWindowTitle(self._t('window_title'))
+        self.setWindowTitle(f"{self._t('window_title')} {APP_VERSION}")
+        tabs = getattr(self, '_tabs', None)
+        if tabs is not None:
+            for i, key in enumerate(self._tab_keys):
+                tabs.setTabText(i, self._t(f'nav_tab_{key}'))
+                tabs.setTabToolTip(i, self._t(f'nav_tab_{key}_tip'))
         self._grp_instr.setTitle(self._t('grp_instrument'))
         self._grp_disp.setTitle(self._t('grp_display'))
         self._grp_a4.setTitle(self._t('grp_a4'))
@@ -4323,7 +4356,7 @@ class MainWindow(QMainWindow):
         with self._lock:
             if midi_kl not in self.stats:
                 self.stats[midi_kl] = NoteStats()
-            self.stats[midi_kl].add(cents)
+            self.stats[midi_kl].add(cents, freq)
         # Bump the diagnostics counter outside the lock — single thread
         # writes it, single thread reads via the timer; integer add is
         # atomic enough for a display-only counter.
@@ -4479,9 +4512,23 @@ class MainWindow(QMainWindow):
     def _on_a4_changed_external(self) -> None:
         """Called by InstrumentController after the autotune flow has
         applied a new A4. The autotune body already cleared self.stats
-        under the lock; here we just refresh the table so the new
-        baseline paints."""
+        under the lock; here we refresh the table so the new baseline
+        paints, and retune the drone and pitch pipes to the new A4."""
+        a4 = float(getattr(self._engine, 'a4', 0.0) or 0.0)
+        self._seed_expected_notes()
+        # New run at the new A4, as _apply_a4 does, so later measurements are
+        # logged against the reference they were measured with.
+        if AUDIO_OK and self._recording and a4 > 0:
+            self._log.start_run(instrument=self.instrument, a4_hz=a4,
+                                label=self._nick_edit.text().strip())
         self._refresh_table()
+        for _c in (getattr(self, '_drone_ctrl', None),
+                   getattr(self, '_pipes_ctrl', None)):
+            if a4 > 0 and _c is not None and hasattr(_c, 'set_a4'):
+                try:
+                    _c.set_a4(a4)
+                except Exception:
+                    pass
 
     def _instr_set_a4(self, hz: float) -> None:
         """Setter callback used by InstrumentController's autotune flow.
@@ -4826,9 +4873,9 @@ class MainWindow(QMainWindow):
         layout.addWidget(path_lbl)
         layout.addWidget(btns)
         accepted = (dlg.exec() == QDialog.DialogCode.Accepted)
-        # Whether they accepted or skipped, mark welcome as shown so we don't
-        # ask again. Persistence is only enabled if they ticked the box.
-        self._cfg.welcome_shown = True
+        # "Decide later" leaves the question open, so the dialog returns on
+        # the next launch; it is the only place history saving is offered.
+        self._cfg.welcome_shown = accepted
         if accepted and cb.isChecked():
             self._cfg.persistence_enabled = True
             # Rebuild the log on the chosen path. Existing in-memory entries
@@ -4837,6 +4884,13 @@ class MainWindow(QMainWindow):
             new_path = self._cfg.effective_log_path()
             if new_path:
                 self._log = MeasurementLog(path=new_path)
+                # The controllers were built with the previous log; point
+                # them at the new one or CSV export and run metadata would
+                # keep using the discarded in-memory log.
+                for ctrl in (getattr(self, '_export', None),
+                             getattr(self, '_instr_ctrl', None)):
+                    if ctrl is not None and hasattr(ctrl, '_log'):
+                        ctrl._log = self._log
                 if AUDIO_OK:
                     self._log.start_run(instrument=self.instrument,
                                         a4_hz=self._engine.a4,
@@ -4895,20 +4949,21 @@ class MainWindow(QMainWindow):
         self._engine.pause_emissions()
         try:
             self._engine.set_a4(new_a4)
+            # Re-derive from the frequencies behind the CURRENT table only.
+            # The log also holds earlier sessions, other instruments, imports
+            # and notes the user reset or deleted; none of those belong here.
+            with self._lock:
+                table_freqs = [f for st in self.stats.values() for f in st.freqs]
             remapped: dict[int, NoteStats] = {}
-            for m in self._log.measurements():
-                # v0.5.7.3: skip non-positive / non-finite freqs. An
-                # imported CSV row with freq_hz=0 (or NaN/inf) would
-                # otherwise call freq_to_midi -> math.log2(0) -> ValueError
-                # and crash the A4 combo handler. Such rows carry no
-                # tuning information; drop them silently.
-                f = float(m.freq_hz)
+            for f in table_freqs:
+                # Non-positive / non-finite freqs carry no tuning information
+                # and would make freq_to_midi raise.
                 if not math.isfinite(f) or f <= 0.0:
                     continue
                 midi_round, cents = cents_dev(f, new_a4)
                 if midi_round in SAX_MIDI:
                     ns = remapped.setdefault(midi_round, NoteStats())
-                    ns.add(cents)
+                    ns.add(cents, f)
             with self._lock:
                 self.stats = remapped
         finally:
@@ -4996,9 +5051,13 @@ class MainWindow(QMainWindow):
             if st is None or st.n == 0:
                 return
         else:
-            # Single-column mode: row directly indexes into sorted stats.
+            # Single-column mode: rows are the sorted stats after the table's
+            # min-N filter (sax_table hides rows with 1..min_n-1 readings), so
+            # index the same filtered list or the row maps to another note.
+            min_n = max(0, int(getattr(self._cfg, 'min_n_visible', 0)))
             with self._lock:
-                keys = sorted(self.stats.keys())
+                keys = sorted(k for k, s in self.stats.items()
+                              if s.n == 0 or s.n >= min_n)
             if row >= len(keys):
                 return
             midi_kl = keys[row]
@@ -5084,9 +5143,11 @@ class MainWindow(QMainWindow):
             return
         try:
             runs, meas, skipped = self._log.import_raw_csv(path)
-        except ValueError:
+        except ValueError as e:
+            # ValueError covers a non-raw-mode header and the size / row
+            # limits; show the specific reason under the general message.
             QMessageBox.warning(self, self._t('err_title'),
-                                self._t('csv_import_badhdr'))
+                                f"{self._t('csv_import_badhdr')}\n\n{e}")
             return
         except (OSError, csv.Error) as e:
             QMessageBox.critical(self, self._t('err_title'), str(e))

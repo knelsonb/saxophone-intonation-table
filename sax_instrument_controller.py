@@ -324,6 +324,12 @@ class InstrumentController:
             QMessageBox.warning(w, self._t('err_title'),
                                 self._t('custom_err_name'))
             return None
+        # The instrument key is a slug of letters and digits; a name with
+        # neither would produce an empty key.
+        if not any(c.isalnum() for c in name):
+            QMessageBox.warning(w, self._t('err_title'),
+                                self._t('custom_err_chars'))
+            return None
         return (name, int(spin_transp.value()))
 
     # ── Autotune ─────────────────────────────────────────────────────────────

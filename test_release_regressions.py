@@ -151,3 +151,57 @@ def test_metronome_quick_restart_keeps_one_beat_chain():
     for _ in range(60):
         mixer.render(out, block)
     assert mixer.pending_events() == 1, "a second beat chain survived the restart"
+
+
+# --- drone without the SoundFont synth ------------------------------------------
+def test_drone_falls_back_to_sine_when_synth_cannot_load(monkeypatch):
+    import sax_drone
+
+    def no_synth(*_a, **_k):
+        raise ImportError("No module named 'tinysoundfont'")
+
+    monkeypatch.setattr(sax_drone, "DroneSource", no_synth)
+    ctrl = sax_drone.DroneController(Mixer(max_block=1024), 48000, voice_id="organ")
+    ctrl.set_enabled(True)
+    assert ctrl.enabled and ctrl.synth_fallback
+    assert ctrl.voice_id == sax_drone.SINE_VOICE_ID
+
+
+# --- catalog -------------------------------------------------------------------
+@pytest.mark.parametrize("key, transp", [
+    ("eb_alto", -9), ("bb_tenor", -14), ("horn_eb_alto", -9),
+    ("rec_sopranino_f", 12), ("rec_soprano_c", 12),
+    ("double_bass", -12), ("bass_guitar", -12),
+])
+def test_catalog_transpositions(key, transp):
+    import sax_instruments
+    assert sax_instruments.transp_map()[key] == transp
+
+
+@pytest.mark.parametrize("key, lowest_sounding", [
+    ("double_bass", 28),       # E1, open low string
+    ("bass_guitar", 28),       # E1
+    ("rec_soprano_c", 72),     # C5
+    ("rec_sopranino_f", 77),   # F5
+])
+def test_catalog_range_covers_lowest_note(key, lowest_sounding):
+    import sax_instruments
+    lo, _hi = sax_instruments.fingered_range(key)
+    assert lo + sax_instruments.transp_map()[key] <= lowest_sounding
+
+
+# --- interface text -------------------------------------------------------------
+@pytest.mark.parametrize("lang", ["de", "en"])
+def test_transposition_line_has_single_sign(lang):
+    from sax_i18n import STRINGS
+    text = STRINGS[lang]["pdf_transp"].format(note="A#/Bb", n=-14)
+    assert "-14" in text and "+-" not in text
+
+
+# --- table frequencies behind a concert-pitch change ----------------------------
+def test_notestats_keeps_frequencies_for_a4_rederive():
+    from sax_intonation_gui import NoteStats
+    st = NoteStats()
+    st.add(3.0, 440.76)
+    st.add(-1.0)
+    assert list(st.freqs) == [440.76] and st.n == 2

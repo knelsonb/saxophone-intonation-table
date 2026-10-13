@@ -651,6 +651,9 @@ class DroneController:
         self.enabled = False
         self._source: "Optional[DroneSource | SineDroneSource]" = None
         self._max_block = int(getattr(mixer, "max_block", 2048))
+        # Set when a SoundFont voice could not load and the pure-sine voice
+        # was used instead (see _ensure_source_or_sine).
+        self.synth_fallback = False
         # NOTE: requested enabled=True is honoured lazily — call set_enabled(True)
         # after the output stream is open (GUI honesty discipline).
         if enabled:
@@ -678,6 +681,19 @@ class DroneController:
                     a4=self._a4, sf2_path=self._sf2_path)
         return self._source
 
+    def _ensure_source_or_sine(self) -> "DroneSource | SineDroneSource":
+        """Build the selected voice, falling back to the pure-sine voice when
+        the SoundFont synth cannot load (tinysoundfont not installed, or the
+        .sf2 missing/unreadable). ``synth_fallback`` tells the GUI to explain
+        why the voice changed."""
+        try:
+            return self._ensure_source()
+        except (ImportError, OSError, RuntimeError):
+            self._source = None
+            self.voice_id = SINE_VOICE_ID
+            self.synth_fallback = True
+            return self._ensure_source()
+
     def _rebuild_source(self) -> None:
         """Tear the live source down and rebuild it from the current voice / rate
         / volume / a4, preserving enabled + the playing note + mixer registration
@@ -703,7 +719,7 @@ class DroneController:
                 pass
             self._source = None
         if was_enabled:
-            src = self._ensure_source()
+            src = self._ensure_source_or_sine()
             self._mixer.register(src)
             src.note_on(self._played_midi())
             if eng is not None and hasattr(eng, "attach_duck_consumer"):
@@ -729,15 +745,16 @@ class DroneController:
         on = bool(on)
         if on == self.enabled:
             return
-        self.enabled = on
         if on:
-            src = self._ensure_source()
+            src = self._ensure_source_or_sine()
+            self.enabled = True
             self._mixer.register(src)
             src.note_on(self._played_midi())
             eng = self._engine
             if eng is not None and hasattr(eng, "attach_duck_consumer"):
                 eng.attach_duck_consumer(src)
         else:
+            self.enabled = False
             if self._source is not None:
                 self._source.note_off()   # tail fades; stays registered
                 eng = self._engine
