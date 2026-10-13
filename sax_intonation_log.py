@@ -47,12 +47,7 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Iterable, Iterator, Optional
 
-_CHROMA = ['C', 'C#/Db', 'D', 'D#/Eb', 'E', 'F',
-           'F#/Gb', 'G', 'G#/Ab', 'A', 'A#/Bb', 'B']
-
-
-def midi_note_name(m: int) -> str:
-    return f"{_CHROMA[m % 12]}{m // 12 - 1}"
+from sax_pitch import midi_note_name
 
 
 # ---------------------------------------------------------------------------

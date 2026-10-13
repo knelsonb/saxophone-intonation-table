@@ -88,7 +88,6 @@ import sax_theme
 # hot-plug poller without dragging the GUI through every test path. The
 # names we re-export below keep the rest of this file's imports stable.
 from sax_audio_engine import (
-    A4_DEFAULT as _A4_DEFAULT_EXT,
     BLOCK_MS as _BLOCK_MS_EXT,
     DEFAULT_BLOCK_SIZE as _DEFAULT_BLOCK_SIZE_EXT,
     DEFAULT_HOP_SIZE as _DEFAULT_HOP_SIZE_EXT,
@@ -120,6 +119,16 @@ from sax_instruments import (
 )
 from sax_intonation_log import MeasurementLog
 from sax_paths import AppPaths
+from sax_pitch import (  # noqa: F401  (re-exported for older importers)
+    A4_DEFAULT,
+    CHROMA,
+    SAX_MIDI,
+    cents_dev,
+    format_cents,
+    freq_to_midi,
+    midi_note_name,
+    note_name_to_midi,
+)
 from sax_session_state import SessionStateController
 from sax_table import TableController
 from sax_theme import IN_TUNE_CENTS, cents_band
@@ -194,7 +203,6 @@ HOP_SIZE      = _DEFAULT_HOP_SIZE_EXT
 BLOCK_SIZE    = _DEFAULT_BLOCK_SIZE_EXT
 MIN_FREQ      = _MIN_FREQ_EXT
 MAX_FREQ      = _MAX_FREQ_EXT
-A4_DEFAULT    = _A4_DEFAULT_EXT
 HOP_MS        = _HOP_MS_EXT
 BLOCK_MS      = _BLOCK_MS_EXT
 _FILTER_PRESETS = _FILTER_PRESETS_EXT
@@ -232,39 +240,6 @@ def cent_precision_floor(freq_hz: float, sample_rate: int) -> float:
     return 173.0 * float(freq_hz) / sr
 
 
-def format_cents(value_cents: float, freq_hz: float,
-                 sample_rate: int) -> str:
-    """Format a cent value at the precision the measurement supports.
-
-    Always emits a sign so a neutral readout reads "+0" rather than the
-    visually-jumpy bare "0". Negative-zero / tiny-negative values coerce to
-    "+0" via the explicit ``>= 0`` test (round(-0.2) -> 0 -> "+0").
-
-    v0.5.7.2: guard against non-finite inputs. NoteStats.mean can be
-    NaN after a reset race (empty vals → np.mean), and int(round(NaN))
-    raises ValueError. Returning the canonical "–" placeholder matches
-    the other no-data cells in the matrix paint path.
-    """
-    if (not math.isfinite(value_cents) or not math.isfinite(freq_hz)
-            or freq_hz <= 0):
-        return '–'
-    # Integer cents only — NEVER decimal. A real saxophone tone vibratos by more
-    # than a cent, so sub-cent digits claim resolution the reading can't hold and
-    # only jitter the display; an integer readout is the correct tuner UX.
-    # (freq_hz still guards validity above; sample_rate is retained for API
-    # stability now that the adaptive precision floor no longer gates the format.)
-    snapped = int(round(float(value_cents)))
-    sign = '+' if snapped >= 0 else '-'
-    return f"{sign}{abs(snapped)}"
-
-CHROMA = ['C', 'C#/Db', 'D', 'D#/Eb', 'E', 'F',
-          'F#/Gb', 'G', 'G#/Ab', 'A', 'A#/Bb', 'B']
-
-SAX_MIDI   = range(21, 109)  # v0.6: widened from 21..91 to 21..108 to cover
-                             # the full catalog (piccolo, recorder, piano,
-                             # banjo upper registers).  Must mirror
-                             # AudioEngine._midi_max in sax_audio_engine.py.
-
 # Transposition map is now derived from sax_instruments.transp_map(), which
 # includes the original six saxophone/C-instrument keys plus everything else
 # in the catalog. Rebuilt on demand whenever a custom instrument is added.
@@ -275,79 +250,6 @@ def _rebuild_transp_map() -> None:
     """Refresh TRANSP_MAP after a custom instrument is registered."""
     global TRANSP_MAP
     TRANSP_MAP = build_transp_map()
-
-
-def freq_to_midi(f, a4=None):
-    ref = a4 if a4 is not None else A4_DEFAULT
-    return 69.0 + 12.0 * math.log2(f / ref)
-
-def midi_note_name(m):
-    return f"{CHROMA[m % 12]}{m // 12 - 1}"
-
-
-# Reverse of midi_note_name: accept "G3", "F#5", "Bb2", "B♭2", "g3", etc.
-# Returns the integer MIDI number or None if the string can't be parsed.
-# Used by the range editor's note-name input field so users don't have to
-# think in MIDI integers.
-# B is B natural, as midi_note_name prints it. H is the German name for the
-# same note and is accepted as an alias.
-_NOTE_PITCH_CLASSES = {
-    'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11, 'H': 11,
-}
-
-
-def _pitch_class_offset(spelling: str) -> int | None:
-    """Semitone offset from C for a letter plus optional accidental
-    ("A", "A#", "Bb", "H"), or None."""
-    if not spelling:
-        return None
-    letter = spelling[0].upper()
-    if letter not in _NOTE_PITCH_CLASSES:
-        return None
-    rest = spelling[1:]
-    if rest == '':
-        return _NOTE_PITCH_CLASSES[letter]
-    if rest == '#':
-        return _NOTE_PITCH_CLASSES[letter] + 1
-    if rest == 'b':
-        return _NOTE_PITCH_CLASSES[letter] - 1
-    return None
-
-
-def note_name_to_midi(text: str) -> int | None:
-    if text is None:
-        return None
-    s = str(text).strip()
-    if not s:
-        return None
-    # Normalise unicode accidentals to ASCII.
-    s = s.replace('♯', '#').replace('♭', 'b')
-    # Split off the octave: everything from the first digit, or from a
-    # minus sign that starts a negative octave like "C-1".
-    i = 0
-    while i < len(s) and not (s[i].isdigit() or s[i] == '-'):
-        i += 1
-    name, octave_text = s[:i], s[i:]
-    if not octave_text:
-        return None
-    try:
-        octave = int(octave_text)
-    except ValueError:
-        return None
-    # midi_note_name prints black keys as both spellings ("A#/Bb3"). Accept
-    # that form back as long as both halves name the same pitch class.
-    offsets = {_pitch_class_offset(part) for part in name.split('/')}
-    if len(offsets) != 1 or None in offsets:
-        return None
-    midi = (octave + 1) * 12 + offsets.pop()
-    if midi < 0 or midi > 127:
-        return None
-    return midi
-
-def cents_dev(f, a4=None):
-    mf = freq_to_midi(f, a4)
-    mr = round(mf)
-    return mr, (mf - mr) * 100.0
 
 
 # =============================================================================
@@ -5342,10 +5244,6 @@ class MainWindow(QMainWindow):
             self._info_banner.show_message(self._t(
                 'settings_damaged', path=str(store.paths.config),
                 backup=str(store.corrupt_backup)))
-
-
-def _today():
-    return datetime.date.today().strftime('%Y%m%d')
 
 
 # =============================================================================

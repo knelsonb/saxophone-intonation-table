@@ -44,7 +44,8 @@ try:  # frozen-aware asset resolution (PyInstaller bundle vs. source tree).
 except Exception:  # pragma: no cover - dev fallback if sax_assets is absent
     _asset_path = None
 
-A4_DEFAULT = 440.0
+from sax_pitch import A4_DEFAULT, midi_to_freq
+
 _SF2_FILENAME = "GeneralUser-GS.sf2"
 
 __all__ = [
@@ -165,11 +166,6 @@ def is_sine_voice(voice_id) -> bool:
     voice, NOT an SF2 patch). The controller branches on this to build a
     SineDroneSource instead of a DroneSource."""
     return str(voice_id).strip().lower() == SINE_VOICE_ID
-
-
-def midi_to_freq(midi: float, a4: float = A4_DEFAULT) -> float:
-    """Frequency (Hz) of a MIDI note at the given A4 (inverse of freq_to_midi)."""
-    return float(a4) * (2.0 ** ((float(midi) - 69.0) / 12.0))
 
 
 def drone_freq(reference_midi: int, semitones: int,

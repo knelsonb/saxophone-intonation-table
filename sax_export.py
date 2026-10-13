@@ -52,7 +52,14 @@ from PyQt6.QtWidgets import (
 import sax_instruments
 from sax_intonation_chart import render_intonation_chart
 from sax_intonation_log import MeasurementLog
+from sax_pitch import CHROMA, format_cents, midi_note_name
 from sax_theme import cents_band
+
+
+def _today() -> str:
+    """Date stamp for default export file names."""
+    return datetime.date.today().strftime('%Y%m%d')
+
 
 # PDF mean-column text colour for each cents_band() result.
 _PDF_BAND_COLOR = {'in': '#1b5e20', 'close': '#e65100', 'off': '#b71c1c'}
@@ -94,15 +101,7 @@ class ExportController:
 
     # ── Public entry points ───────────────────────────────────────────────
     def export_txt(self) -> None:
-        # Local imports keep the module decoupled from the GUI file's
-        # internal helpers while still using the same implementations.
-        from sax_intonation_gui import (
-            CHROMA,
-            TRANSP_MAP,
-            _today,
-            format_cents,
-            midi_note_name,
-        )
+        from sax_intonation_gui import TRANSP_MAP
         w = self._w
         model_info = self._ask_instrument_model()
         if model_info is None:
@@ -162,13 +161,7 @@ class ExportController:
             QMessageBox.critical(w, self._t('err_title'), str(e))
 
     def export_pdf(self) -> None:
-        from sax_intonation_gui import (
-            CHROMA,
-            TRANSP_MAP,
-            _today,
-            format_cents,
-            midi_note_name,
-        )
+        from sax_intonation_gui import TRANSP_MAP
         w = self._w
         try:
             from reportlab.lib import colors
@@ -279,7 +272,6 @@ class ExportController:
             QMessageBox.critical(w, self._t('err_title'), str(e))
 
     def export_csv(self) -> None:
-        from sax_intonation_gui import _today
         w = self._w
         if not self._log.has_measurements():
             QMessageBox.information(w, self._t('export_title'),
@@ -324,11 +316,7 @@ class ExportController:
             QMessageBox.critical(w, self._t('err_title'), str(e))
 
     def export_chart(self) -> None:
-        from sax_intonation_gui import (
-            TRANSP_MAP,
-            _today,
-            midi_note_name,
-        )
+        from sax_intonation_gui import TRANSP_MAP
         w = self._w
         with w._lock:
             # Rows seeded for the instrument range have n == 0 until played;

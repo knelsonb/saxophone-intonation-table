@@ -24,6 +24,7 @@ from PyQt6.QtGui import (
     QPolygonF,
 )
 
+from sax_pitch import format_cents
 from sax_theme import IN_TUNE_CENTS, cents_band
 
 # Bar colour for each cents_band() result.
@@ -213,25 +214,6 @@ def _cent_to_y(cents: float, area: QRectF) -> float:
     return mid - norm * (area.height() / 2)
 
 
-def _format_cents_label(value_cents: float, freq_hz: float,
-                        sample_rate: int) -> str:
-    """Local mirror of sax_intonation_gui.format_cents to keep the chart
-    module dependency-free (no GUI import). See that helper for the
-    derivation behind the tier thresholds.
-
-    v0.5.7.8: guard against non-finite inputs (mirrors the v0.5.7.2 guard
-    added to sax_intonation_gui.format_cents). Chart export can be reached
-    with corrupted freq_hz from CSV import, and int(round(NaN)) raises
-    ValueError. Keep the placeholder glyph identical to format_cents."""
-    if (not math.isfinite(value_cents) or not math.isfinite(freq_hz)
-            or freq_hz <= 0):
-        return '–'
-    # Integer cents only — never decimal (mirror of format_cents). sample_rate is
-    # retained for signature parity with the GUI helper.
-    v = int(round(float(value_cents)))
-    return f"{'+' if v >= 0 else '-'}{abs(v)}"
-
-
 def _draw_bars(p: QPainter,
                notes: list[tuple],
                sample_rate: int = 44100,
@@ -345,7 +327,7 @@ def _draw_bars(p: QPainter,
         # snapped to the precision the measurement supports at the
         # negotiated sample rate.
         if bar_w >= 14:
-            cent_txt = _format_cents_label(mean, freq, sample_rate)
+            cent_txt = format_cents(mean, freq, sample_rate)
             p.setPen(QColor(220, 220, 235))
             p.setFont(_mono(8))
             if mean >= 0:

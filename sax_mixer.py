@@ -66,11 +66,6 @@ from typing import Callable, Optional, Protocol, runtime_checkable
 
 import numpy as np
 
-# A4 reference for the source helpers' midi<->freq math. Mirrors
-# sax_audio_engine.A4_DEFAULT; the engine passes its live a4 to sources that
-# care, so this is only the standalone default.
-A4_DEFAULT = 440.0
-
 # An event is any zero-cost-to-store callable invoked with the intra-block
 # sample offset at which it fired. The metronome will pass a closure that
 # starts a click envelope at that offset; tests pass a recorder. Keeping the

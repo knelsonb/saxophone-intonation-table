@@ -301,20 +301,20 @@ def test_save_override_rejects_out_of_midi_range(ranges_file):
     ("B3", 59), ("C-1", 0), ("G9", 127), ("F#/Gb4", 66),
 ])
 def test_note_name_parser_accepts_display_forms(text, midi):
-    from sax_intonation_gui import note_name_to_midi
+    from sax_pitch import note_name_to_midi
     assert note_name_to_midi(text) == midi
 
 
 @requires_qt
 @pytest.mark.parametrize("text", ["A#/Cb3", "X3", "Bb", "3", "G#10", ""])
 def test_note_name_parser_rejects_garbage(text):
-    from sax_intonation_gui import note_name_to_midi
+    from sax_pitch import note_name_to_midi
     assert note_name_to_midi(text) is None
 
 
 @requires_qt
 def test_note_name_parser_round_trips_every_displayed_name():
-    from sax_intonation_gui import midi_note_name, note_name_to_midi
+    from sax_pitch import midi_note_name, note_name_to_midi
     bad = [m for m in range(128) if note_name_to_midi(midi_note_name(m)) != m]
     assert not bad, f"names the editor shows but cannot read back: {bad}"
 
@@ -522,7 +522,7 @@ def test_cents_band(cents, band):
 
 @requires_qt
 def test_cents_band_agrees_with_printed_value():
-    from sax_intonation_gui import format_cents
+    from sax_pitch import format_cents
     from sax_theme import cents_band
     for tenth in range(-300, 301):
         value = tenth / 10.0

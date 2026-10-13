@@ -42,6 +42,7 @@ from PyQt6.QtWidgets import (
 )
 
 import sax_instruments
+from sax_pitch import CHROMA, format_cents, midi_note_name
 from sax_theme import cents_band
 
 # Text colour of the mean column for each cents_band() result.
@@ -297,11 +298,7 @@ class TableController:
     # Single-column body
     # -------------------------------------------------------------------------
     def _refresh_single(self) -> None:
-        from sax_intonation_gui import (
-            TRANSP_MAP,
-            format_cents,
-            midi_note_name,
-        )
+        from sax_intonation_gui import TRANSP_MAP
         w = self._w
         instrument = self._get_instrument_key()
         display = self._get_display_mode()
@@ -402,11 +399,7 @@ class TableController:
     # Matrix body
     # -------------------------------------------------------------------------
     def _refresh_matrix(self) -> None:
-        from sax_intonation_gui import (
-            CHROMA,
-            TRANSP_MAP,
-            midi_note_name,
-        )
+        from sax_intonation_gui import TRANSP_MAP
         w = self._w
         instrument = self._get_instrument_key()
         display = self._get_display_mode()

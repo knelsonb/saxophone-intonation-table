@@ -19,7 +19,7 @@ from typing import Callable, Dict, List, Optional
 
 import numpy as np
 
-A4_DEFAULT = 440.0
+from sax_pitch import A4_DEFAULT, midi_to_freq
 
 # Default chromatic octave: C4 (MIDI 60) .. B4 (MIDI 71).
 PITCH_PIPE_NOTES: List[int] = list(range(60, 72))
@@ -34,16 +34,6 @@ __all__ = [
 # ---------------------------------------------------------------------------
 # Pure frequency math.
 # ---------------------------------------------------------------------------
-def midi_to_freq(midi: float, a4: float = A4_DEFAULT) -> float:
-    """Frequency (Hz) of a MIDI note at the given A4 reference.
-
-    ``a4 * 2**((midi - 69) / 12)`` — the inverse of the engine's
-    ``freq_to_midi``. A4 (MIDI 69) maps to ``a4`` exactly, so a non-440 A4
-    shifts every pad correctly.
-    """
-    return float(a4) * (2.0 ** ((float(midi) - 69.0) / 12.0))
-
-
 def pitch_pipe_freq(midi: float, a4: float = A4_DEFAULT) -> float:
     """Frequency of a pitch-pipe pad (alias of :func:`midi_to_freq`)."""
     return midi_to_freq(midi, a4)

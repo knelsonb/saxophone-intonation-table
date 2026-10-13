@@ -1,37 +1,29 @@
-"""Safety net for the two cents-formatting helpers — INTEGER-CENTS contract.
+"""Safety net for the cents readout — INTEGER-CENTS contract.
 
-* format_cents(value_cents, freq_hz, sample_rate)        in sax_intonation_gui
-* _format_cents_label(value_cents, freq_hz, sample_rate) in sax_intonation_chart
+* sax_pitch.format_cents(value_cents, freq_hz, sample_rate) is the one
+  formatter; the live readout (tuner, table, matrix) and the exported chart
+  both call it.
 
-Contract ("never show decimal cents"): both format a finite cent value as a
+Contract ("never show decimal cents"): a finite cent value is formatted as a
 SIGNED INTEGER ("+8" / "-12" / "+0") via int(round(value)). A real saxophone tone
 vibratos by more than a cent, so sub-cent digits claim resolution the reading
 can't hold and only jitter the display; integer is the correct tuner readout.
-The previous adaptive tenths/halves/wholes tiers were removed.
 
-* freq_hz is now used ONLY for the validity guard (<=0 / non-finite -> sentinel);
-  the formatted text no longer depends on freq_hz or sample_rate (both retained
+* freq_hz is used ONLY for the validity guard (<=0 / non-finite -> sentinel);
+  the formatted text does not depend on freq_hz or sample_rate (both retained
   for API stability).
 * Non-finite value_cents or non-finite/non-positive freq_hz -> '–' (U+2013 EN DASH).
 * Always a sign: -0.0 and tiny values round to '+0', never '-0' or a bare '0'.
-* The two implementations live in separate modules but must agree on every input.
-
-No QApplication needed (pure formatters); importing the GUI module needs PyQt6.
 """
 from __future__ import annotations
 
 import pytest
 
-pytest.importorskip('PyQt6', reason='PyQt6 not installed; skipping cents-format tests')
-
-from sax_intonation_chart import _format_cents_label  # noqa: E402
-from sax_intonation_gui import format_cents  # noqa: E402
+from sax_pitch import format_cents
 
 SENTINEL = '–'   # U+2013 EN DASH
 
-_BOTH = pytest.mark.parametrize(
-    "fn", [format_cents, _format_cents_label],
-    ids=["format_cents", "_format_cents_label"])
+_BOTH = pytest.mark.parametrize("fn", [format_cents], ids=["format_cents"])
 
 
 # 1. Non-finite value_cents -> sentinel, never raises (the historic NaN guard).
@@ -104,21 +96,16 @@ def test_return_type_str(fn, value, freq, sr):
     assert isinstance(fn(value, freq, sr), str)
 
 
-# 8. The two implementations agree on every input (live readout == exported chart).
-@pytest.mark.parametrize("value,freq,sr", [
-    (float('nan'), 440.0, 44100), (float('inf'), 440.0, 44100), (float('-inf'), 440.0, 44100),
-    (0.0, 0.0, 44100), (0.0, -1.0, 44100),
-    (0.0, 440.0, 44100), (-0.0, 440.0, 44100), (0.0, 76.0, 44100), (-0.0, 77.0, 44100),
-    (-12.5, 440.0, 44100), (7.85, 440.0, 44100), (50.0, 440.0, 44100), (-23.4, 440.0, 44100),
-    (7.85, 76.0, 44100), (-12.5, 77.0, 44100), (999.9, 440.0, 44100), (-500.0, 440.0, 44100),
-    (7.85, 440.0, 0), (7.85, 440.0, 8), (7.85, 440.0, 1_000_000_000)])
-def test_implementations_agree(value, freq, sr):
-    assert format_cents(value, freq, sr) == _format_cents_label(value, freq, sr)
+# 8. The live readout and the exported chart share the one formatter, so a
+#    cell and its chart label can never disagree.
+def test_chart_uses_the_shared_formatter():
+    pytest.importorskip('PyQt6', reason='the chart module paints with Qt')
+    import sax_intonation_chart
+    assert sax_intonation_chart.format_cents is format_cents
 
 
 # 9. Sentinel glyph identity — U+2013 EN DASH (paint path compares to the literal).
 def test_sentinel_is_en_dash():
     assert SENTINEL == '–'
     assert format_cents(float('nan'), 440.0, 44100) == '–'
-    assert _format_cents_label(float('nan'), 440.0, 44100) == '–'
     assert format_cents(float('nan'), 440.0, 44100) not in ('-', '—')
