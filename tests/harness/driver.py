@@ -48,7 +48,9 @@ the list below is the contract the rewrite must keep or update here:
   Drone / pitch pipes
     * ``_drone_voice_combo`` ``_drone_semitone_nudge()`` ``_drone_semitones``
       ``_btn_drone_on`` ``_drone_ctrl`` ``_drone_status``; ``_btn_pipes``
-      ``_pipes_dlg`` ``_pipe_btns`` ``_pipes_ctrl`` (pads C4..B4).
+      ``_pipes_dlg`` ``_pipe_btns`` ``_pipes_ctrl`` (pads C4..B4);
+      ``sax_drone`` imports ``tinysoundfont`` lazily (hidden to simulate a
+      missing synth).
   DECK tab
     * ``_btn_deck_record`` ``_btn_deck_stop`` ``_btn_deck_play``
       ``_btn_deck_export`` ``_deck_state()`` ``_deck_state_lbl``
@@ -789,6 +791,22 @@ class AppDriver:
     def drone_off(self) -> None:
         if self.win._btn_drone_on.isChecked():
             self.win._btn_drone_on.click()
+
+    def drone_synth_unavailable(self) -> None:
+        """Hide the SoundFont synth package for the rest of this app's life.
+        Relies on ``sax_drone`` importing ``tinysoundfont`` lazily when it first
+        builds a SoundFont voice: a ``None`` entry in ``sys.modules`` makes that
+        import raise ImportError, as on an install without the package."""
+        saved = sys.modules.get("tinysoundfont")
+        had = "tinysoundfont" in sys.modules
+
+        def restore() -> None:
+            if had:
+                sys.modules["tinysoundfont"] = saved
+            else:
+                sys.modules.pop("tinysoundfont", None)
+        self._patches.hook(restore)
+        sys.modules["tinysoundfont"] = None
 
     def drone_state(self) -> DroneState:
         w = self.win

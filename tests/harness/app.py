@@ -234,6 +234,12 @@ class Drone(_Part):
         self._d.drone_off()
         return self._done(self.state)
 
+    def synth_unavailable(self) -> None:
+        """Make the SoundFont synth unavailable, as on an install without it.
+        Call before the drone first sounds."""
+        self._d.drone_synth_unavailable()
+        self._done()
+
     @property
     def state(self) -> DroneState:
         return self._d.drone_state()
