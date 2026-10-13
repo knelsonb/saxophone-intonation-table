@@ -456,3 +456,38 @@ def test_running_metronome_produces_clicks_through_mixer():
         energy += float(np.sum(np.abs(out)))
     assert energy > 0.0, "a running metronome must produce audible clicks"
     assert m.dropped_events == 0, "no scheduled beat may be dropped (drift-zero)"
+
+
+# ===========================================================================
+# 7. Thread boundary -- the beat event runs on the RENDER thread.
+# ===========================================================================
+def test_beat_event_on_render_thread_does_not_fire_on_state_changed():
+    """The per-beat event runs on the render thread. It must click and
+    reschedule but never call on_state_changed: the GUI relabels widgets from
+    that callback, so only GUI-thread start/stop/set_* may notify it."""
+    mb = 1024
+    mixer = Mixer(max_block=mb)
+    fired = []
+    metro = MetronomeController(mixer, 48000, bpm=240,
+                                on_state_changed=lambda *a: fired.append(1))
+    metro.start()                  # start() legitimately notifies (GUI thread)
+    baseline = len(fired)
+
+    # Count the clicks so "no notification" cannot be vacuous.
+    beats = []
+    real_trigger = metro.click_source.trigger
+
+    def counting_trigger(*args, **kwargs):
+        beats.append(1)
+        return real_trigger(*args, **kwargs)
+
+    metro.click_source.trigger = counting_trigger
+    out = np.zeros(mb, dtype=np.float32)
+    for _ in range(500):           # about 40 beats at 240 bpm
+        out[:] = 0.0
+        mixer.render(out, mb)
+
+    assert len(beats) >= 5, "beats must actually fire on the render thread"
+    assert len(fired) == baseline, (
+        f"on_state_changed fired {len(fired) - baseline}x from the render-thread "
+        f"beat event; it must only fire from GUI-thread methods")

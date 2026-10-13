@@ -1,8 +1,9 @@
 """YIN pitch-detection ACCURACY net — cents-tolerance contract.
 
-Complements test_yin_baseline (exact-value ULP change-detector) with the
-contract that actually matters for a tuner: yin_pitch must detect a synthetic
-tone within a tight cents tolerance at the engine's real detection window.
+The contract that matters for a tuner: yin_pitch must detect a synthetic tone
+within a tight cents tolerance at the engine's real detection window. The
+whole MIDI 21-108 sweep through the engine pipeline lives in
+tests/contracts/test_yin_sweep.py.
 
 This is the regression guard for the parabolic-interpolation SIGN BUG (fixed
 2026-05-28): the inverted denominator shifted every refined lag the wrong way
@@ -31,7 +32,7 @@ def _sine(f: float, sr: int, N: int) -> np.ndarray:
 
 
 def _sax_like(f: float, sr: int, N: int) -> np.ndarray:
-    """Five-harmonic saxophone-like tone (same recipe as test_yin_baseline)."""
+    """Five-harmonic saxophone-like tone (same recipe as sim_harness.sax_like)."""
     n = np.arange(N, dtype=np.float64)
     out = (0.50 * np.sin(2.0 * math.pi * 1 * f * n / sr)
            + 0.30 * np.sin(2.0 * math.pi * 2 * f * n / sr + 0.4)
@@ -163,3 +164,42 @@ def test_yin_pitch_robust_to_degenerate_input(name: str, buf: np.ndarray) -> Non
     det, ap = yin_pitch(buf, 44100)
     assert math.isfinite(det) and det >= 0.0, f'{name}: freq {det}'
     assert math.isfinite(ap) and ap >= 0.0, f'{name}: aperiodicity {ap}'
+
+
+# ---------------------------------------------------------------------------
+# Return-value invariants the engine's callback relies on.
+# ---------------------------------------------------------------------------
+def test_yin_pitch_returns_a_float_pair() -> None:
+    result = yin_pitch(_sine(440.0, 44100, 2048), 44100)
+    assert isinstance(result, tuple) and len(result) == 2
+    float(result[0])
+    float(result[1])
+
+
+def test_yin_pitch_aperiodicity_of_a_periodic_tone_is_in_unit_interval() -> None:
+    _freq, ap = yin_pitch(_sine(440.0, 44100, 2048), 44100)
+    assert 0.0 <= ap <= 1.0
+
+
+def test_yin_pitch_silence_is_reported_as_unvoiced() -> None:
+    """All-zero input has no pitch. The returned frequency is arbitrary, but the
+    aperiodicity must be 1.0 so the engine's ``ap > yin_thr`` gate drops the
+    frame."""
+    _freq, ap = yin_pitch(np.zeros(4096, dtype=np.float64), 44100)
+    assert ap == 1.0
+
+
+def test_yin_pitch_buffer_shorter_than_the_lag_range_returns_the_sentinel() -> None:
+    """With two samples the longest lag is not above the shortest, so there is
+    nothing to search: (0.0, 1.0)."""
+    assert yin_pitch(np.array([0.5, -0.5], dtype=np.float64), 44100) == (0.0, 1.0)
+
+
+def test_heavy_noise_is_rejected_by_the_aperiodicity_gate() -> None:
+    """A 440 Hz tone buried at 0 dB SNR can read any pitch (YIN falls to a
+    sub-harmonic lag), so what protects the table is that its aperiodicity
+    stays above every filter preset's ceiling and the frame is dropped."""
+    from sax_audio_engine import FILTER_PRESETS
+    from sim_harness import noisy
+    _freq, ap = yin_pitch(noisy(440.0, 44100, 4096, snr_db=0.0, seed=42), 44100)
+    assert ap > max(p['yin_thr'] for p in FILTER_PRESETS.values())

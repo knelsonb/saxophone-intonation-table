@@ -32,7 +32,9 @@ import tracemalloc
 import numpy as np
 import pytest
 
+from sax_metronome import ClickSource
 from sax_mixer import GainGlide, Mixer, TestToneSource
+from sax_pitch_pipes import PitchPipeSource
 
 
 # ---------------------------------------------------------------------------
@@ -505,6 +507,19 @@ def test_testtone_rejects_bad_args(sr, mb):
 # (2) isolates a source's own allocation from the render path's intrinsic
 # view churn, and is stable across numpy/Python versions.
 # ---------------------------------------------------------------------------
+class _RetriggeredClick:
+    """A metronome ClickSource re-triggered on every render, so its active
+    ``out += burst`` path is measured; a real click drains in well under one
+    block, and an idle ClickSource would only exercise the no-op path."""
+
+    def __init__(self):
+        self._click = ClickSource(48000)
+
+    def render(self, out, frames, t0):
+        self._click.trigger(accent=True)
+        self._click.render(out, frames, t0)
+
+
 def _measure_render_alloc(source, *, frames=512, max_block=512, iters=200):
     m = Mixer(max_block=max_block)
     m.register(source)
@@ -527,6 +542,8 @@ def _measure_render_alloc(source, *, frames=512, max_block=512, iters=200):
         lambda: TestToneSource(freq=440.0, samplerate=48000,
                                max_block=8192, gain=0.2),
         id="testtone_source"),
+    pytest.param(lambda: PitchPipeSource(69, 48000, 8192), id="pitchpipe_source"),
+    pytest.param(lambda: _RetriggeredClick(), id="click_source_active"),
 ])
 def test_render_does_not_leak(make_source):
     """No source may cause RETAINED memory growth across many renders — that
@@ -546,6 +563,8 @@ def test_render_does_not_leak(make_source):
         lambda mb: TestToneSource(freq=440.0, samplerate=48000,
                                   max_block=mb, gain=0.2),
         id="testtone_source"),
+    pytest.param(lambda mb: PitchPipeSource(69, 48000, mb), id="pitchpipe_source"),
+    pytest.param(lambda mb: _RetriggeredClick(), id="click_source_active"),
 ])
 def test_render_has_no_frames_proportional_allocation(make_source):
     """The no-alloc gate, calibrated to the actual invariant: NO allocation

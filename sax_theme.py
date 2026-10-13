@@ -71,7 +71,7 @@ __all__ = [
 class ThemePalette:
     """A complete set of themeable colour roles. Every field is a CSS/Qt hex
     string. Every theme must define every role (enforced by the dataclass +
-    test_theme.test_every_theme_is_complete)."""
+    tests/contracts/test_theme_palette.py)."""
 
     name: str
 

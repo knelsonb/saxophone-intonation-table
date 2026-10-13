@@ -134,3 +134,30 @@ def test_pitch_pipe_rendered_pitch_is_accurate(midi):
     err = H.cents(H.fft_peak_hz(buf, sr), target)
     assert abs(err) < 2.0, (
         f"pitch pipe midi {midi} rendered {err:+.2f} cents off {target:.2f} Hz")
+
+
+# ---------------------------------------------------------------------------
+# Thread boundary: a released pad fades and is reaped on the RENDER thread.
+# ---------------------------------------------------------------------------
+def test_render_thread_fade_and_reap_does_not_fire_on_state_changed():
+    """The controller's on_state_changed (the GUI relabels pads from it) must
+    only fire from the GUI-thread toggle path, never from source.render or the
+    mixer's auto-reap."""
+    mb = 1024
+    mixer = Mixer(max_block=mb)
+    fired = []
+    pipes = pp.PitchPipesController(
+        mixer, 48000, on_state_changed=lambda *a: fired.append(1))
+    pipes.toggle(69)               # sound A4   (GUI thread, notifies)
+    pipes.toggle(69)               # release it (GUI thread, notifies)
+    baseline = len(fired)
+
+    out = np.zeros(mb, dtype=np.float32)
+    for _ in range(200):           # the pad fades to finished and is reaped
+        out[:] = 0.0
+        mixer.render(out, mb)
+
+    assert mixer.active_sources() == 0, "the released pad must have been reaped"
+    assert len(fired) == baseline, (
+        "on_state_changed fired from the render-thread fade/reap; it must only "
+        "fire from the GUI-thread toggle path")

@@ -1,7 +1,6 @@
 """
-Safety net for import_raw_csv — covers paths not exercised by the
-existing test_csv_bom_import.py (which tests only the current-header + BOM
-case).
+Safety net for import_raw_csv — header variants (current, legacy, wrong), the
+UTF-8 BOM Excel prepends, conflict handling, caps and malformed rows.
 
 NOTE: import_raw_csv is a method on MeasurementLog, not a module-level
 function.  RAW_CSV_HEADER_LEGACY is a class attribute on MeasurementLog, not a
@@ -104,6 +103,29 @@ def _legacy_row(**overrides):
         "a4_hz", "midi_sounding", "sounding_note", "midi_fingered",
         "fingered_note", "cents", "freq_hz", "maker", "model",
     )]
+
+
+# ---------------------------------------------------------------------------
+# Test 0: a UTF-8 BOM in front of the header (Excel's "CSV UTF-8") must not
+# break the header match.
+# ---------------------------------------------------------------------------
+
+def test_utf8_bom_before_current_header_imports(tmp_path):
+    p = tmp_path / "excel-roundtrip.csv"
+    _write_csv(p, HEADER, [_current_row(nickname="bom-nickname")])
+    p.write_bytes(b"\xef\xbb\xbf" + p.read_bytes())
+
+    log = _fresh_log()
+    assert log.import_raw_csv(p) == (1, 1, 0)
+    assert log.runs()[0].label == "bom-nickname"
+
+
+def test_utf8_bom_before_legacy_header_imports(tmp_path):
+    p = tmp_path / "excel-legacy.csv"
+    _write_csv(p, HEADER_LEGACY, [_legacy_row()])
+    p.write_bytes(b"\xef\xbb\xbf" + p.read_bytes())
+
+    assert _fresh_log().import_raw_csv(p) == (1, 1, 0)
 
 
 # ---------------------------------------------------------------------------

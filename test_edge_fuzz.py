@@ -4,9 +4,9 @@ reject cleanly, and never let a corrupt frame poison later results.
 
 Coverage map (cite, don't duplicate):
   * yin_pitch degenerate inputs (silence/empty/single-sample/near-zero/hard-clip):
-    test_yin_accuracy.py::test_yin_pitch_robust_to_degenerate_input + test_yin_baseline.py.
+    test_yin_accuracy.py::test_yin_pitch_robust_to_degenerate_input.
   * CSV import (NaN/inf/out-of-range/BOM/malformed rows): test_csv_import_paths.py
-    (#28) + test_csv_bom_import.py.
+    (#28), including the UTF-8 BOM cases.
   * config / customs hostile JSON: test_config_roundtrip.py (STAB-CONFIG-FUZZ).
 
 Gaps closed HERE:

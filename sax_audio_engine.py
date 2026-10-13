@@ -97,7 +97,7 @@ MIN_FREQ = 27.0
 # catalog (piccolo MIDI 93 = 2349 Hz, recorder MIDI 100 = 2637 Hz, piano
 # MIDI 108 = 4186 Hz) aren't silently rejected by the post-YIN gate. The
 # YIN search range expands correspondingly (tmin = sr / fmax shrinks),
-# which is benign for clean signals — see test_yin_baseline.py.
+# which is benign for clean signals — see test_yin_accuracy.py.
 #
 # v0.6.x: raised again 4200 -> 4500. 4200 cleared C8 (MIDI 108) only at A4=440
 # (4186 Hz) by 14 Hz, so at the top of the allowed A4 range (450 Hz -> C8 =
