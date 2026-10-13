@@ -182,7 +182,7 @@ except Exception:
     _DeckController = None
 
 APP_NAME = 'Intonation Analyzer'
-APP_VERSION = '1.2.0'
+APP_VERSION = '1.2.1'
 
 
 
