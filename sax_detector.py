@@ -17,9 +17,10 @@ Hop kinds:
 * reject  silence, an aperiodic frame, a pitch outside the band or the MIDI
           range. Ends the held note: the pending FIFO is trimmed by the release
           guard and the survivors are emitted, then the vote restarts.
-* exclude a pitch the coordination policy excludes (the drone or a pitch pipe
-          is sounding that note, so the mic may be hearing the speaker). Ends
-          the held note like a reject, without a second coordination step.
+* skip    a pitch the coordination policy excludes (the drone or a pitch pipe
+          is sounding that note, so the mic may be hearing the speaker). The
+          hop casts no vote and changes nothing: one bleed hop must not end
+          the player's note or discard its readings.
 * vote    everything else.
 
 Single owner, no locks: the engine's analysis consumer is the only caller, and
@@ -62,8 +63,8 @@ FILTER_PRESETS = {
 }
 FILTER_MODE_DEFAULT = 'normal'
 
-# Coordination hook: (detected MIDI or None, frame RMS) -> MIDIs to skip.
-Coordinate = Callable[[Optional[int], float], frozenset]
+# Coordination hook: detected MIDI (None on a rejected hop) -> MIDIs to skip.
+Coordinate = Callable[[Optional[int]], frozenset]
 
 
 @dataclass(frozen=True)
@@ -143,27 +144,28 @@ class Detector:
         self.rms_db = 20.0 * math.log10(max(rms_eff, 1e-9))
         if rms_eff < p['rms_floor']:
             self.ap, self.freq = 1.0, 0.0
-            return self._reject(coordinate, rms)
+            return self._reject(coordinate)
         freq, ap = yin_pitch(window / (rms + 1e-9), sr)
         self.ap, self.freq = float(ap), float(freq)
         if ap > p['yin_thr'] or not (MIN_FREQ < freq < MAX_FREQ):
-            return self._reject(coordinate, rms)
+            return self._reject(coordinate)
         midi, _cents = _cents_dev(freq, a4)
         if not (self.midi_min <= midi <= self.midi_max):
-            return self._reject(coordinate, rms)
-        if coordinate is not None and midi in coordinate(midi, rms):
-            # The output is sounding this note: the mic may be hearing the
-            # speaker, so the hop must not win the vote.
+            return self._reject(coordinate)
+        if coordinate is not None and midi in coordinate(midi):
+            # The output is sounding this note, so the mic may be hearing the
+            # speaker: the hop casts no vote. It is not silence either, so the
+            # player's held note and its waiting readings stay as they are.
             self.shown_midi = self._locked
-            return self._end_note()
+            return []
         return self._vote(midi, float(freq), a4, a4_generation)
 
     # ---- hop kinds --------------------------------------------------------
-    def _reject(self, coordinate: Optional[Coordinate], rms: float) -> list[NoteEvent]:
+    def _reject(self, coordinate: Optional[Coordinate]) -> list[NoteEvent]:
         self.shown_midi = self._locked
         out = self._end_note()
         if coordinate is not None:
-            coordinate(None, rms)        # keeps the duck's release ramp moving
+            coordinate(None)             # keeps the duck's release ramp moving
         return out
 
     def _end_note(self) -> list[NoteEvent]:

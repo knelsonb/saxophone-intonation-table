@@ -1316,9 +1316,11 @@ class AudioEngine:
         """Run ONE D3 coordination hop and return the MIDIs to vote-exclude.
 
         Called once per detection hop by the analysis consumer — with the
-        detected MIDI and the hop's RMS ``level``, or ``None`` on
-        silence/reject so the
-        coordinator's release ramp keeps advancing. Also the deterministic
+        detected MIDI, or ``None`` on silence/reject so the coordinator's
+        release ramp keeps advancing. ``level`` is the mic level of the newest
+        hop, passed while a duck consumer is attached so the coordinator can
+        re-admit a note the player holds in unison with the output (see
+        sax_coordination). Also the deterministic
         test injection point: a test calls it directly with a synthetic
         ``detected_midi`` (no mic audio needed) and asserts the duck/vote
         behaviour.
@@ -1332,7 +1334,8 @@ class AudioEngine:
         (via get_sounding_output_midis); never nest the two.
         """
         decision = self.coordinator.update(detected_midi,
-                                           self.get_sounding_output_midis())
+                                           self.get_sounding_output_midis(),
+                                           level)
         consumer = self._duck_consumer
         if consumer is not None:
             try:
@@ -2130,8 +2133,20 @@ class AudioEngine:
             self._detector_serial = serial
             self._detector_a4_generation = a4_gen
         sr = ring.samplerate or int(self.samplerate)
+
+        def coordinate(midi: Optional[int]) -> frozenset:
+            # The unison test compares mic levels across the duck, so it needs
+            # the newest audio only: the full window still holds ~370 ms from
+            # before any gain change. Without a duck consumer the duck changes
+            # nothing audible and proves nothing, so no level is passed.
+            level = None
+            if midi is not None and self._duck_consumer is not None:
+                tail = ring.window[-ring.hop:]
+                level = math.sqrt(float(np.dot(tail, tail)) / tail.size)
+            return self.coordination_step(midi, level)
+
         events = det.process(ring.window, sr, a4, a4_gen, self.mic_gain,
-                             self.coordination_step)
+                             coordinate)
         # Diagnostics: bare float stores are GIL-atomic, so get_diagnostics()
         # sees the old or the new value, never a torn one.
         self.last_rms_db = det.rms_db

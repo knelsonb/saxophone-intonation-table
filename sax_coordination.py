@@ -14,7 +14,11 @@ microphone hears it too. Two problems follow:
     vote (so mic-bleed of those notes can never win it), and
   * on *confirmed* suspicion of leakage, ramps a duck gain down toward
     ``duck_depth``; once the leakage clears (past a post-duck confirm window)
-    it ramps back to fully open.
+    it ramps back to fully open;
+  * re-admits a sounding note the player is playing in unison: when the note
+    is still heard ``readmit_frames`` frames after the duck reached its floor,
+    at a level the duck could not have produced from leakage alone, it is the
+    player, and it leaves the exclusion set until the note stops.
 
 It is a pure, deterministic function of per-detection-frame inputs plus an
 internal counter: no audio, no Qt, no sounddevice, no numpy, no locks. It is
@@ -58,8 +62,9 @@ class Decision:
     ----------
     excluded_midis:
         The output's currently-sounding MIDIs, to be removed from the
-        incumbent-pitch vote. Always exactly the ``sounding_output_midis``
-        passed to :meth:`OutputCoordinator.update`.
+        incumbent-pitch vote: the ``sounding_output_midis`` passed to
+        :meth:`OutputCoordinator.update`, minus a note re-admitted as the
+        player's unison (see ``readmit_frames``).
     duck_level:
         The CURRENT (already-ramped) output gain multiplier for this frame, in
         ``[duck_depth, 1.0]``: ``1.0`` = fully open, ``duck_depth`` = fully
@@ -97,16 +102,30 @@ class OutputCoordinator:
         Time the duck ramp spans, converted to a per-frame step via the hop
         cadence. The release ramp uses the same step (symmetric).
     samplerate:
-        Audio sample rate; with the assumed hop it sets the hop duration and
-        thus how many frames ``duck_ms`` spans.
+        Reserved; the detection cadence does not depend on the rate (see
+        ``_DETECTION_HOP_MS``).
+    readmit_frames:
+        Unison re-admission window: consecutive frames the detected note must
+        stay in the sounding set with the duck at its floor before its level is
+        compared with the level heard before the duck. The default (5 frames,
+        ~230 ms) covers the output and input buffering between a gain change
+        and the microphone, with margin. Re-admission needs a ``level`` on
+        every frame; without one (no duck consumer, so ducking proves nothing)
+        a sounding note is never re-admitted.
     """
 
     def __init__(self, suspicion_frames: int = 3, duck_depth: float = 0.30,
-                 duck_ms: float = 80.0, samplerate: int = 44100):
+                 duck_ms: float = 80.0, samplerate: int = 44100,
+                 readmit_frames: int = 5):
         self.suspicion_frames = int(suspicion_frames)
         self.duck_depth = float(duck_depth)
         self.duck_ms = float(duck_ms)
         self.samplerate = int(samplerate)
+        self.readmit_frames = int(readmit_frames)
+        # Leakage scales with the duck; a player does not. Halfway between the
+        # two outcomes (level ratio duck_depth for pure leakage, 1.0 for a
+        # player alone) is the decision point.
+        self._readmit_ratio = (1.0 + self.duck_depth) / 2.0
 
         # Per-frame ramp step: span ``duck_ms`` over (duck_ms / hop_ms) frames.
         # Cadence is rate-invariant (see _DETECTION_HOP_MS) — NOT samples/sr.
@@ -121,18 +140,25 @@ class OutputCoordinator:
         self._match_streak = 0   # consecutive frames detected IN the sounding set
         self._clear_streak = 0   # consecutive frames detected OUT of the set
         self._duck = 1.0         # current (already-ramped) gain, fully open
+        # Unison re-admission state.
+        self._open_level: float | None = None   # level heard before the duck
+        self._floor_streak = 0                  # in-set frames at the duck floor
+        self._readmitted: int | None = None     # the player's unison note
 
     def update(self, detected_midi: int | None,
-               sounding_output_midis: frozenset[int]) -> Decision:
+               sounding_output_midis: frozenset[int],
+               level: float | None = None) -> Decision:
         """Advance one detection frame and return the coordination Decision.
 
         ``detected_midi`` is the post-detection incumbent MIDI for this frame,
         or ``None`` on silence/rejection (``None`` is never "in" the sounding
         set, so it can never accumulate suspicion). ``sounding_output_midis``
-        is the set the output is currently sounding.
+        is the set the output is currently sounding. ``level`` is the mic level
+        of the newest audio in the frame (any linear unit, the same every
+        frame), or ``None`` when ducking cannot be observed.
         """
-        # Vote-exclude is exactly the sounding set. It is already an immutable
-        # frozenset per the contract, so pass it straight through (no per-frame
+        # Vote-exclude the sounding set. It is already an immutable frozenset
+        # per the contract, so pass it straight through (no per-frame
         # allocation); only normalise if a caller hands us another iterable.
         excluded: frozenset[int] = (
             sounding_output_midis
@@ -159,8 +185,46 @@ class OutputCoordinator:
         # else: still building a suspicion streak, or inside the confirm
         # window -> hold the current gain (hysteresis).
 
+        self._track_unison(detected_midi if in_set else None, level)
+        if self._readmitted is not None and self._readmitted in excluded:
+            excluded = excluded - {self._readmitted}
+
         return Decision(
             excluded_midis=excluded,
             duck_level=self._duck,
             suspicious=suspicious,
         )
+
+    def _track_unison(self, midi: int | None, level: float | None) -> None:
+        """Decide whether the in-set note this frame is the player.
+
+        Ducking scales whatever the mic hears from the speaker by about
+        ``duck_depth``. A note that is still heard at more than halfway between
+        that and the level heard before the duck, once the duck has settled at
+        its floor, is coming from somewhere the duck does not reach: the player.
+        """
+        if midi is None or (self._readmitted is not None
+                            and midi != self._readmitted):
+            # The note stopped or changed. The pre-duck level stays: it is
+            # still the reference for as long as the duck has not reopened.
+            self._floor_streak = 0
+            self._readmitted = None
+            if midi is None:
+                return
+        if level is None:
+            # Ducking cannot be observed: nothing can be re-admitted.
+            self._open_level = None
+            self._floor_streak = 0
+            return
+        if self._readmitted == midi:
+            return
+        if self._duck >= 1.0:
+            self._open_level = level
+        if self._duck <= self.duck_depth + 1e-9:
+            self._floor_streak += 1
+        else:
+            self._floor_streak = 0
+        if (self._open_level is not None
+                and self._floor_streak >= self.readmit_frames
+                and level >= self._open_level * self._readmit_ratio):
+            self._readmitted = midi

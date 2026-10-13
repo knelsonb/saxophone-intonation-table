@@ -260,3 +260,54 @@ def test_decision_is_frozen_dataclass_with_expected_fields():
     assert isinstance(d.excluded_midis, frozenset)
     assert isinstance(d.duck_level, float)
     assert isinstance(d.suspicious, bool)
+
+
+# ---------------------------------------------------------------------------
+# 5. Unison re-admission — a sounding note the PLAYER holds is measured.
+#
+# Ducking scales leakage, not the player. Once the duck has settled at its
+# floor for readmit_frames frames, a note still heard at more than halfway
+# between duck_depth and its pre-duck level is the player's and leaves the
+# exclusion set; leakage that drops with the duck stays excluded.
+# ---------------------------------------------------------------------------
+def _frames_until_readmitted(coord, level_of, midi=69, limit=200):
+    s = frozenset({midi})
+    for i in range(1, limit + 1):
+        d = coord.update(midi, s, level_of(coord))
+        if midi not in d.excluded_midis:
+            return i
+    return None
+
+
+def test_a_note_still_heard_at_full_level_under_the_duck_is_readmitted():
+    coord = OutputCoordinator(duck_depth=0.30, readmit_frames=5)
+    n = _frames_until_readmitted(coord, lambda c: 1.0)
+    assert n is not None, "a player holding the drone's note must become measurable"
+    # suspicion (3) + ramp to the floor + the post-duck window (5)
+    assert 3 + 5 <= n <= 3 + 5 + 4, n
+    d = coord.update(69, frozenset({69}), 1.0)
+    assert d.excluded_midis == frozenset() and d.suspicious, (
+        "re-admitted, while the output stays ducked under the unison")
+
+
+def test_leakage_that_follows_the_duck_is_never_readmitted():
+    """Pure mic bleed: the heard level is the output level, i.e. the duck."""
+    coord = OutputCoordinator(duck_depth=0.30, readmit_frames=5)
+    assert _frames_until_readmitted(coord, lambda c: c._duck) is None
+
+
+def test_without_a_level_a_sounding_note_is_never_readmitted():
+    """No duck consumer: ducking changes nothing audible, so it proves nothing."""
+    coord = OutputCoordinator(readmit_frames=5)
+    assert _frames_until_readmitted(coord, lambda c: None) is None
+
+
+def test_readmission_ends_with_the_note():
+    coord = OutputCoordinator(duck_depth=0.30, readmit_frames=5)
+    s = frozenset({69})
+    assert _frames_until_readmitted(coord, lambda c: 1.0) is not None
+    coord.update(None, s)                           # the player stops
+    d = coord.update(69, s, 1.0)
+    assert d.excluded_midis == s, "a new note must earn re-admission again"
+    assert _frames_until_readmitted(coord, lambda c: 1.0) is not None, (
+        "the pre-duck reference survives a gap while the duck stays down")

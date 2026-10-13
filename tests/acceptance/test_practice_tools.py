@@ -236,8 +236,6 @@ def test_the_tuner_keeps_reading_the_player_while_the_drone_sounds(app):
     assert row.mean == 0 and row.n >= 5
 
 
-@pytest.mark.xfail(strict=True, reason="Sauron-4: the drone's own note is excluded, so "
-                                       "playing in unison with it is never measured")
 def test_playing_in_unison_with_the_drone_is_measured(app):
     """Tuning a long A against an A drone is the whole point of a drone: the
     played A must show up in the tuner and the table."""

@@ -225,3 +225,31 @@ def test_the_window_drops_a_reading_graded_against_a_replaced_a4():
     gui.MainWindow._on_note_event(window, NoteEvent(69, 440.0, 0.0, 440.0, 2))
     gui.MainWindow._on_note_event(window, NoteEvent(69, 442.0, 1.0, 442.0, 3))
     assert recorded == [(69, 442.0, 1.0)]
+
+
+# ------------------------------------------------------ excluded hops skip
+def _hold(detector, tone_window, hops, coordinate=None, sr=44100):
+    out = []
+    for _ in range(hops):
+        out += detector.process(tone_window, sr, 440.0, 0, 1.0, coordinate)
+    return out
+
+
+def test_an_excluded_hop_skips_its_vote_and_keeps_the_players_note():
+    """One hop of drone bleed in the middle of the player's note must not end
+    the note: no lock reset, no waiting reading discarded, no new attack edge."""
+    from sax_detector import Detector
+
+    window = sim.sax_like(523.25, 44100, 16384, 0.5)       # the player's C5
+    plain = Detector('normal')
+    expected = _hold(plain, window, 20)
+
+    bled = Detector('normal')
+    got = _hold(bled, window, 10)
+    assert bled.locked_midi == 72
+    bleed = sim.sax_like(440.0, 44100, 16384, 0.5)         # the drone's A4
+    assert bled.process(bleed, 44100, 440.0, 0, 1.0, lambda m: frozenset({69})) == []
+    assert bled.locked_midi == 72, "the bleed hop must not reset the player's lock"
+    got += _hold(bled, window, 10)
+    assert len(got) == len(expected), "no reading lost to the bleed hop"
+    assert {e.midi for e in got} == {72}
