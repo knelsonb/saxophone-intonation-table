@@ -205,7 +205,7 @@ class InstrumentController:
         self._engine.instr_key = key
         # Instrument switch ⇒ new run, so per-run aggregates stay coherent.
         # Empty predecessor runs are coalesced inside `start_run`.
-        if AUDIO_OK and getattr(w, '_recording', False):
+        if AUDIO_OK and w._recording:
             self._log.start_run(instrument=key,
                                 a4_hz=self._engine.a4,
                                 label=self._nick_edit.text().strip())
@@ -221,7 +221,7 @@ class InstrumentController:
         by start_run, so typing a name before playing just relabels it.
         Clearing the nickname opens a run with an empty label."""
         nickname = self._nick_edit.text().strip()
-        if not (AUDIO_OK and getattr(self._w, '_recording', False)):
+        if not (AUDIO_OK and self._w._recording):
             return
         current = self._log.current_run()
         # editingFinished also fires on a plain focus change; only an actual

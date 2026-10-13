@@ -271,9 +271,7 @@ class SpectrumAnalyzerWidget(QWidget):
         # Engine may have reallocated _buf at a different sample rate;
         # if our cached window/bucket maps no longer match, rebuild.
         if buf.size != self._window.size:
-            self._rebuild_for(buf.size,
-                              int(getattr(self._engine, 'samplerate',
-                                           DEFAULT_SAMPLE_RATE)))
+            self._rebuild_for(buf.size, int(self._engine.samplerate))
         # Bucket the rfft magnitudes into log-spaced bins, take the max
         # per bucket so narrow spikes survive the downsampling.
         windowed = buf * self._window
@@ -480,8 +478,8 @@ class DataPanelWidget(QWidget):
         if not AUDIO_OK:
             return '—'
         eng = self._engine
-        if eng is not None and getattr(eng, 'active_device', None) is not None:
-            d = eng.active_device
+        d = eng.active_device if eng is not None else None
+        if d is not None:
             return f'{d.name}  [{d.host_api}]' if d.host_api else d.name
         return '—'
 
@@ -560,7 +558,7 @@ class DataPanelWidget(QWidget):
         # last-refresh time here lets the user confirm at a glance
         # that hot-plug detection is alive when a new interface fails
         # to recover.
-        last = getattr(self._engine, 'last_devices_refresh_at', None)
+        last = self._engine.last_devices_refresh_at
         if last is None:
             self._rows['data_hotplug_poller'].setText(
                 self._t('data_hotplug_value_never', interval=1))

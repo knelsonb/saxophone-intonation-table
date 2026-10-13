@@ -102,6 +102,11 @@ class TableController:
         # the paint and the right-click mapping always use the painted span.
         self._matrix_lo_oct: int = 0
         self._matrix_hi_oct: int = -1
+        # Delegates swapped in by configure_for_mode: the plain one for the
+        # single layout's text columns, the painted cell for the matrix.
+        self._default_delegate = QStyledItemDelegate(table)
+        self._matrix_delegate = MatrixCellDelegate(
+            table, sample_rate_getter=window._engine_sample_rate)
 
     # -------------------------------------------------------------------------
     # Public surface
@@ -116,18 +121,6 @@ class TableController:
         300 ms hot path.
         """
         w = self._w
-        # Lazily build the delegates the way the original code did so
-        # the matrix view's custom paint and the single view's bar
-        # delegate both work without per-call construction.
-        if not hasattr(w, '_default_delegate'):
-            w._default_delegate = QStyledItemDelegate(self._table)
-        # _matrix_delegate is built in MainWindow's _build_ui paths
-        # historically; it may not exist yet if configure_for_mode is
-        # called before that.  Build defensively.
-        if not hasattr(w, '_matrix_delegate'):
-            w._matrix_delegate = MatrixCellDelegate(
-                self._table, sample_rate_getter=w._engine_sample_rate)
-
         # Drop stale items before reconfiguring.  Without this, a
         # single→matrix switch would leave the old single-mode items
         # parented to the table after setRowCount/setColumnCount churn.
@@ -154,8 +147,8 @@ class TableController:
                 self._table.setColumnWidth(c, w._MATRIX_COL_WIDTH)
             self._table.setHorizontalScrollBarPolicy(
                 Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-            self._table.setItemDelegateForColumn(5, w._default_delegate)
-            self._table.setItemDelegate(w._matrix_delegate)
+            self._table.setItemDelegateForColumn(5, self._default_delegate)
+            self._table.setItemDelegate(self._matrix_delegate)
             # Allocate cell items ONCE — refresh ticks reuse them.
             for r in range(12):
                 for c in range(n_oct):
@@ -171,7 +164,7 @@ class TableController:
             self._table.setHorizontalHeaderLabels(self._table_headers())
             # Restore the default per-table delegate, then the bar
             # delegate for the tendency column.
-            self._table.setItemDelegate(w._default_delegate)
+            self._table.setItemDelegate(self._default_delegate)
             self._table.setItemDelegateForColumn(5, w._bar_delegate)
             # Row count for single-mode is determined per-refresh by the
             # filtered stats list — _refresh_single() calls setRowCount

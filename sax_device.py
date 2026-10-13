@@ -157,10 +157,9 @@ class DeviceController:
         dev = self._engine.get_active_device()
         name = dev.name if dev else ''
         host = dev.host_api if dev else ''
-        sr = int(getattr(self._engine, 'samplerate', 0) or 0)
+        sr = int(self._engine.samplerate or 0)
         w = self._w
-        if hasattr(w, '_audio_chip'):
-            w._audio_chip.update_from_state(state, name, host, sr)
+        w._audio_chip.update_from_state(state, name, host, sr)
         if self._audio_banner is not None:
             if state == AudioEngineState.FAILED:
                 self._audio_banner.show_for(err, name, msg)
@@ -168,7 +167,7 @@ class DeviceController:
                 self._audio_banner.hide()
         if state == AudioEngineState.RUNNING:
             self.persist_active_device()
-            if hasattr(w, '_tuner') and sr:
+            if sr:
                 w._tuner.sample_rate = sr
             # First-time-only notice if we wound up at a non-44.1k rate.
             if (sr and sr != 44100
@@ -178,9 +177,7 @@ class DeviceController:
                 sax_config.save_config(self._cfg)
                 # Surface as a passive status-bar line, not a modal, so a
                 # sample-rate disclosure never blocks the player.
-                if hasattr(w, '_status_lbl'):
-                    w._status_lbl.setText(
-                        self._t('audio_sr_notice', sr=sr))
+                w._status_lbl.setText(self._t('audio_sr_notice', sr=sr))
 
     def on_devices_changed(self, _devices) -> None:
         # Nothing to do at the MainWindow level — the picker reads

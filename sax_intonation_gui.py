@@ -156,6 +156,9 @@ class MainWindow(QMainWindow):
         self._active_midi: int | None = None
         self._active_midi_at: datetime.datetime | None = None
         self._layout_mode: str = 'single'   # 'single' | 'matrix'
+        # Built after _build_ui; selecting the start-up instrument at the end
+        # of _build_ui asks for a table refresh before it exists.
+        self._table_ctrl: TableController | None = None
         # Cumulative count of distinct note emissions since launch (each
         # _on_note increments). Diagnostics readout consumes this; the
         # table-level note count comes from `len(self.stats)`.
@@ -171,6 +174,12 @@ class MainWindow(QMainWindow):
         self._oor_banner_shown: bool = False
         # Threshold: ~12 notes feels like one phrase of all-wrong notes.
         self._oor_threshold: int = 12
+        # Instrument maker/model for export headers. ExportController asks once
+        # and stores the answer here; Reset clears _instr_info_asked so the
+        # next export asks again.
+        self._last_maker = ''
+        self._last_model = ''
+        self._instr_info_asked = False
 
         # Load user config + previously-registered custom instruments before
         # building the UI so the catalog reflects them at first paint.
@@ -264,10 +273,9 @@ class MainWindow(QMainWindow):
             get_instrument_key=lambda: self.instrument,
             get_stats=lambda: self.stats,
             get_lang=lambda: self.lang,
-            get_maker=lambda: getattr(self, '_last_maker', ''),
-            get_model=lambda: getattr(self, '_last_model', ''),
-            get_nickname=lambda: (self._nick_edit.text()
-                                  if hasattr(self, '_nick_edit') else ''),
+            get_maker=lambda: self._last_maker,
+            get_model=lambda: self._last_model,
+            get_nickname=lambda: self._nick_edit.text(),
         )
         # Intonation-table refresh + matrix paint
         # pipeline lives on TableController.  The QTimer that drives the
@@ -318,8 +326,8 @@ class MainWindow(QMainWindow):
             engine=self._engine,
             cfg=self._cfg,
             t_func=self._t,
-            info_banner=getattr(self, '_info_banner', None),
-            audio_banner=getattr(self, '_audio_banner', None),
+            info_banner=self._info_banner,
+            audio_banner=self._audio_banner,
             get_lang=lambda: self.lang,
             on_active_device_changed=None,
         )
@@ -730,6 +738,8 @@ class MainWindow(QMainWindow):
         for i, key in enumerate(self._tab_keys):
             self._tabs.setTabToolTip(i, self._t(f'nav_tab_{key}_tip'))
         self._install_tab_indicators()
+        # Paint the deck transport now that the tab's recording dot exists.
+        self._sync_deck_transport()
         self._tabs.currentChanged.connect(self._on_tab_changed)
         root.addWidget(self._tabs, 1)
         # Restore the last-active tab (cfg.last_active_tab,
@@ -1033,33 +1043,25 @@ class MainWindow(QMainWindow):
         mixer.reset_clock(), which would wipe a running metronome's scheduled
         beat (the rolling-horizon scheduler only reschedules from a fired beat).
         New sources register on the existing stream fine."""
-        if getattr(self._engine, 'output_running', False):
+        if self._engine.output_running:
             return True
-        if hasattr(self._engine, 'open_output_device'):
-            try:
-                self._engine.open_output_device(self._current_output_selection())
-            except Exception:
-                pass
-        return bool(getattr(self._engine, 'output_running', False))
+        try:
+            self._engine.open_output_device(self._current_output_selection())
+        except Exception:
+            pass
+        return bool(self._engine.output_running)
 
     def _sync_output_rate_consumers(self) -> None:
         """Push the open output stream's rate and block size to the drone and
         pitch pipes. Both synthesise at a rate fixed when their sources are
         built; a mismatch with the stream shifts their pitch by
         12*log2(stream/source) semitones."""
-        sr = int(getattr(self._engine, 'output_samplerate', 0) or 0)
+        sr = int(self._engine.output_samplerate or 0)
         if sr <= 0:
             return
-        mixer = getattr(self._engine, 'mixer', None)
-        mb = int(getattr(mixer, 'max_block', 0) or 0) or None
-        for ctrl, method, args in (
-                (getattr(self, '_drone_ctrl', None), 'set_samplerate', (sr,)),
-                (getattr(self, '_pipes_ctrl', None), 'set_output', (sr, mb))):
-            if ctrl is not None and hasattr(ctrl, method):
-                try:
-                    getattr(ctrl, method)(*args)
-                except Exception:
-                    pass
+        self._drone_ctrl.set_samplerate(sr)
+        if self._pipes_ctrl is not None:      # built on first open
+            self._pipes_ctrl.set_output(sr, self._engine.mixer.max_block)
 
     def _reopen_output_bracketed(self, sel: 'DeviceSelection') -> None:
         """Open a (different) output device, keeping a running metronome PHASE-
@@ -1073,52 +1075,40 @@ class MainWindow(QMainWindow):
         change, so this lives here, not in the engine (stays client-ignorant) or
         the controller (stable contract). Covers GUI-orchestrated switches;
         engine-internal hot-plug auto-recovery is still out of reach here."""
-        ctrl = getattr(self, '_metro_ctrl', None)
-        was_running = ctrl is not None and ctrl.is_running()
-        if hasattr(self._engine, 'open_output_device'):
-            try:
-                self._engine.open_output_device(sel)   # calls mixer.reset_clock()
-            except Exception:
-                pass
-        if getattr(self._engine, 'output_running', False):
+        ctrl = self._metro_ctrl
+        was_running = ctrl.is_running()
+        try:
+            self._engine.open_output_device(sel)   # calls mixer.reset_clock()
+        except Exception:
+            pass
+        if self._engine.output_running:
             self._sync_output_rate_consumers()
         if not was_running:
             return
-        sr = int(getattr(self._engine, 'output_samplerate', 0) or 0)
-        if getattr(self._engine, 'output_running', False):
-            if hasattr(ctrl, 'resync'):
-                try:
-                    ctrl.resync(sr if sr else None)    # Option B: seamless resume
-                except Exception:
-                    pass
-            else:                                       # older controller: Option A
-                if sr and hasattr(ctrl, 'set_samplerate'):
-                    try:
-                        ctrl.set_samplerate(sr)
-                    except Exception:
-                        pass
-                ctrl.start()
+        sr = int(self._engine.output_samplerate or 0)
+        if self._engine.output_running:
+            try:
+                ctrl.resync(sr if sr else None)    # seamless resume on the next beat
+            except Exception:
+                pass
         else:
             try:
-                ctrl.stop()                             # reopen failed: stop cleanly
+                ctrl.stop()                        # reopen failed: stop cleanly
             except Exception:
                 pass
 
     def _refresh_output_device_combo(self) -> None:
         """Fill the SETUP output combo: System default first, then the
-        engine's output enumeration. hasattr-guarded so the GUI still
-        launches if the engine has no output enumeration (the combo then
-        shows only System default)."""
+        engine's output enumeration (empty when it fails, leaving only System
+        default)."""
         combo = self._out_device_combo
         was_blocked = combo.blockSignals(True)
         combo.clear()
         combo.addItem(self._t('setup_output_default'), '')
-        devices = []
-        if hasattr(self._engine, 'refresh_output_devices'):
-            try:
-                devices = self._engine.refresh_output_devices() or []
-            except Exception:
-                devices = []
+        try:
+            devices = self._engine.refresh_output_devices() or []
+        except Exception:
+            devices = []
         self._output_devices_cache = list(devices)
         saved_name = str(getattr(self._cfg, 'output_device_name', '') or '')
         select_idx = 0
@@ -1146,8 +1136,8 @@ class MainWindow(QMainWindow):
             sax_config.save_config(self._cfg)
         except Exception:
             pass
-        # Re-open on the new device. Brackets a running metronome (Option A) so
-        # the reopen's mixer.reset_clock() can't silently kill its beat chain.
+        # Re-open on the new device. Brackets a running metronome so the
+        # reopen's mixer.reset_clock() can't silently kill its beat chain.
         self._reopen_output_bracketed(self._current_output_selection())
 
     def _on_prefer_duplex_toggled(self, checked: bool) -> None:
@@ -1219,12 +1209,9 @@ class MainWindow(QMainWindow):
             # reopening an already-running one (that would reset the mixer
             # clock and kill a running metronome).
             self._ensure_output_open()
-            if hasattr(self._engine, 'start_test_tone'):
-                try:
-                    self._test_tone_handle = self._engine.start_test_tone(440.0)
-                except Exception:
-                    self._test_tone_handle = None
-            else:
+            try:
+                self._test_tone_handle = self._engine.start_test_tone(440.0)
+            except Exception:
                 self._test_tone_handle = None
             if self._test_tone_handle is None:
                 # Nothing is sounding — don't let the button claim "Stop".
@@ -1241,8 +1228,7 @@ class MainWindow(QMainWindow):
         else:
             self._btn_test_tone.setText(self._t('setup_testtone_play'))
             self._test_tone_status.setVisible(False)
-            if (self._test_tone_handle is not None
-                    and hasattr(self._engine, 'stop_test_tone')):
+            if self._test_tone_handle is not None:
                 try:
                     self._engine.stop_test_tone(self._test_tone_handle)
                 except Exception:
@@ -1288,10 +1274,7 @@ class MainWindow(QMainWindow):
 
     def set_deck_recording(self, recording: bool) -> None:
         """Public hook for the DeckController: show a pulsing red dot on the
-        DECK tab while a take is recording. No-ops if the indicator hasn't been
-        built yet (the deck tab is built before _install_tab_indicators runs)."""
-        if not hasattr(self, '_deck_dot'):
-            return
+        DECK tab while a take is recording."""
         if recording:
             self._deck_pulse_bright = True
             self._deck_dot.set_color('#e74c3c')
@@ -1513,12 +1496,9 @@ class MainWindow(QMainWindow):
             return
         # Match the controller's clock to the (possibly re-negotiated) output
         # rate before it schedules beats.
-        sr = int(getattr(self._engine, 'output_samplerate', 0) or 0)
-        if sr and hasattr(self._metro_ctrl, 'set_samplerate'):
-            try:
-                self._metro_ctrl.set_samplerate(sr)
-            except Exception:
-                pass
+        sr = int(self._engine.output_samplerate or 0)
+        if sr:
+            self._metro_ctrl.set_samplerate(sr)
         self._metro_ctrl.start()      # fires on_state_changed -> dot + label
 
     def _on_metro_state_changed(self) -> None:
@@ -1652,18 +1632,13 @@ class MainWindow(QMainWindow):
         self._deck_pump_timer.timeout.connect(self._deck_pump)
         self._deck_pump_timer.start()
 
-        # Paint the initial (idle/empty, or controller-driven) transport.
-        self._sync_deck_transport()
         return w
 
     def _deck_state(self) -> str:
         """Current deck state normalized into DECK_STATES. Tolerates a str or an
         enum, and hyphen OR underscore ('have-take'/'have_take'), so the GUI
         can't drift from sax_deck's exact spelling (str-enum, value 'have-take')."""
-        ctrl = self._deck_ctrl
-        raw = getattr(ctrl, 'state', 'idle')
-        val = getattr(raw, 'value', None) or getattr(raw, 'name', None) or raw
-        s = str(val).replace('-', '_').lower()
+        s = self._deck_ctrl.state.value.replace('-', '_')
         return s if s in self.DECK_STATES else 'idle'
 
     def _deck_can_record(self) -> bool:
@@ -1671,13 +1646,10 @@ class MainWindow(QMainWindow):
         controller's can_record() (engine.input_running). Optimistic only when
         the controller lacks the probe — start_record()'s False-return is the
         authoritative post-click check either way."""
-        ctrl = self._deck_ctrl
-        if hasattr(ctrl, 'can_record'):
-            try:
-                return bool(ctrl.can_record())
-            except Exception:
-                return False
-        return True
+        try:
+            return bool(self._deck_ctrl.can_record())
+        except Exception:
+            return False
 
     def _sync_deck_transport(self) -> None:
         """Single source of truth: paint every transport control, the recording
@@ -1738,10 +1710,8 @@ class MainWindow(QMainWindow):
         """GUI-thread tick: let the controller detect playback-end / cap-hit
         (it fires on_state_changed when a transition happens), then re-sync if
         the state or the can_record() probe changed (e.g. the mic opened)."""
-        ctrl = self._deck_ctrl
         try:
-            if hasattr(ctrl, 'pump'):
-                ctrl.pump()          # may fire on_state_changed → _sync
+            self._deck_ctrl.pump()   # may fire on_state_changed → _sync
         except Exception:
             pass
         if (self._deck_state() != self._deck_last_state
@@ -1796,12 +1766,6 @@ class MainWindow(QMainWindow):
         if not self._ensure_output_open():
             self._deck_show_status('deck_play_unavailable')
             return
-        sr = int(getattr(self._engine, 'output_samplerate', 0) or 0)
-        if sr and hasattr(self._deck_ctrl, 'set_samplerate'):
-            try:
-                self._deck_ctrl.set_samplerate(sr)
-            except Exception:
-                pass
         ok = False
         try:
             ok = bool(self._deck_ctrl.play())   # fires on_state_changed
@@ -1851,8 +1815,11 @@ class MainWindow(QMainWindow):
         self._drone_voice_id = self._cfg.drone_voice_id
         self._drone_volume = self._cfg.drone_volume
         self._drone_semitones = self._cfg.drone_semitones
+        # The pitch-pipes dialog, its pads and its controller are built on
+        # first open.
         self._pipes_ctrl = None
         self._pipes_dlg = None
+        self._pipe_btns: dict = {}
         self._drone_ctrl = DroneController(
             self._engine.mixer, self._output_rate(),
             voice_id=self._drone_voice_id,
@@ -1953,12 +1920,9 @@ class MainWindow(QMainWindow):
         if not self._ensure_output_open():
             self._drone_revert_toggle()
             return
-        sr = int(getattr(self._engine, 'output_samplerate', 0) or 0)
-        if sr and hasattr(self._drone_ctrl, 'set_samplerate'):
-            try:
-                self._drone_ctrl.set_samplerate(sr)
-            except Exception:
-                pass
+        sr = int(self._engine.output_samplerate or 0)
+        if sr:
+            self._drone_ctrl.set_samplerate(sr)
         self._drone_ctrl.set_enabled(True)   # fires on_state_changed
         self._report_drone_fallback()
 
@@ -1968,13 +1932,12 @@ class MainWindow(QMainWindow):
         ctrl = self._drone_ctrl
         if not ctrl.synth_fallback:
             return
-        combo = getattr(self, '_drone_voice_combo', None)
-        if combo is not None:
-            idx = combo.findData(ctrl.voice_id)
-            if idx >= 0:
-                blocked = combo.blockSignals(True)
-                combo.setCurrentIndex(idx)
-                combo.blockSignals(blocked)
+        combo = self._drone_voice_combo
+        idx = combo.findData(ctrl.voice_id)
+        if idx >= 0:
+            blocked = combo.blockSignals(True)
+            combo.setCurrentIndex(idx)
+            combo.blockSignals(blocked)
         self._drone_status.setText(self._t('drone_sine_fallback'))
         self._drone_status.setVisible(True)
 
@@ -2009,26 +1972,24 @@ class MainWindow(QMainWindow):
             blocked = b.blockSignals(True)
             b.setChecked(vid == self._drone_voice_id)
             b.blockSignals(blocked)
-        combo = getattr(self, '_drone_voice_combo', None)
-        if combo is not None:
-            for i in range(combo.count()):
-                if combo.itemData(i) == self._drone_voice_id:
-                    blocked = combo.blockSignals(True)
-                    combo.setCurrentIndex(i)
-                    combo.blockSignals(blocked)
-                    break
+        combo = self._drone_voice_combo
+        for i in range(combo.count()):
+            if combo.itemData(i) == self._drone_voice_id:
+                blocked = combo.blockSignals(True)
+                combo.setCurrentIndex(i)
+                combo.blockSignals(blocked)
+                break
 
     def _on_drone_state_changed(self) -> None:
         """Zero-arg slot for DroneController.on_state_changed. The controller is
         the single source of truth: sync the on/off button, voice selection
         (preset row + SETUP combo), volume, and semitone from it + persist."""
         ctrl = self._drone_ctrl
-        enabled = bool(ctrl.is_enabled()) if hasattr(ctrl, 'is_enabled') \
-            else bool(getattr(ctrl, 'enabled', False))
+        enabled = ctrl.is_enabled()
         blocked = self._btn_drone_on.blockSignals(True)
         self._btn_drone_on.setChecked(enabled)
         self._btn_drone_on.blockSignals(blocked)
-        vid = str(getattr(ctrl, 'voice_id', self._drone_voice_id))
+        vid = str(ctrl.voice_id)
         if vid != self._drone_voice_id:
             self._drone_voice_id = vid
             self._cfg.drone_voice_id = vid
@@ -2116,7 +2077,7 @@ class MainWindow(QMainWindow):
                 active = set(self._pipes_ctrl.active_midis())
             except Exception:
                 active = set()
-        for midi, b in getattr(self, '_pipe_btns', {}).items():
+        for midi, b in self._pipe_btns.items():
             blocked = b.blockSignals(True)
             b.setChecked(midi in active)
             b.blockSignals(blocked)
@@ -2124,7 +2085,7 @@ class MainWindow(QMainWindow):
     def _on_pipes_state_changed(self) -> None:
         """Zero-arg slot for PitchPipesController.on_state_changed — highlight
         the sustaining pad (if the modal is open)."""
-        if getattr(self, '_pipe_btns', None):
+        if self._pipe_btns:
             self._sync_pipe_btns()
 
     def _table_headers(self):
@@ -2153,11 +2114,9 @@ class MainWindow(QMainWindow):
     def _retranslate(self):
         """Aktualisiert alle beschrifteten Widgets ohne Neuaufbau."""
         self.setWindowTitle(f"{self._t('window_title')} {APP_VERSION}")
-        tabs = getattr(self, '_tabs', None)
-        if tabs is not None:
-            for i, key in enumerate(self._tab_keys):
-                tabs.setTabText(i, self._t(f'nav_tab_{key}'))
-                tabs.setTabToolTip(i, self._t(f'nav_tab_{key}_tip'))
+        for i, key in enumerate(self._tab_keys):
+            self._tabs.setTabText(i, self._t(f'nav_tab_{key}'))
+            self._tabs.setTabToolTip(i, self._t(f'nav_tab_{key}_tip'))
         self._grp_instr.setTitle(self._t('grp_instrument'))
         self._grp_disp.setTitle(self._t('grp_display'))
         self._grp_a4.setTitle(self._t('grp_a4'))
@@ -2175,8 +2134,7 @@ class MainWindow(QMainWindow):
         self._populate_instrument_combo(select_key=self.instrument)
         self._btn_custom.setText(self._t('custom_label'))
         self._btn_custom.setToolTip(self._t('custom_dlg_title'))
-        if hasattr(self, '_btn_range'):
-            self._btn_range.setToolTip(self._t('gear_tip'))
+        self._btn_range.setToolTip(self._t('gear_tip'))
         self._nick_edit.setPlaceholderText(self._t('nickname_tip'))
 
         # Display-Combo
@@ -2188,34 +2146,28 @@ class MainWindow(QMainWindow):
         self._disp_combo.blockSignals(False)
 
         # Layout-Combo — re-label the Auto/List/Grid items in the new lang.
-        if hasattr(self, '_layout_combo'):
-            cur = self._layout_combo.currentData()
-            self._layout_combo.blockSignals(True)
-            self._layout_combo.clear()
-            self._layout_combo.addItem(self._t('layout_auto'), 'auto')
-            self._layout_combo.addItem(self._t('layout_single'), 'single')
-            self._layout_combo.addItem(self._t('layout_matrix'), 'matrix')
-            for i in range(self._layout_combo.count()):
-                if self._layout_combo.itemData(i) == cur:
-                    self._layout_combo.setCurrentIndex(i)
-                    break
-            self._layout_combo.blockSignals(False)
+        cur = self._layout_combo.currentData()
+        self._layout_combo.blockSignals(True)
+        self._layout_combo.clear()
+        self._layout_combo.addItem(self._t('layout_auto'), 'auto')
+        self._layout_combo.addItem(self._t('layout_single'), 'single')
+        self._layout_combo.addItem(self._t('layout_matrix'), 'matrix')
+        for i in range(self._layout_combo.count()):
+            if self._layout_combo.itemData(i) == cur:
+                self._layout_combo.setCurrentIndex(i)
+                break
+        self._layout_combo.blockSignals(False)
 
         # Response combo (toolbar) — re-label Fast/Normal/Slow. The SETUP
         # response combo is built once in the active language alongside its
         # SETUP neighbours (drone-voice / theme), which likewise do not
         # live-retranslate; both combos carry the same data values, so
         # _apply_filter_mode keeps them in functional sync regardless.
-        if hasattr(self, '_filter_combo'):
-            self._populate_filter_combo(self._filter_combo)
-        if hasattr(self, '_min_n_lbl'):
-            self._min_n_lbl.setText(self._t('min_n_label'))
-            self._min_n_spin.setToolTip(self._t('min_n_tip'))
-        # v0.5.7: "Filter to instrument range" checkbox relocated next
-        # to the min-N spinbox; same retranslate behaviour as before.
-        if hasattr(self, '_cb_oor'):
-            self._cb_oor.setText(self._t('allow_oor'))
-            self._cb_oor.setToolTip(self._t('allow_oor_tip'))
+        self._populate_filter_combo(self._filter_combo)
+        self._min_n_lbl.setText(self._t('min_n_label'))
+        self._min_n_spin.setToolTip(self._t('min_n_tip'))
+        self._cb_oor.setText(self._t('allow_oor'))
+        self._cb_oor.setToolTip(self._t('allow_oor_tip'))
 
         # Buttons
         self._btn_autotune.setText(self._t('btn_autotune'))
@@ -2234,21 +2186,14 @@ class MainWindow(QMainWindow):
         self._status_lbl.setText(self._t('no_signal'))
 
         # Diagnose-Panel + Spektrogramm.
-        if hasattr(self, '_cb_diag'):
-            self._cb_diag.setText(self._t('show_diagnostics'))
-            self._cb_diag.setToolTip(self._t('show_diagnostics_tip'))
-        if hasattr(self, '_spectro_grp'):
-            self._spectro_grp.setTitle(self._t('spectro_title'))
-        if hasattr(self, '_data_grp'):
-            self._data_grp.setTitle(self._t('data_panel_title'))
-        if hasattr(self, '_data_panel'):
-            self._data_panel.retranslate(self._t)
-        if hasattr(self, '_audio_chip'):
-            self._audio_chip.retranslate(self._t)
-        if hasattr(self, '_audio_banner'):
-            self._audio_banner.retranslate(self._t)
-        if hasattr(self, '_info_banner'):
-            self._info_banner.retranslate(self._t)
+        self._cb_diag.setText(self._t('show_diagnostics'))
+        self._cb_diag.setToolTip(self._t('show_diagnostics_tip'))
+        self._spectro_grp.setTitle(self._t('spectro_title'))
+        self._data_grp.setTitle(self._t('data_panel_title'))
+        self._data_panel.retranslate(self._t)
+        self._audio_chip.retranslate(self._t)
+        self._audio_banner.retranslate(self._t)
+        self._info_banner.retranslate(self._t)
 
         # SETUP tab is built once, not rebuilt — re-label its titles/labels here
         # so a live language switch doesn't leave it half-translated.
@@ -2277,8 +2222,7 @@ class MainWindow(QMainWindow):
         else:
             self._oor_count += 1
             if (not self._oor_banner_shown
-                    and self._oor_count >= self._oor_threshold
-                    and hasattr(self, '_info_banner')):
+                    and self._oor_count >= self._oor_threshold):
                 self._oor_banner_shown = True
                 instr_label = self._instr_label(self.instrument)
                 self._info_banner.show_message(
@@ -2348,7 +2292,7 @@ class MainWindow(QMainWindow):
         depends on the live viewport width, then hands off to
         TableController for the actual paint; the per-cell
         paint pipeline and cell cache live on the controller."""
-        if not hasattr(self, '_table') or not hasattr(self, '_table_ctrl'):
+        if self._table_ctrl is None:      # still inside _build_ui
             return
         desired = self._desired_layout_mode()
         if desired != self._layout_mode or self._table_ctrl._current_mode is None:
@@ -2368,8 +2312,6 @@ class MainWindow(QMainWindow):
             return 'single'
         if pref == 'matrix':
             return 'matrix'
-        if not hasattr(self, '_table'):
-            return 'single'
         w = self._table.viewport().width()
         if w <= 0:
             w = self._table.width()
@@ -2387,8 +2329,7 @@ class MainWindow(QMainWindow):
         # before _desired_layout_mode reads it. Without the singleShot,
         # rapid window shrinks sometimes leave the table in matrix mode
         # because viewport().width() still reflects the pre-resize size.
-        if hasattr(self, '_table'):
-            QTimer.singleShot(0, self._refresh_table)
+        QTimer.singleShot(0, self._refresh_table)
 
     # ── Instrument / Anzeige / A4 ─────────────────────────────────────────────
     # The family/instr/nickname slots, range editor,
@@ -2424,8 +2365,7 @@ class MainWindow(QMainWindow):
         # the one-shot prompt becomes eligible to fire again.
         self._oor_count = 0
         self._oor_banner_shown = False
-        if hasattr(self, '_info_banner'):
-            self._info_banner.hide()
+        self._info_banner.hide()
         # Seed the stats with empty slots for every expected fingered note so
         # the table immediately shows the player what the instrument's range
         # looks like. Real measurements fill in as the player plays;
@@ -2447,7 +2387,7 @@ class MainWindow(QMainWindow):
         applied a new A4. The autotune body already cleared self.stats
         under the lock; here we refresh the table so the new baseline
         paints. The drone and pitch pipes were retuned by _instr_set_a4."""
-        a4 = float(getattr(self._engine, 'a4', 0.0) or 0.0)
+        a4 = float(self._engine.a4)
         self._seed_expected_notes()
         # New run at the new A4, as _apply_a4 does, so later measurements are
         # logged against the reference they were measured with.
@@ -2464,9 +2404,8 @@ class MainWindow(QMainWindow):
         the new A4 to the engine, drone and pitch pipes."""
         hz_int = int(hz)
         _target = hz_int - 430
-        for _combo in (getattr(self, '_a4_combo', None),
-                       getattr(self, '_setup_a4_combo', None)):
-            if _combo is None or not (0 <= _target < _combo.count()):
+        for _combo in (self._a4_combo, self._setup_a4_combo):
+            if not (0 <= _target < _combo.count()):
                 continue
             _combo.blockSignals(True)
             _combo.setCurrentIndex(_target)
@@ -2479,13 +2418,9 @@ class MainWindow(QMainWindow):
         Every A4 change (toolbar, SETUP, autotune, start-up restore) ends
         here, so the three can never disagree about the reference."""
         self._engine.set_a4(a4)
-        for _c in (getattr(self, '_drone_ctrl', None),
-                   getattr(self, '_pipes_ctrl', None)):
-            if _c is not None and hasattr(_c, 'set_a4'):
-                try:
-                    _c.set_a4(a4)
-                except Exception:
-                    pass
+        self._drone_ctrl.set_a4(a4)
+        if self._pipes_ctrl is not None:      # built on first open
+            self._pipes_ctrl.set_a4(a4)
 
     def _seed_expected_notes(self) -> None:
         """Populate self.stats with empty NoteStats for the current
@@ -2519,10 +2454,7 @@ class MainWindow(QMainWindow):
         Falls back to the constant default when the engine is FAILED or
         audio is disabled — defensive; nothing should call the formatter
         in those states, but a stale delegate paint can race teardown."""
-        try:
-            sr = int(getattr(self._engine, 'samplerate', 0) or 0)
-        except Exception:
-            sr = 0
+        sr = int(self._engine.samplerate or 0)
         return sr if sr > 0 else int(DEFAULT_SAMPLE_RATE)
 
     def _output_rate(self) -> int:
@@ -2567,10 +2499,8 @@ class MainWindow(QMainWindow):
         the toggle has no allocation cost on the audio thread."""
         self._cfg.show_diagnostics = bool(checked)
         sax_config.save_config(self._cfg)
-        if hasattr(self, '_spectro_grp'):
-            self._spectro_grp.setVisible(bool(checked))
-        if hasattr(self, '_data_grp'):
-            self._data_grp.setVisible(bool(checked))
+        self._spectro_grp.setVisible(bool(checked))
+        self._data_grp.setVisible(bool(checked))
         self._refresh_table()
 
     def _on_layout_pref_changed(self, _idx: int) -> None:
@@ -2592,7 +2522,7 @@ class MainWindow(QMainWindow):
         if cur not in FILTER_PRESETS:
             # Seed from the engine: it ignores an unknown mode, so it holds
             # the mode actually in use.
-            cur = getattr(self._engine, 'filter_mode', FILTER_MODE_DEFAULT)
+            cur = self._engine.filter_mode
         if cur not in FILTER_PRESETS:
             cur = FILTER_MODE_DEFAULT
         combo.blockSignals(True)
@@ -2625,9 +2555,8 @@ class MainWindow(QMainWindow):
         preset. Idempotent: re-applying the active mode changes nothing."""
         if mode not in FILTER_PRESETS:
             return
-        for combo in (getattr(self, '_filter_combo', None),
-                      getattr(self, '_setup_filter_combo', None)):
-            if combo is None or combo is source:
+        for combo in (self._filter_combo, self._setup_filter_combo):
+            if combo is source:
                 continue
             idx = combo.findData(mode)
             if idx >= 0 and combo.currentIndex() != idx:
@@ -2655,10 +2584,8 @@ class MainWindow(QMainWindow):
     def _update_mic_gain_status(self) -> None:
         """Refresh the plain-language mic-gain effect label, so the control
         gives a visible result even though the cents readout is (by design)
-        unaffected by gain. Safe before the label exists (returns early)."""
-        lbl = getattr(self, '_setup_mic_gain_status', None)
-        if lbl is None:
-            return
+        unaffected by gain."""
+        lbl = self._setup_mic_gain_status
         db = int(round(float(getattr(self._cfg, 'mic_gain_db', 0.0))))
         if db == 0:
             lbl.setText(self._t('setup_mic_gain_off'))
@@ -2671,23 +2598,18 @@ class MainWindow(QMainWindow):
         """Re-label every translatable SETUP-tab widget on a language switch.
         The tab is built once (never rebuilt), so without this its titles and
         labels stay in the build-time language until restart."""
-        for grp, key in getattr(self, '_setup_i18n_groups', []):
+        for grp, key in self._setup_i18n_groups:
             grp.setTitle(self._t(key))
-        for lbl, key in getattr(self, '_setup_i18n_labels', []):
+        for lbl, key in self._setup_i18n_labels:
             lbl.setText(self._t(key))
-        if hasattr(self, '_cb_prefer_duplex'):
-            self._cb_prefer_duplex.setText(self._t('setup_prefer_duplex'))
-            self._cb_prefer_duplex.setToolTip(self._t('setup_prefer_duplex_tip'))
-        if hasattr(self, '_btn_setup_range'):
-            self._btn_setup_range.setText(self._t('setup_range_edit'))
-        if hasattr(self, '_btn_test_tone'):
-            self._btn_test_tone.setToolTip(self._t('setup_testtone_tip'))
-            if not self._btn_test_tone.isChecked():
-                self._btn_test_tone.setText(self._t('setup_testtone_play'))
-        if hasattr(self, '_setup_nick_edit'):
-            self._setup_nick_edit.setPlaceholderText(self._t('nickname_tip'))
-        if hasattr(self, '_setup_mic_gain_combo'):
-            self._setup_mic_gain_combo.setToolTip(self._t('setup_mic_gain_tip'))
+        self._cb_prefer_duplex.setText(self._t('setup_prefer_duplex'))
+        self._cb_prefer_duplex.setToolTip(self._t('setup_prefer_duplex_tip'))
+        self._btn_setup_range.setText(self._t('setup_range_edit'))
+        self._btn_test_tone.setToolTip(self._t('setup_testtone_tip'))
+        if not self._btn_test_tone.isChecked():
+            self._btn_test_tone.setText(self._t('setup_testtone_play'))
+        self._setup_nick_edit.setPlaceholderText(self._t('nickname_tip'))
+        self._setup_mic_gain_combo.setToolTip(self._t('setup_mic_gain_tip'))
         self._update_mic_gain_status()
 
     def _on_min_n_changed(self, value: int) -> None:
@@ -2714,9 +2636,8 @@ class MainWindow(QMainWindow):
         _nick_edit stays canonical — the InstrumentController and session-state
         read it — so it is updated before stamping. Then stamp the label onto
         the active run via the controller (a no-op when not recording)."""
-        for edit in (getattr(self, '_nick_edit', None),
-                     getattr(self, '_setup_nick_edit', None)):
-            if edit is None or edit is source:
+        for edit in (self._nick_edit, self._setup_nick_edit):
+            if edit is source:
                 continue
             if edit.text() != text:
                 edit.blockSignals(True)
@@ -2761,10 +2682,8 @@ class MainWindow(QMainWindow):
                 # The controllers were built with the previous log; point
                 # them at the new one or CSV export and run metadata would
                 # keep using the discarded in-memory log.
-                for ctrl in (getattr(self, '_export', None),
-                             getattr(self, '_instr_ctrl', None)):
-                    if ctrl is not None and hasattr(ctrl, '_log'):
-                        ctrl._log = self._log
+                self._export._log = self._log
+                self._instr_ctrl._log = self._log
                 if AUDIO_OK:
                     self._log.start_run(instrument=self.instrument,
                                         a4_hz=self._engine.a4,
@@ -2798,10 +2717,7 @@ class MainWindow(QMainWindow):
         instead of discarding what the user recorded."""
         new_a4 = float(new_a4)
         hz_int = int(new_a4)
-        for _combo in (getattr(self, '_a4_combo', None),
-                       getattr(self, '_setup_a4_combo', None)):
-            if _combo is None:
-                continue
+        for _combo in (self._a4_combo, self._setup_a4_combo):
             _target = hz_int - 430
             if (0 <= _target < _combo.count()
                     and _combo.currentIndex() != _target):
@@ -3050,14 +2966,12 @@ class MainWindow(QMainWindow):
         (signals blocked — a programmatic sync, not a user edit). Called after
         session-state restore, which only knows about the toolbar widgets.
         Idempotent."""
-        if hasattr(self, '_setup_nick_edit') and hasattr(self, '_nick_edit'):
-            self._setup_nick_edit.blockSignals(True)
-            self._setup_nick_edit.setText(self._nick_edit.text())
-            self._setup_nick_edit.blockSignals(False)
-        if hasattr(self, '_setup_a4_combo') and hasattr(self, '_a4_combo'):
-            self._setup_a4_combo.blockSignals(True)
-            self._setup_a4_combo.setCurrentIndex(self._a4_combo.currentIndex())
-            self._setup_a4_combo.blockSignals(False)
+        self._setup_nick_edit.blockSignals(True)
+        self._setup_nick_edit.setText(self._nick_edit.text())
+        self._setup_nick_edit.blockSignals(False)
+        self._setup_a4_combo.blockSignals(True)
+        self._setup_a4_combo.setCurrentIndex(self._a4_combo.currentIndex())
+        self._setup_a4_combo.blockSignals(False)
 
     def closeEvent(self, ev):
         # v0.5.5: snapshot the full session state to the config file so the
@@ -3073,10 +2987,8 @@ class MainWindow(QMainWindow):
         # take disarms the input tap and unregisters its mixer source — close()
         # is idempotent and never raises, never orphans.
         try:
-            if getattr(self, '_deck_pump_timer', None) is not None:
-                self._deck_pump_timer.stop()
-            if getattr(self, '_deck_ctrl', None) is not None:
-                self._deck_ctrl.close()
+            self._deck_pump_timer.stop()
+            self._deck_ctrl.close()
         except Exception:
             pass
         self._engine.stop()

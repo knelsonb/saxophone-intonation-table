@@ -394,9 +394,8 @@ class ExportController:
         subsequent calls return the cached values without re-prompting.
         Reset clears the cache so a new instrument can be tagged."""
         w = self._w
-        if getattr(w, '_instr_info_asked', False):
-            return (getattr(w, '_last_maker', ''),
-                    getattr(w, '_last_model', ''))
+        if w._instr_info_asked:
+            return (w._last_maker, w._last_model)
         dlg = QDialog(w)
         dlg.setProperty('_lang_title_key', 'model_dialog_title')
         dlg.setWindowTitle(self._t('model_dialog_title'))
@@ -431,13 +430,11 @@ class ExportController:
 
         edit_maker = QLineEdit()
         edit_maker.setPlaceholderText(self._t('model_placeholder_maker'))
-        if hasattr(w, '_last_maker'):
-            edit_maker.setText(w._last_maker)
+        edit_maker.setText(w._last_maker)
 
         edit_model = QLineEdit()
         edit_model.setPlaceholderText(self._t('model_placeholder_model'))
-        if hasattr(w, '_last_model'):
-            edit_model.setText(w._last_model)
+        edit_model.setText(w._last_model)
 
         maker_lbl = QLabel(self._t('model_label_maker'))
         model_lbl = QLabel(self._t('model_label_model'))
