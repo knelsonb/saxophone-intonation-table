@@ -543,6 +543,8 @@ class AudioEngine:
         self._stream = None
         self._emissions_paused = False
         self._transitioning = False
+        # (error, message) when the last rate probe found the device gone.
+        self._probe_error: Optional[tuple[AudioEngineError, str]] = None
 
         # ---- analysis consumer ---------------------------------------------
         # The detector is owned by whichever thread holds _analysis_lock (the
@@ -794,6 +796,9 @@ class AudioEngine:
             return
         self._transitioning = True
         try:
+            # A start while a stream is open (retry() from RUNNING) replaces
+            # it: two live callbacks must never feed one engine.
+            self._teardown_stream()
             self._set_state(AudioEngineState.ENUMERATING)
             devices = query_input_devices()
             if not devices:
@@ -913,6 +918,9 @@ class AudioEngine:
                 except Exception:
                     pass
             if not devices:
+                # FAILED must mean no stream: the old one would keep emitting
+                # readings under a banner that says the input is down.
+                self._teardown_stream()
                 self._set_state(AudioEngineState.FAILED,
                                 AudioEngineError.NO_DEVICE,
                                 'No audio input devices detected')
@@ -932,6 +940,7 @@ class AudioEngine:
                 if sel is None:
                     # Hint device isn't in the fresh list — surface that
                     # instead of silently falling back to a default.
+                    self._teardown_stream()
                     self._set_state(
                         AudioEngineState.FAILED,
                         AudioEngineError.NO_DEVICE,
@@ -1433,12 +1442,15 @@ class AudioEngine:
                 rate = 0
             return [rate] if rate else []
         out: list[int] = []
+        self._probe_error = None
         for rate in SAMPLERATE_CANDIDATES:
             try:
                 sd.check_output_settings(device=dev.index, channels=1,
                                          dtype='float32', samplerate=rate)
                 out.append(rate)
-            except Exception:
+            except Exception as exc:
+                if self._probe_vanished(dev, exc):
+                    return []
                 continue
         dev_default = int(dev.default_samplerate or 0)
         if dev_default and dev_default not in out:
@@ -1461,6 +1473,9 @@ class AudioEngine:
         last_msg = ''
         for dev in candidates:
             sr_clean = self._negotiate_output_sample_rate(dev)
+            if not sr_clean and self._probe_error is not None:
+                last_err, last_msg = self._probe_error
+                continue
             if not sr_clean:
                 last_err = AudioEngineError.UNSUPPORTED_RATE
                 last_msg = (f'{dev.name} [{dev.host_api}]: output does not '
@@ -1750,6 +1765,7 @@ class AudioEngine:
             return [rate] if rate else []
 
         out: list[int] = []
+        self._probe_error = None
         # Probe each candidate without opening the stream. Lying drivers
         # may pass check_input_settings then fail at .start() — the
         # caller catches that and walks to the next candidate.
@@ -1758,7 +1774,9 @@ class AudioEngine:
                 sd.check_input_settings(device=dev.index, channels=1,
                                         dtype='float32', samplerate=rate)
                 out.append(rate)
-            except Exception:
+            except Exception as exc:
+                if self._probe_vanished(dev, exc):
+                    return []
                 continue
         # Append device default as a last-ditch fallback for exotic rates.
         dev_default = int(dev.default_samplerate or 0)
@@ -1771,6 +1789,20 @@ class AudioEngine:
             except Exception:
                 pass
         return out
+
+    def _probe_vanished(self, dev: DeviceInfo, exc: BaseException) -> bool:
+        """Record a rate probe that failed because the device is gone.
+
+        A probe is a question about one rate, so a failure normally just
+        drops that rate. A device unplugged mid-probe fails every rate,
+        though, and reporting that as an unsupported rate hid the unplug
+        from the hot-plug recovery, which only reconnects a missing device.
+        """
+        if self._classify_error(exc) != AudioEngineError.NO_DEVICE:
+            return False
+        self._probe_error = (AudioEngineError.NO_DEVICE,
+                             f'{dev.name} [{dev.host_api}]: {exc}')
+        return True
 
     def _open_with_fallback(self, sel: Optional[DeviceSelection],
                             devices: list[DeviceInfo]) -> None:
@@ -1786,6 +1818,9 @@ class AudioEngine:
         last_msg: str = ''
         for dev in candidates:
             sr_clean = self._negotiate_sample_rate(dev)
+            if not sr_clean and self._probe_error is not None:
+                last_err, last_msg = self._probe_error
+                continue
             if not sr_clean:
                 last_err = AudioEngineError.UNSUPPORTED_RATE
                 if pinned:

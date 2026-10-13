@@ -253,3 +253,26 @@ def test_an_excluded_hop_skips_its_vote_and_keeps_the_players_note():
     got += _hold(bled, window, 10)
     assert len(got) == len(expected), "no reading lost to the bleed hop"
     assert {e.midi for e in got} == {72}
+
+
+# ---------------------------------------------------------- stream lifecycle
+def test_a_start_while_running_replaces_the_stream(threaded_engine):
+    """retry() calls start(); with a stream already open, the old one must be
+    closed, or two callbacks would feed one engine."""
+    _mod, eng, host, _sink = threaded_engine
+    old = host.input_stream
+    eng.retry()
+    assert old.closed
+    assert [s for s in host.open_streams() if s.kind == "input"] == [host.input_stream]
+
+
+def test_a_failed_retry_leaves_no_stream_running(threaded_engine):
+    """retry_open() that ends FAILED (the pinned mic is gone) must not leave
+    the previous stream emitting readings under a 'no input' banner."""
+    mod, eng, host, _sink = threaded_engine
+    old = host.input_stream
+    eng.set_preferred_hint(mod.DeviceSelection(name="Interface"))
+    eng.retry_open()
+    assert eng.state == mod.AudioEngineState.FAILED
+    assert old.closed and not eng.input_running
+    assert eng._analysis_thread is None

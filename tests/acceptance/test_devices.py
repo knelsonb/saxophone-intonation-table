@@ -282,8 +282,6 @@ def test_a_mic_that_vanishes_while_opening_reconnects_when_plugged_back(make_app
     assert is_listening(app)
 
 
-@pytest.mark.xfail(strict=True, reason="Uruk1-3: a device that vanishes during the rate "
-                                       "probe is reported as an unsupported rate")
 def test_a_mic_that_vanishes_during_the_rate_check_is_reported_missing(make_app, host):
     """A mic pulled while the app checks its sample rates is reported as gone
     (not as a rate problem), and replugging it reconnects."""
