@@ -34,3 +34,17 @@ def tmp_log_path(tmp_path: Path) -> Path:
     built-in that is cleaned up automatically after each test.
     """
     return tmp_path / "test_log.json"
+
+
+@pytest.fixture(autouse=True)
+def _config_unreadable_starts_false(monkeypatch):
+    """Reset sax_config's "last load found an unreadable file" flag per test.
+
+    load_config() records an unreadable config in a module global, and
+    save_config() refuses to write while it is set so a locked file is never
+    overwritten. A test that provokes that state would otherwise make every
+    later save_config() in the session a silent no-op, and the result would
+    depend on test order.
+    """
+    import sax_config
+    monkeypatch.setattr(sax_config, "_config_unreadable", False)

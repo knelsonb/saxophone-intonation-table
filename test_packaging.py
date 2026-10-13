@@ -33,40 +33,24 @@ _SF2_PARTS = ("assets", "GeneralUser-GS.sf2")
 
 
 @pytest.fixture(autouse=True)
-def _isolate_frozen_state():
-    """Belt-and-suspenders: keep sys.frozen / sys._MEIPASS from leaking either
-    direction across these tests.
+def _isolate_frozen_state(monkeypatch):
+    """Keep sys.frozen / sys._MEIPASS from leaking either direction across these
+    tests.
 
-    No test in the suite mutates these without monkeypatch today (verified by
-    grep), so this is defense-in-depth, not a patch for a live leak. But the
-    failure mode is nasty: a future test elsewhere that sets sys.frozen=True and
-    forgets to restore it would silently flip asset_path's dev/frozen branch,
-    making the dev-baseline tests below (which resolve against the module dir,
-    where the real SF2 lives) fail in a confusing, order-dependent way. So we:
-      1. snapshot whatever is there,
-      2. force the clean NON-frozen baseline these tests assume (the frozen test
-         monkeypatches over it; monkeypatch restores to this clean baseline),
-      3. restore the exact original on teardown so we never leak the other way.
-    A subprocess (the pack smoke) is already isolated from parent globals, so
-    this only governs the in-process asset_path tests.
+    A test elsewhere that sets sys.frozen=True and forgets to restore it would
+    silently flip asset_path's dev/frozen branch, making the dev-baseline tests
+    below (which resolve against the module dir, where the real SF2 lives) fail
+    in a confusing, order-dependent way. So force the clean NON-frozen baseline
+    these tests assume (the frozen test sets its own values over it) and let
+    monkeypatch put back exactly what was there.
+
+    This goes through the same ``monkeypatch`` instance the tests use, so the
+    undo order is correct whichever fixture was set up first. A subprocess (the
+    pack smoke) is already isolated from parent globals, so this only governs
+    the in-process asset_path tests.
     """
-    had_frozen, frozen_val = hasattr(sys, "frozen"), getattr(sys, "frozen", None)
-    had_meipass, meipass_val = hasattr(sys, "_MEIPASS"), getattr(sys, "_MEIPASS", None)
-    if had_frozen:
-        del sys.frozen
-    if had_meipass:
-        del sys._MEIPASS
-    try:
-        yield
-    finally:
-        if had_frozen:
-            sys.frozen = frozen_val
-        elif hasattr(sys, "frozen"):
-            del sys.frozen
-        if had_meipass:
-            sys._MEIPASS = meipass_val
-        elif hasattr(sys, "_MEIPASS"):
-            del sys._MEIPASS
+    monkeypatch.delattr(sys, "frozen", raising=False)
+    monkeypatch.delattr(sys, "_MEIPASS", raising=False)
 
 
 # ---------------------------------------------------------------------------
