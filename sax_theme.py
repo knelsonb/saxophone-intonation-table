@@ -27,14 +27,38 @@ the module-level "active" pointer needs no lock.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import math
+from dataclasses import dataclass, fields
+
 
 # Cents thresholds shared by every view (tuner, table, PDF, chart): within
 # IN_TUNE_CENTS is green, within CLOSE_CENTS amber, beyond that red.
 IN_TUNE_CENTS = 5
 CLOSE_CENTS = 12
 
+
+def cents_band(cents) -> str:
+    """Classify a cent deviation as 'in', 'close' or 'off'.
+
+    Judged on the whole-cent value the views print (format_cents rounds with
+    int(round(...))), so the colour always agrees with the number beside it:
+    +5.4 prints as "+5" and is in tune, +12.4 prints as "+12" and is close.
+    Non-numeric or non-finite input is 'off'."""
+    try:
+        value = float(cents)
+    except (TypeError, ValueError):
+        return 'off'
+    if not math.isfinite(value):
+        return 'off'
+    shown = abs(int(round(value)))
+    if shown <= IN_TUNE_CENTS:
+        return 'in'
+    if shown <= CLOSE_CENTS:
+        return 'close'
+    return 'off'
+
 __all__ = [
+    "IN_TUNE_CENTS", "CLOSE_CENTS", "cents_band",
     "ThemePalette",
     "DARK", "NIGHT", "LIGHT",
     "THEMES", "THEME_ORDER", "DEFAULT_THEME",

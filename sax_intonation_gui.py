@@ -76,6 +76,13 @@ from PyQt6.QtWidgets import (
 import sax_config
 import sax_instruments
 import sax_theme
+from sax_theme import IN_TUNE_CENTS, cents_band
+from sax_i18n import STRINGS
+from sax_session_state import SessionStateController
+from sax_export import ExportController
+from sax_table import TableController
+from sax_instrument_controller import InstrumentController
+from sax_device import DeviceController
 
 # v0.5.4: AudioEngine + pitch detection + filter presets live in their own
 # module so the engine has a state machine, host-API fallback chain, and
@@ -356,6 +363,10 @@ def yin_pitch(sig, sr=SAMPLE_RATE, fmin=MIN_FREQ, fmax=MAX_FREQ,
                           thr if thr is not None else 0.12)
 
 
+# Palette role for each cents_band() result.
+_BAND_ROLE = {'in': 'ok', 'close': 'warn', 'off': 'bad'}
+
+
 def _themed(role: str, alpha: int = 255) -> QColor:
     """A QColor for the named role in the ACTIVE theme palette (sax_theme).
 
@@ -506,12 +517,7 @@ class TunerWidget(QWidget):
         if self.active:
             norm = max(-1.0, min(1.0, self.cents / mx))
             nx   = sx + sw/2 + norm * sw/2
-            if abs(self.cents) <= IN_TUNE_CENTS:
-                nc = _themed('ok', alpha)
-            elif abs(self.cents) <= CLOSE_CENTS:
-                nc = _themed('warn', alpha)
-            else:
-                nc = _themed('bad', alpha)
+            nc = _themed(_BAND_ROLE[cents_band(self.cents)], alpha)
             p.setBrush(nc)
             p.drawRoundedRect(QRectF(nx - 4, sy - 6, 8, sh + 12), 4, 4)
 
@@ -526,12 +532,7 @@ class TunerWidget(QWidget):
 
         if self.active:
             p.setFont(QFont('Monospace', 32, QFont.Weight.Bold))
-            if abs(self.cents) <= IN_TUNE_CENTS:
-                cc = _themed('ok', alpha)
-            elif abs(self.cents) <= CLOSE_CENTS:
-                cc = _themed('warn', alpha)
-            else:
-                cc = _themed('bad', alpha)
+            cc = _themed(_BAND_ROLE[cents_band(self.cents)], alpha)
             p.setPen(cc)
             p.drawText(QRectF(0, sy + sh + 26, W, 55),
                        Qt.AlignmentFlag.AlignHCenter,
@@ -969,14 +970,8 @@ class CentBarDelegate(QStyledItemDelegate):
         else:
             painter.fillRect(r, QColor(0, 0, 0, 0))
 
-        # Farbe nach Betrag
-        abw = abs(cents)
-        if abw < 10:
-            bar_col = _themed('ok')    # grün
-        elif abw < 20:
-            bar_col = _themed('warn')  # gelb
-        else:
-            bar_col = _themed('bad')   # rot
+        # Colour from the shared thresholds, on the rounded value shown.
+        bar_col = _themed(_BAND_ROLE[cents_band(cents)])
 
         # Dimensionen
         pad_x, pad_y = 8, 5
@@ -991,8 +986,8 @@ class CentBarDelegate(QStyledItemDelegate):
         painter.setBrush(_themed('grid'))
         painter.drawRoundedRect(r.left() + pad_x, bg_y, w, bg_h, 3, 3)
 
-        # Grüne Mitte-Zone (±5 ct)
-        zone_w = max(2, int(w / 2 * 5.0 / self.MAX_CENT))
+        # Green in-tune zone (±IN_TUNE_CENTS)
+        zone_w = max(2, int(w / 2 * IN_TUNE_CENTS / self.MAX_CENT))
         painter.setBrush(_themed('ok', 160))
         painter.drawRect(cx - zone_w, bg_y, zone_w * 2, bg_h)
 
@@ -1147,8 +1142,7 @@ class MatrixCellDelegate(QStyledItemDelegate):
             return
 
         # ----- Mid strip: mean (color) + ±std ------------------------
-        col = (_themed('ok') if abs(mean) <= IN_TUNE_CENTS else
-               _themed('warn') if abs(mean) <= CLOSE_CENTS else _themed('bad'))
+        col = _themed(_BAND_ROLE[cents_band(mean)])
         mid_h = 18
         mid_y = r.top() + top_h
         painter.setPen(col)
@@ -1179,8 +1173,8 @@ class MatrixCellDelegate(QStyledItemDelegate):
         painter.setBrush(_themed('grid'))
         painter.drawRoundedRect(QRectF(r.left() + pad_x, scale_y,
                                         scale_w, scale_h), 2, 2)
-        # ±5 ct in-tune band.
-        zone_w = max(2.0, scale_w / 2 * 5.0 / self.MAX_CENT)
+        # In-tune band (±IN_TUNE_CENTS).
+        zone_w = max(2.0, scale_w / 2 * IN_TUNE_CENTS / self.MAX_CENT)
         painter.setBrush(_themed('ok', 160))
         painter.drawRect(QRectF(cx - zone_w, scale_y, zone_w * 2, scale_h))
         # Filled bar.

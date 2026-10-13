@@ -506,3 +506,79 @@ def test_import_strips_control_characters(tmp_path):
     out = tmp_path / "out.csv"
     log.export_csv(out, mode="raw")
     assert _read_rows(out)[0]["nickname"] == "'=evil[31m"
+
+
+# ---------------------------------------------------------------------------
+# 1.7  One threshold rule, applied to the rounded value the user sees
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("cents,band", [
+    (0.0, "in"), (4.5, "in"), (5.4, "in"), (-5.4, "in"), (5.5, "close"),
+    (8.0, "close"), (12.4, "close"), (-12.5, "close"), (12.6, "off"),
+    (15.0, "off"), (-40.0, "off"), (float("nan"), "off"), (None, "off"),
+])
+def test_cents_band(cents, band):
+    from sax_theme import cents_band
+    assert cents_band(cents) == band
+
+
+@requires_qt
+def test_cents_band_agrees_with_printed_value():
+    from sax_intonation_gui import format_cents
+    from sax_theme import cents_band
+    for tenth in range(-300, 301):
+        value = tenth / 10.0
+        printed = int(format_cents(value, 440.0, 48000))
+        assert cents_band(value) == cents_band(printed), value
+
+
+@requires_qt
+def test_bar_delegate_and_table_use_shared_thresholds(tmp_path):
+    out = _run_gui(tmp_path, '''
+        from PyQt6.QtCore import Qt, QRect
+        from PyQt6.QtGui import QImage, QPainter, QStandardItemModel, QStandardItem
+        from PyQt6.QtWidgets import QStyleOptionViewItem
+
+        roles = []
+        real_themed = G._themed
+
+        def spy(role, alpha=255):
+            roles.append(role)
+            return real_themed(role, alpha)
+
+        G._themed = spy
+        delegate = G.CentBarDelegate()
+        model = QStandardItemModel(1, 1)
+        img = QImage(200, 30, QImage.Format.Format_ARGB32)
+        bars = {}
+        for cents in (8.0, 15.0):
+            item = QStandardItem()
+            item.setData({"cents": cents, "freq": 440.0},
+                         Qt.ItemDataRole.UserRole)
+            model.setItem(0, 0, item)
+            opt = QStyleOptionViewItem()
+            opt.rect = QRect(0, 0, 200, 30)
+            roles.clear()
+            p = QPainter(img)
+            delegate.paint(p, opt, model.index(0, 0))
+            p.end()
+            bars[str(cents)] = sorted(set(roles))
+        G._themed = real_themed
+        out["bars"] = bars
+
+        # Single-column table: +5.4 prints "+5" and must be green.
+        win._cfg.layout_mode_preference = "single"
+        win._cfg.min_n_visible = 0
+        st = G.NoteStats()
+        for _ in range(5):
+            st.add(5.4, 440.0)
+        with win._lock:
+            win.stats.clear()
+            win.stats[69] = st
+        win._refresh_table()
+        out["mean_text"] = win._table.item(0, 2).text()
+        out["mean_color"] = win._table.item(0, 2).foreground().color().name()
+    ''')
+    assert "warn" in out["bars"]["8.0"] and "bad" not in out["bars"]["8.0"]
+    assert "bad" in out["bars"]["15.0"]
+    assert out["mean_text"] == "+5"
+    assert out["mean_color"] == "#3a9e5f"

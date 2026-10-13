@@ -50,6 +50,11 @@ from PyQt6.QtWidgets import (
 )
 
 import sax_instruments
+from sax_theme import cents_band
+
+# PDF mean-column text colour for each cents_band() result.
+_PDF_BAND_COLOR = {'in': '#1b5e20', 'close': '#e65100', 'off': '#b71c1c'}
+from sax_intonation_log import MeasurementLog
 from sax_intonation_chart import render_intonation_chart
 from sax_intonation_log import MeasurementLog
 from sax_theme import CLOSE_CENTS, IN_TUNE_CENTS
@@ -263,9 +268,7 @@ class ExportController:
                 ('BOTTOMPADDING',(0,0), (-1,-1), 4),
             ])
             for r, (_, st) in enumerate(items, 1):
-                c = (colors.HexColor('#1b5e20') if abs(st.mean) <= IN_TUNE_CENTS else
-                     colors.HexColor('#e65100') if abs(st.mean) <= CLOSE_CENTS else
-                     colors.HexColor('#b71c1c'))
+                c = colors.HexColor(_PDF_BAND_COLOR[cents_band(st.mean)])
                 ts.add('TEXTCOLOR', (2,r), (2,r), c)
                 ts.add('FONTNAME',  (2,r), (2,r), 'Helvetica-Bold')
             tbl.setStyle(ts)

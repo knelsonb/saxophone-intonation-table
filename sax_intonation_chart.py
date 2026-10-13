@@ -14,6 +14,11 @@ from __future__ import annotations
 
 import math
 
+from sax_theme import IN_TUNE_CENTS, cents_band
+
+# Bar colour for each cents_band() result.
+_BAND_RGB = {'in': (60, 220, 100), 'close': (255, 200, 40),
+             'off': (240, 80, 80)}
 from PyQt6.QtCore import QPointF, QRectF, Qt
 from PyQt6.QtGui import (
     QColor,
@@ -193,9 +198,9 @@ def _draw_axes(p: QPainter) -> None:
                    Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
                    f"{sign}{ct} ct")
 
-    # ±5 ct "in tune" band.
-    y_hi = _cent_to_y(5, area)
-    y_lo = _cent_to_y(-5, area)
+    # "In tune" band, ±IN_TUNE_CENTS.
+    y_hi = _cent_to_y(IN_TUNE_CENTS, area)
+    y_lo = _cent_to_y(-IN_TUNE_CENTS, area)
     p.setPen(Qt.PenStyle.NoPen)
     p.setBrush(QColor(40, 110, 60, 70))
     p.drawRect(QRectF(area.left(), y_hi,
@@ -294,15 +299,10 @@ def _draw_bars(p: QPainter,
         # range render in a desaturated grey instead of the green-yellow-
         # red gradient, so an altissimo overtone doesn't visually scream
         # "out of tune" when it's really just out of range.
-        m = abs(mean)
         if not note_in_range:
             col = QColor(140, 140, 150)
-        elif m <= IN_TUNE_CENTS:
-            col = QColor(60, 220, 100)
-        elif m <= CLOSE_CENTS:
-            col = QColor(255, 200, 40)
         else:
-            col = QColor(240, 80, 80)
+            col = QColor(*_BAND_RGB[cents_band(mean)])
 
         rect = QRectF(cx - bar_w / 2,
                       min(zero_y, top_y),
