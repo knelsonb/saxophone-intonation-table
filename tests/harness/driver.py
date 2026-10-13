@@ -69,7 +69,8 @@ the list below is the contract the rewrite must keep or update here:
       the classes live in ``sax_dialogs`` and are recognised by class name.
   Export capture
     * ``reportlab.platypus.SimpleDocTemplate.build`` (PDF story),
-      ``sax_export.render_intonation_chart`` (chart arguments),
+      ``sax_report.render_intonation_chart`` (chart arguments: the pure
+      chart renderer ``sax_report.render_chart`` hands its drawing to it),
       ``MeasurementLog.import_raw_csv`` / ``.export_csv`` (results).
   i18n
     * ``sax_i18n.STRINGS`` = ``{lang: {key: format_string}}``.
@@ -360,7 +361,7 @@ class AppDriver:
             return orig_build(doc, flowables, *a, **k)
         p.setattr(SimpleDocTemplate, "build", build)
 
-        export_mod = sys.modules["sax_export"]
+        export_mod = sys.modules["sax_report"]
         orig_chart = export_mod.render_intonation_chart
 
         def render_chart(**kw):

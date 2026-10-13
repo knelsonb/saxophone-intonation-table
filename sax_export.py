@@ -1,10 +1,12 @@
 # =============================================================================
 # sax_export.py — ExportController
 #
-# Extracted from sax_intonation_gui.py as a MainWindow controller. The
-# controller owns the four file-export flows (TXT / PDF / CSV / PNG
-# chart) and the two helper dialogs (CSV slice picker,
-# instrument-model prompt) that used to be inlined on MainWindow.
+# The controller owns the four file-export flows (TXT / PDF / CSV / PNG
+# chart) and their dialogs: the maker/model prompt, the CSV slice picker,
+# the save dialog, the overwrite question and the messages afterwards.
+# The files themselves are drawn by the pure renderers in sax_report from a
+# SessionSnapshot taken once per export; the CSV slices come from
+# MeasurementLog.export_csv.
 #
 # Design notes:
 #   * Live values that change during a session (the active instrument,
@@ -14,11 +16,8 @@
 #     time. That way the controller reads the *current* value at
 #     export time rather than freezing whatever was set on the
 #     window when __init__ ran.
-#   * The controller is pure-presentation: it reads MeasurementLog +
-#     AppConfig + the live stats dict, prompts the user via
-#     QFileDialog, and writes a file on disk. It never mutates
-#     engine state and never calls sax_config.save_config — the
-#     window owns persistence timing.
+#   * The controller never mutates engine state and never calls
+#     sax_config.save_config — the window owns persistence timing.
 #   * `_instr_info_asked`, `_last_maker`, `_last_model` are read
 #     and written on the parent window (self._w) so the existing
 #     reset hook on MainWindow that clears the cache keeps working
@@ -26,15 +25,11 @@
 #   * The dialog helpers stay package-private on the controller
 #     (`_ask_csv_slice`, `_ask_instrument_model`). MainWindow does
 #     not call them directly; only `export_*` does.
-#   * No behavioural change vs. the inlined implementation — file
-#     formats, dialog text, slice modes and chart parameters are
-#     preserved verbatim.
 # =============================================================================
 from __future__ import annotations
 
 import datetime
 from typing import TYPE_CHECKING, Callable
-from xml.sax.saxutils import escape as _xml_escape
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
@@ -49,20 +44,14 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-import sax_instruments
-from sax_intonation_chart import render_intonation_chart
+import sax_report
 from sax_intonation_log import MeasurementLog
-from sax_pitch import CHROMA, format_cents, midi_note_name
-from sax_theme import cents_band
 
 
 def _today() -> str:
     """Date stamp for default export file names."""
     return datetime.date.today().strftime('%Y%m%d')
 
-
-# PDF mean-column text colour for each cents_band() result.
-_PDF_BAND_COLOR = {'in': '#1b5e20', 'close': '#e65100', 'off': '#b71c1c'}
 
 if TYPE_CHECKING:
     from PyQt6.QtWidgets import QMainWindow
@@ -72,9 +61,8 @@ if TYPE_CHECKING:
 
 class ExportController:
     """Owns the TXT / PDF / CSV / PNG-chart export flows plus their
-    helper dialogs.  Pure-presentation: reads MeasurementLog +
-    AppConfig + the live stats dict, produces a file on disk via
-    QFileDialog.  Never mutates engine state."""
+    dialogs.  Reads MeasurementLog + AppConfig + the live stats dict and
+    hands a SessionSnapshot to sax_report.  Never mutates engine state."""
 
     def __init__(self, window: 'QMainWindow', *,
                  log: MeasurementLog, cfg: 'AppConfig', engine,
@@ -101,171 +89,39 @@ class ExportController:
 
     # ── Public entry points ───────────────────────────────────────────────
     def export_txt(self) -> None:
-        w = self._w
         model_info = self._ask_instrument_model()
         if model_info is None:
             return   # Abgebrochen
-        maker, model = model_info
-
         instrument = self._get_instrument_key()
         path, _ = QFileDialog.getSaveFileName(
-            w, self._t('txt_save_title'),
+            self._w, self._t('txt_save_title'),
             f"intonation_{instrument}_{_today()}.txt",
             self._t('txt_filter'))
         if not path:
             return
-        transp = sax_instruments.transp_map().get(instrument, 0)
-        lines = [
-            self._t('txt_header'),
-            '=' * 54,
-            self._t('txt_instr', name=self._w._instr_label(instrument)),
-        ]
-        if maker:
-            lines.append(self._t('txt_maker', maker=maker))
-        if model:
-            lines.append(self._t('txt_model', model=model))
-        lines += [
-            (self._t('txt_transp', note=CHROMA[transp % 12])
-             if transp else self._t('txt_no_transp')),
-            self._t('txt_a4', hz=self._engine.a4),
-            self._t('txt_date', dt=datetime.datetime.now().strftime('%d.%m.%Y %H:%M')),
-            '',
-            self._t('txt_col_header',
-                    fingered=self._t('pdf_col_finger'),
-                    sounding=self._t('pdf_col_sound'),
-                    mean=self._t('txt_col_mean'),
-                    std=self._t('txt_col_std'),
-                    n='N'),
-            '-' * 62,
-        ]
-        # Rows seeded for the instrument range have n == 0 until played;
-        # exports list measured notes only.
-        items = sorted((k, st) for k, st in self._get_stats().items() if st.n > 0)
-        sr_now = w._engine_sample_rate()
-        a4 = self._engine.a4
-        for midi_kl, st in items:
-            note_freq = a4 * (2.0 ** ((midi_kl - 69) / 12.0))
-            mean_str = format_cents(st.mean, note_freq, sr_now)
-            std_str = format_cents(st.std, note_freq, sr_now).lstrip('+-')
-            lines.append(
-                f"{midi_note_name(midi_kl - transp):<12} {midi_note_name(midi_kl):<12}"
-                f" {mean_str:>7}   {std_str:>6}  {st.n:>5}  {self._make_bar(st.mean, 24)}")
-        lines += ['', self._t('txt_total', total=sum(s.n for _,s in items), notes=len(items))]
-        try:
-            with open(path, 'w', encoding='utf-8') as f:
-                f.write('\n'.join(lines))
-            QMessageBox.information(w, self._t('export_title'), self._t('txt_saved', path=path))
-        except Exception as e:
-            QMessageBox.critical(w, self._t('err_title'), str(e))
+        snapshot = self._snapshot(*model_info)
+        if self._write(path, lambda: sax_report.write_txt(
+                snapshot, self._get_lang(), path)):
+            self._saved(self._t('txt_saved', path=path))
 
     def export_pdf(self) -> None:
-        w = self._w
-        try:
-            from reportlab.lib import colors
-            from reportlab.lib.pagesizes import A4 as RL_A4
-            from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-            from reportlab.lib.units import mm
-            from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
-        except ImportError:
-            QMessageBox.critical(w, self._t('err_title'), self._t('reportlab_err'))
+        if not sax_report.pdf_available():
+            QMessageBox.critical(self._w, self._t('err_title'), self._t('reportlab_err'))
             return
-
         model_info = self._ask_instrument_model()
         if model_info is None:
             return   # Abgebrochen
-        maker, model = model_info
-
         instrument = self._get_instrument_key()
         path, _ = QFileDialog.getSaveFileName(
-            w, self._t('pdf_save_title'),
+            self._w, self._t('pdf_save_title'),
             f"intonation_{instrument}_{_today()}.pdf",
             self._t('pdf_filter'))
         if not path:
             return
-
-        transp = sax_instruments.transp_map().get(instrument, 0)
-        doc    = SimpleDocTemplate(path, pagesize=RL_A4,
-                                   leftMargin=20*mm, rightMargin=20*mm,
-                                   topMargin=20*mm, bottomMargin=20*mm)
-        styles = getSampleStyleSheet()
-        story  = []
-
-        ts_title = ParagraphStyle('T', parent=styles['Title'],
-                                  fontSize=18, textColor=colors.HexColor('#1a237e'), spaceAfter=4)
-        ts_sub   = ParagraphStyle('S', parent=styles['Normal'],
-                                  fontSize=11, textColor=colors.HexColor('#555'), spaceAfter=2)
-
-        story.append(Paragraph(self._t('pdf_title'), ts_title))
-        story.append(Paragraph(_xml_escape(self._w._instr_label(instrument)), ts_sub))
-        if maker:
-            story.append(Paragraph(self._t('pdf_maker', maker=_xml_escape(maker)), ts_sub))
-        if model:
-            story.append(Paragraph(self._t('pdf_model', model=_xml_escape(model)), ts_sub))
-        story.append(Paragraph(
-            (self._t('pdf_transp', note=CHROMA[transp % 12], n=transp)
-             if transp else self._t('pdf_no_transp')), ts_sub))
-        story.append(Paragraph(self._t('pdf_a4', hz=self._engine.a4), ts_sub))
-        story.append(Paragraph(
-            self._t('pdf_created', dt=datetime.datetime.now().strftime('%d.%m.%Y %H:%M')), ts_sub))
-        story.append(Spacer(1, 10*mm))
-
-        # Rows seeded for the instrument range have n == 0 until played;
-        # exports list measured notes only.
-        items = sorted((k, st) for k, st in self._get_stats().items() if st.n > 0)
-
-        if not items:
-            story.append(Paragraph(self._t('pdf_no_data'), styles['Normal']))
-        else:
-            total_n = sum(s.n for _, s in items)
-            story.append(Paragraph(
-                self._t('pdf_summary', notes=len(items), total=total_n),
-                ParagraphStyle('I', parent=styles['Normal'],
-                               fontSize=10, textColor=colors.HexColor('#666'), spaceAfter=6)))
-
-            data = [[self._t('pdf_col_finger'), self._t('pdf_col_sound'),
-                     self._t('pdf_col_mean'), self._t('pdf_col_std'),
-                     self._t('pdf_col_n'), self._t('pdf_col_tend')]]
-            sr_now = w._engine_sample_rate()
-            a4 = self._engine.a4
-            for midi_kl, st in items:
-                note_freq = a4 * (2.0 ** ((midi_kl - 69) / 12.0))
-                mean_str = format_cents(st.mean, note_freq, sr_now)
-                std_str = format_cents(st.std, note_freq, sr_now).lstrip('+-')
-                data.append([
-                    midi_note_name(midi_kl - transp), midi_note_name(midi_kl),
-                    mean_str,
-                    f"±{std_str}" if st.n > 1 else '–',
-                    str(st.n),
-                    self._make_bar_ascii(st.mean),
-                ])
-
-            tbl = Table(data, colWidths=[30*mm, 30*mm, 28*mm, 22*mm, 16*mm, 44*mm], repeatRows=1)
-            ts = TableStyle([
-                ('BACKGROUND',   (0,0), (-1,0),  colors.HexColor('#1a237e')),
-                ('TEXTCOLOR',    (0,0), (-1,0),  colors.white),
-                ('FONTNAME',     (0,0), (-1,0),  'Helvetica-Bold'),
-                ('FONTSIZE',     (0,0), (-1,-1), 10),
-                ('ALIGN',        (0,0), (-1,-1), 'CENTER'),
-                ('VALIGN',       (0,0), (-1,-1), 'MIDDLE'),
-                ('ROWBACKGROUNDS',(0,1),(-1,-1),
-                 [colors.HexColor('#f5f5ff'), colors.HexColor('#eeeeff')]),
-                ('GRID',         (0,0), (-1,-1), 0.3, colors.HexColor('#aaaacc')),
-                ('FONTNAME',     (0,1), (-1,-1), 'Helvetica'),
-                ('TOPPADDING',   (0,0), (-1,-1), 4),
-                ('BOTTOMPADDING',(0,0), (-1,-1), 4),
-            ])
-            for r, (_, st) in enumerate(items, 1):
-                c = colors.HexColor(_PDF_BAND_COLOR[cents_band(st.mean)])
-                ts.add('TEXTCOLOR', (2,r), (2,r), c)
-                ts.add('FONTNAME',  (2,r), (2,r), 'Helvetica-Bold')
-            tbl.setStyle(ts)
-            story.append(tbl)
-
-        try:
-            doc.build(story)
-            QMessageBox.information(w, self._t('export_title'), self._t('pdf_saved', path=path))
-        except Exception as e:
-            QMessageBox.critical(w, self._t('err_title'), str(e))
+        snapshot = self._snapshot(*model_info)
+        if self._write(path, lambda: sax_report.render_pdf(
+                snapshot, self._get_lang(), path)):
+            self._saved(self._t('pdf_saved', path=path))
 
     def export_csv(self) -> None:
         w = self._w
@@ -300,37 +156,29 @@ class ExportController:
         if not path:
             return
 
-        try:
-            n = self._log.export_csv(path,
-                                     mode=sel['mode'],
-                                     run_id=sel['run_id'],
-                                     instrument=sel['instrument'],
-                                     nickname=sel['nickname'])
-            QMessageBox.information(w, self._t('export_title'),
-                                    self._t('csv_saved', rows=n, path=path))
-        except Exception as e:
-            QMessageBox.critical(w, self._t('err_title'), str(e))
+        written = []
+
+        def write():
+            written.append(self._log.export_csv(path,
+                                                mode=sel['mode'],
+                                                run_id=sel['run_id'],
+                                                instrument=sel['instrument'],
+                                                nickname=sel['nickname']))
+        if self._write(path, write):
+            self._saved(self._t('csv_saved', rows=written[0], path=path))
 
     def export_chart(self) -> None:
-        w = self._w
-        # Rows seeded for the instrument range have n == 0 until played;
-        # exports list measured notes only.
-        items = sorted((k, st) for k, st in self._get_stats().items() if st.n > 0)
-
-        if not items:
-            QMessageBox.information(w, self._t('export_title'),
+        if not self._has_played_notes():
+            QMessageBox.information(self._w, self._t('export_title'),
                                     self._t('chart_no_data'))
             return
-
         # Optional maker/model — same flow as TXT/PDF/CSV export.
         model_info = self._ask_instrument_model()
         if model_info is None:
             return
-        maker, model = model_info
-
         instrument = self._get_instrument_key()
         path, _ = QFileDialog.getSaveFileName(
-            w, self._t('chart_save_title'),
+            self._w, self._t('chart_save_title'),
             f"intonation_chart_{instrument}_{_today()}.png",
             self._t('chart_filter'))
         if not path:
@@ -338,52 +186,40 @@ class ExportController:
         # Ensure the file ends in .png so QPixmap picks the right encoder.
         if not path.lower().endswith('.png'):
             path += '.png'
+        snapshot = self._snapshot(*model_info)
+        if self._write(path, lambda: sax_report.render_chart(
+                snapshot, self._get_lang(), path)):
+            self._saved(self._t('chart_saved', path=path))
 
-        transp = sax_instruments.transp_map().get(instrument, 0)
-        disp_griff = (w.display == 'griff')
-        sr_now = w._engine_sample_rate()
-        a4 = self._engine.a4
-        # Pass fingered MIDI per note so the chart
-        # renderer can colour out-of-range bars distinctly.
-        lo_f, hi_f = sax_instruments.fingered_range(instrument)
-        notes = []
-        for midi_kl, st in items:
-            midi_gr = midi_kl - transp
-            display_name = (midi_note_name(midi_gr) if disp_griff
-                            else midi_note_name(midi_kl))
-            note_freq = a4 * (2.0 ** ((midi_kl - 69) / 12.0))
-            in_range = (lo_f <= midi_gr <= hi_f)
-            notes.append((display_name, st.mean, st.std, st.n, note_freq,
-                          midi_gr, in_range))
+    # ── Shared steps ──────────────────────────────────────────────────────
+    def _has_played_notes(self) -> bool:
+        # Rows seeded for the instrument range have n == 0 until played.
+        return any(st.n > 0 for st in self._get_stats().values())
 
-        instr_long = self._w._instr_label(instrument)
-        dt = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
-        if maker or model:
-            subtitle = self._t('chart_subtitle_id',
-                                instr=instr_long,
-                                maker=maker, model=model,
-                                a4=self._engine.a4, dt=dt)
-        else:
-            subtitle = self._t('chart_subtitle',
-                                instr=instr_long,
-                                a4=self._engine.a4, dt=dt)
-        total = sum(s.n for _, s in items)
-        footer = self._t('chart_footer', notes=len(items), total=total)
+    def _snapshot(self, maker: str, model: str) -> sax_report.SessionSnapshot:
+        w = self._w
+        instrument = self._get_instrument_key()
+        return sax_report.take_snapshot(
+            instrument=instrument,
+            instrument_label=w._instr_label(instrument),
+            a4=self._engine.a4,
+            display=w.display,
+            sample_rate=w._engine_sample_rate(),
+            stats=self._get_stats(),
+            maker=maker, model=model,
+            nickname=self._get_nickname().strip())
 
+    def _write(self, path: str, write: Callable[[], object]) -> bool:
+        """Run ``write``; on failure show the error and return False."""
         try:
-            render_intonation_chart(
-                notes=notes,
-                title=self._t('chart_title'),
-                subtitle=subtitle,
-                footer=footer,
-                output_path=path,
-                sample_rate=sr_now,
-                instrument=instrument,
-            )
-            QMessageBox.information(w, self._t('export_title'),
-                                    self._t('chart_saved', path=path))
+            write()
+            return True
         except Exception as e:
-            QMessageBox.critical(w, self._t('err_title'), str(e))
+            QMessageBox.critical(self._w, self._t('err_title'), str(e))
+            return False
+
+    def _saved(self, text: str) -> None:
+        QMessageBox.information(self._w, self._t('export_title'), text)
 
     # ── Helper dialogs ────────────────────────────────────────────────────
     def _ask_instrument_model(self) -> tuple[str, str] | None:
@@ -631,24 +467,3 @@ class ExportController:
             'nickname': (nick_combo.currentData()
                           if nick_combo.isEnabled() else None),
         }
-
-    # ── Export-only formatting helpers ────────────────────────────────────
-    @staticmethod
-    def _make_bar(cents, w=20):
-        half = w // 2
-        fill = int(min(1.0, abs(cents) / 40.0) * half)
-        if cents > 1:
-            return ' '*half + '│' + '█'*fill + '░'*(half-fill)
-        elif cents < -1:
-            return '░'*(half-fill) + '█'*fill + '│' + ' '*half
-        return ' '*half + '│' + ' '*half
-
-    @staticmethod
-    def _make_bar_ascii(cents, w=16):
-        half = w // 2
-        fill = int(min(1.0, abs(cents) / 40.0) * half)
-        if cents > 1:
-            return ' '*half + '|' + '#'*fill + '.'*(half-fill)
-        if cents < -1:
-            return '.'*(half-fill) + '#'*fill + '|' + ' '*half
-        return ' '*half + '|' + ' '*half
