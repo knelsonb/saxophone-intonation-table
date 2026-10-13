@@ -37,6 +37,8 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
+from typing import Iterable, Optional
 
 import numpy as np
 from PyQt6.QtWidgets import (
@@ -60,6 +62,54 @@ from sax_instruments import (
     register_custom,
     transp_map as build_transp_map,
 )
+
+# Autotune: a note counts toward the suggestion once it has this many samples,
+# and the suggestion needs at least AUTOTUNE_MIN_NOTES such notes.
+AUTOTUNE_MIN_SAMPLES = 5
+AUTOTUNE_MIN_NOTES = 3
+# The A4 combo accepts whole Hz in this range; a suggestion is clamped to it.
+A4_MIN_HZ = 430
+A4_MAX_HZ = 450
+
+
+@dataclass(frozen=True)
+class A4Suggestion:
+    """Outcome of the autotune maths. ``offset_ct`` is the weighted median of
+    the per-note mean deviations; ``optimal`` the A4 that would zero it;
+    ``rounded`` that value to a whole Hz (half to even); ``clamped`` the result
+    limited to the A4 combo range."""
+    notes: int
+    offset_ct: float
+    mean_weighted_ct: float
+    optimal: float
+    rounded: int
+    clamped: int
+
+
+def suggest_a4(note_stats: Iterable[tuple[float, int]],
+               a4_current: float) -> Optional[A4Suggestion]:
+    """Suggest an A4 from per-note ``(mean_cents, sample_count)`` pairs, or
+    None when fewer than AUTOTUNE_MIN_NOTES notes have AUTOTUNE_MIN_SAMPLES.
+
+    The mean deviations are measured against ``a4_current``, so a player who
+    sits sharp of it (positive cents) gets a higher A4 back. The offset is a
+    median weighted by sqrt(n), which keeps a few long-held notes from
+    outvoting the rest of the scale and resists a single stray note."""
+    items = [(m, n) for m, n in note_stats if n >= AUTOTUNE_MIN_SAMPLES]
+    if len(items) < AUTOTUNE_MIN_NOTES:
+        return None
+    means = np.array([m for m, _ in items])
+    weights = np.array([math.sqrt(n) for _, n in items])
+    order = np.argsort(means)
+    cumw = np.cumsum(weights[order])
+    offset_ct = float(means[order][np.searchsorted(cumw, cumw[-1] / 2.0)])
+    mean_weighted = float(np.sum(means * weights) / np.sum(weights))
+    optimal = a4_current * (2.0 ** (offset_ct / 1200.0))
+    rounded = round(optimal)
+    clamped = max(A4_MIN_HZ, min(A4_MAX_HZ, rounded))
+    return A4Suggestion(notes=len(items), offset_ct=offset_ct,
+                        mean_weighted_ct=mean_weighted, optimal=optimal,
+                        rounded=rounded, clamped=clamped)
 
 
 class InstrumentController:
@@ -354,37 +404,32 @@ class InstrumentController:
         w = self._w
         stats = self._get_stats()
         with w._lock:
-            items = [(st.mean, st.n) for st in stats.values() if st.n >= 5]
-            # Count progress so the blocker is
-            # actionable. ``qualified`` = notes meeting the ≥5 threshold;
-            # ``touched`` = distinct notes that have ANY samples. Both are
-            # shown to the user when there isn't enough data yet.
-            qualified = len(items)
-            touched = sum(1 for st in stats.values() if st.n > 0)
+            note_stats = [(st.mean, st.n) for st in stats.values()]
+        # Count progress so the blocker is actionable. ``qualified`` = notes
+        # meeting the sample threshold; ``touched`` = distinct notes that have
+        # ANY samples. Both are shown to the user when there isn't enough data.
+        qualified = sum(1 for _m, n in note_stats if n >= AUTOTUNE_MIN_SAMPLES)
+        touched = sum(1 for _m, n in note_stats if n > 0)
 
-        if len(items) < 3:
+        a4_current = self._engine.a4
+        suggestion = suggest_a4(note_stats, a4_current)
+        if suggestion is None:
             msg = (self._t('autotune_nodata') + '\n\n'
                    + self._t('autotune_nodata_progress',
                               qualified=qualified, touched=touched))
             QMessageBox.warning(w, self._t('autotune_title'), msg)
             return
 
-        means   = np.array([m for m, _ in items])
-        weights = np.array([math.sqrt(n) for _, n in items])
-        order   = np.argsort(means)
-        cumw    = np.cumsum(weights[order])
-        offset_ct     = float(means[order][np.searchsorted(cumw, cumw[-1] / 2.0)])
-        mean_weighted = float(np.sum(means * weights) / np.sum(weights))
-
-        a4_current    = self._engine.a4
-        a4_optimal    = a4_current * (2.0 ** (offset_ct / 1200.0))
-        a4_rounded    = round(a4_optimal)
-        a4_clamped    = max(430, min(450, a4_rounded))
+        offset_ct = suggestion.offset_ct
+        mean_weighted = suggestion.mean_weighted_ct
+        a4_optimal = suggestion.optimal
+        a4_rounded = suggestion.rounded
+        a4_clamped = suggestion.clamped
 
         sign  = '+' if offset_ct    >= 0 else ''
         sign2 = '+' if mean_weighted >= 0 else ''
         msg   = self._t('autotune_result',
-                         notes=len(items), sign=sign, offset=offset_ct,
+                         notes=suggestion.notes, sign=sign, offset=offset_ct,
                          sign2=sign2, mean=mean_weighted,
                          current=a4_current, optimal=a4_optimal, rounded=a4_rounded)
         if a4_clamped != a4_rounded:
