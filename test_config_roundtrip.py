@@ -83,6 +83,10 @@ def test_roundtrip_preserves_all_fields(isolated_config):
         deck_max_seconds=180,
         last_take_path="/home/u/takes/last.wav",
         deck_scratch_dir="/var/tmp/deckscratch",
+        theme="night",
+        drone_voice_id="gm42",
+        drone_volume=0.0,
+        drone_semitones=-7,
     )
 
     save_config(original)
@@ -167,6 +171,10 @@ def test_partial_config_fills_new_field_defaults(isolated_config):
     assert cfg.deck_max_seconds == 300
     assert cfg.last_take_path == ""
     assert cfg.deck_scratch_dir == ""
+    # Drone fields default cleanly for a config written before they existed.
+    assert cfg.drone_voice_id == "organ"
+    assert cfg.drone_volume == 0.5
+    assert cfg.drone_semitones == 0
 
 
 def test_unknown_keys_ignored(isolated_config):

@@ -343,3 +343,69 @@ def test_range_editor_stays_open_when_nothing_was_saved(tmp_path):
     assert out["oor_result"] == 0 and out["oor_error"]
     assert out["fail_result"] == 0 and out["fail_error"]
     assert out["file"] == "{not json"
+
+
+# ---------------------------------------------------------------------------
+# 1.4  Drone voice, volume and semitones persist; volume 0 survives
+# ---------------------------------------------------------------------------
+@pytest.fixture()
+def isolated_config(tmp_path, monkeypatch):
+    cfg_dir = tmp_path / ".intonation_analyzer"
+    monkeypatch.setattr(sax_config, "CONFIG_DIR", cfg_dir)
+    monkeypatch.setattr(sax_config, "CONFIG_PATH", cfg_dir / "config.json")
+    monkeypatch.setattr(sax_config, "_config_unreadable", False)
+    cfg_dir.mkdir(parents=True)
+    return cfg_dir / "config.json"
+
+
+def test_drone_settings_round_trip(isolated_config):
+    sax_config.save_config(sax_config.AppConfig(
+        drone_voice_id="cello", drone_volume=0.0, drone_semitones=-5))
+    cfg = sax_config.load_config()
+    assert (cfg.drone_voice_id, cfg.drone_volume, cfg.drone_semitones) == (
+        "cello", 0.0, -5)
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("sine", "sine"), ("GM42", "gm42"), ("warmpad", "warmpad"),
+    ("gm128", "organ"), ("bogus", "organ"), (17, "organ"), (None, "organ"),
+    ("", "organ"),
+])
+def test_drone_voice_id_coercion(isolated_config, raw, expected):
+    isolated_config.write_text(json.dumps({"drone_voice_id": raw}),
+                               encoding="utf-8")
+    assert sax_config.load_config().drone_voice_id == expected
+
+
+@pytest.mark.parametrize("raw,expected", [
+    (0.0, 0.0), (0, 0.0), (0.25, 0.25), (2.0, 1.0), (-1, 0.0),
+    ("loud", 0.5), (None, 0.5),
+])
+def test_drone_volume_coercion(isolated_config, raw, expected):
+    isolated_config.write_text(json.dumps({"drone_volume": raw}),
+                               encoding="utf-8")
+    assert sax_config.load_config().drone_volume == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("raw,expected", [
+    (3, 3), (-12, -12), (30, 12), (-30, -12), ("x", 0), (None, 0),
+])
+def test_drone_semitones_coercion(isolated_config, raw, expected):
+    isolated_config.write_text(json.dumps({"drone_semitones": raw}),
+                               encoding="utf-8")
+    assert sax_config.load_config().drone_semitones == expected
+
+
+@requires_qt
+def test_window_restores_saved_drone_settings(tmp_path):
+    out = _run_gui(tmp_path, '''
+        out["volume"] = win._drone_volume
+        out["slider"] = win._drone_vol_slider.value()
+        out["semitones"] = win._drone_semitones
+        out["voice"] = win._drone_voice_id
+        out["setup_voice"] = win._drone_voice_combo.currentData()
+    ''', config={"drone_voice_id": "cello", "drone_volume": 0.0,
+                 "drone_semitones": -3})
+    assert out["volume"] == 0.0 and out["slider"] == 0
+    assert out["semitones"] == -3
+    assert out["voice"] == "cello" and out["setup_voice"] == "cello"

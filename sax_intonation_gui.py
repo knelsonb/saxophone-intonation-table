@@ -2861,7 +2861,7 @@ class MainWindow(QMainWindow):
                 continue
             seen_ids.add(vid)
             self._drone_voice_combo.addItem(label, vid)
-        sel_id = str(getattr(self._cfg, 'drone_voice_id', 'organ') or 'organ')
+        sel_id = self._cfg.drone_voice_id
         for i in range(self._drone_voice_combo.count()):
             if self._drone_voice_combo.itemData(i) == sel_id:
                 self._drone_voice_combo.setCurrentIndex(i)
@@ -3937,12 +3937,11 @@ class MainWindow(QMainWindow):
         drone on requires an output stream (honesty discipline — no 'on' state
         if nothing can sound). The 128-GM picker lives in SETUP and stays in
         sync via the controller's on_state_changed (single source of truth)."""
-        # Seed persisted state (the drone config fields, defensive).
-        self._drone_voice_id = str(getattr(self._cfg, 'drone_voice_id', 'organ')
-                                   or 'organ')
-        self._drone_volume = float(getattr(self._cfg, 'drone_volume', 0.5) or 0.5)
-        self._drone_semitones = max(-12, min(12, int(
-            getattr(self._cfg, 'drone_semitones', 0) or 0)))
+        # Seed persisted state. load_config has already coerced and clamped
+        # these; a saved volume of 0.0 is a real choice and is kept.
+        self._drone_voice_id = self._cfg.drone_voice_id
+        self._drone_volume = self._cfg.drone_volume
+        self._drone_semitones = self._cfg.drone_semitones
         self._pipes_ctrl = None
         self._pipes_dlg = None
         # Construct the drone controller (None → inert panel).

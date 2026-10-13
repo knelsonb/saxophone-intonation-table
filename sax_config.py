@@ -165,6 +165,16 @@ class AppConfig:
     # to dark rather than leaving the app unstyled.
     theme: str = "dark"
 
+    # ---- drone (TUNER drone bar + SETUP voice picker) --------------------
+    # Voice id as sax_drone understands it: a preset ("organ"...), the pure
+    # sine ("sine") or a full-GM id ("gm0".."gm127"). Unknown ids degrade to
+    # the organ preset on load.
+    drone_voice_id: str = "organ"
+    # Drone level, 0.0 (silent) .. 1.0. Zero is a real setting and survives.
+    drone_volume: float = 0.5
+    # Offset from the reference note in semitones, clamped to [-12, 12].
+    drone_semitones: int = 0
+
     def effective_log_path(self) -> Optional[Path]:
         if not self.persistence_enabled:
             return None
@@ -293,6 +303,28 @@ def _as_time_sig(v) -> str:
     return "4/4"
 
 
+DRONE_VOICE_DEFAULT = "organ"
+
+
+def _as_drone_voice_id(v) -> str:
+    """Coerce a saved drone voice id to one the drone catalog knows, else the
+    organ preset. The catalog is imported lazily so loading the config does
+    not pull in the synth module; if it cannot be imported at all, the value
+    is kept (the drone controller falls back to organ for unknown ids)."""
+    if v is None or isinstance(v, bool):
+        return DRONE_VOICE_DEFAULT
+    s = str(v).strip().lower()
+    if not s:
+        return DRONE_VOICE_DEFAULT
+    try:
+        from sax_drone import DRONE_FULL_GM, DRONE_PRESETS, DRONE_SYNTH_VOICES
+    except Exception:
+        return s
+    known = {vid for vid, _name, _prog in
+             (*DRONE_PRESETS, *DRONE_SYNTH_VOICES, *DRONE_FULL_GM)}
+    return s if s in known else DRONE_VOICE_DEFAULT
+
+
 def _as_str(v, default: str) -> str:
     if v is None:
         return default
@@ -378,6 +410,9 @@ def load_config() -> AppConfig:
         last_take_path=_as_str(data.get("last_take_path"), ""),
         deck_scratch_dir=_as_str(data.get("deck_scratch_dir"), ""),
         theme=coerce_theme_name(data.get("theme")),
+        drone_voice_id=_as_drone_voice_id(data.get("drone_voice_id")),
+        drone_volume=max(0.0, min(1.0, _as_float(data.get("drone_volume"), 0.5))),
+        drone_semitones=max(-12, min(12, _as_int(data.get("drone_semitones"), 0))),
     )
 
 
