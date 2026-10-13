@@ -112,9 +112,10 @@ MAX_FREQ = 4500.0
 YIN_THRESHOLD = 0.12
 A4_DEFAULT = 440.0
 
-# Filter-mode presets. Each callback fires every HOP_MS (~46 ms at 44.1k,
-# proportionally faster at higher sample rates), so `confirm` and
-# `edge_hops` are quantized to that grid.
+# Filter-mode presets. Each callback fires every HOP_MS (~46 ms; the hop is
+# sized in samples per rate so its duration stays the same), so `confirm` and
+# `edge_hops` are quantized to that grid. The first reading after an onset
+# arrives after (confirm + 2*edge_hops) hops.
 #
 # Calibrated for three working-musician use cases:
 #   fast    — live play / scale drills / immediate per-note feedback
@@ -209,8 +210,8 @@ class DeviceInfo:
 class DeviceSelection:
     """Persistence-friendly identifier for an audio input device.
 
-    ``samplerate=0`` means auto-negotiate (try 44100 → device default →
-    a fallback list). ``host_api`` may be empty if the saved selection
+    ``samplerate=0`` means auto-negotiate (highest supported rate first:
+    192000, 96000, 88200, 48000, 44100). ``host_api`` may be empty if the saved selection
     pre-dates the picker; resolution falls back to a system default in
     that case.
     """

@@ -177,7 +177,7 @@ STRINGS = {
                           'Gespeicherte CSVs lassen sich weiterhin öffnen und anzeigen.\n\n'
                           'Audio aktivieren:\n'
                           '  Windows / macOS:   pip install sounddevice\n'
-                          '  Linux (Debian/Ubuntu):  sudo apt install portaudio19-dev && pip install sounddevice\n\n'
+                          '  Linux (Debian/Ubuntu):  sudo apt install libportaudio2 && pip install sounddevice\n\n'
                           'Danach das Programm neu starten.'),
         # Autotune
         'autotune_title':      'Kammerton ermitteln',
@@ -538,7 +538,7 @@ STRINGS = {
                           'You can still open and view saved CSVs.\n\n'
                           'To enable audio:\n'
                           '  Windows / macOS:   pip install sounddevice\n'
-                          '  Linux (Debian/Ubuntu):  sudo apt install portaudio19-dev && pip install sounddevice\n\n'
+                          '  Linux (Debian/Ubuntu):  sudo apt install libportaudio2 && pip install sounddevice\n\n'
                           'Then restart the program.'),
         'autotune_title':      'Detect Concert Pitch',
         'autotune_nodata':     'Please play at least 3 notes with ≥ 5 measurements each\nbefore the optimal concert pitch can be calculated.',

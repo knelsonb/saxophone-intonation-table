@@ -1,5 +1,10 @@
 # Saxophone Intonation — Desktop Feature-Parity Sprint Plan
 
+> **Note (2026-10-13).** This is the plan as written at desktop v0.6.2. Its five
+> sprints shipped in v1.0.0; "Desktop today" and "absent" below describe the app
+> before that work. For current behaviour see `README.md`; for what was accepted
+> and how, see `docs/v1.0-acceptance.md` and `docs/v1.1-hardening.md`.
+
 **Goal:** bring `saxophone-intonation-table` (PyQt6 desktop, v0.6.2) up to feature
 parity with `saxophone-intonation-android` (React Native / Expo, v1.1.0).
 

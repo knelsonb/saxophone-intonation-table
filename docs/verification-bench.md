@@ -15,6 +15,18 @@ pure numpy (no PortAudio, no Qt, no soundcard).
 | Runs on | system `python3` (numpy) for the pure paths — including the §16 **pure-sine drone**; a venv with `tinysoundfont` only for the SF2 drone sections (§6, §9 `importorskip` cleanly otherwise) |
 | Principle | render/feed the **real** sources + engine, then **measure** the result — not "assert the math", but "does it actually sound/read at the right pitch, at the right time" |
 
+**Two kinds of hop.** In the live app the engine runs one detection pass per
+*engine hop*: 2048 new samples, about 46 ms at 44.1 kHz, analysed in a trailing
+16384-sample window (see `docs/response-modes.md`). The bench drives the engine
+through `feed_input_frames` one *bench hop* at a time: one 16384-sample block,
+about 372 ms of audio at 44.1 kHz, which triggers one detection pass on entirely
+fresh samples. Bench hop counts (§5, the `hops=` arguments) therefore count
+detection passes; they are not a measure of live latency in milliseconds.
+
+**When it runs.** The v1.2.0 release workflow (`.github/workflows/release.yml`)
+runs the full pytest suite, this bench included, before it builds any binary;
+its test job installs `tinysoundfont`, so the SF2 drone sections run there too.
+
 Related: `docs/parity-sprint-plan.md` (parent plan) · `docs/v1.1-hardening.md` (the
 hardening goal this grew out of) · `docs/response-modes.md` (engine filter presets).
 
@@ -33,9 +45,9 @@ bench sections map onto them:
 | 2 | test-tone pitch (110–1760 Hz) | FFT readback of the rendered tone < 1.5 c |
 | 3 | pitch-pipe pad pitch (A2–A6) | rendered pad at `midi_to_freq(midi, a4)` < 1.5 c |
 | 4 | **input** pitch — 5 notes × 3 timbres (sine/sax/noisy) | full engine pipeline (gate → YIN → confirm → emit) reads the right note; clean < 0.6 c, 20 dB-SNR noisy < 2 c |
-| 5 | **input** detection latency | first confirmed emit within ≤ 12 hops |
+| 5 | **input** detection latency | first confirmed emit within ≤ 12 bench hops (detection passes) — a coarse bound that catches a stuck confirm/lock path; live first-reading latency in ms is in `docs/response-modes.md` |
 | 6 | drone pitch — 5 notes × 3 voices (organ/cello/tenorsax) | `peak_near` reads the fundamental of the rich timbre < 12 c |
-| 7 | deck playback | a recorded take plays its full duration at the right pitch |
+| 7 | deck playback | the played-back take is at the right pitch (< 2 c, FFT) and the output is silent after the take ends |
 | 8 | metronome accent grid — 5 tempos (40–200) × 4 time sigs (2/4,3/4,4/4,6/8) | every click on the grid + the downbeat is the loud accent |
 | 9 | drone pitch **stability** | the organ is the steadiest SF2 reference (A4 spread < 6 c, centre < 4 c) |
 | 16 | drone pitch — the **pure-sine** precision voice (no SF2, always-on) | vibrato-free + exact: A4 spread < 0.5 c & centre < 1.5 c; < 2 c across A2–A5; follows concert A4 (415/442/443) — the SF2 voices' sub-cent twin |
@@ -56,14 +68,19 @@ bench sections map onto them:
 |---|------|-----|
 | 0, 10-control, 12 | inject a **known** fault and confirm the metric tracks it | a bench that only ever sees correct inputs and passes is unproven. §12 proves a known detune reads as ~that many cents (fft < 2.5 c, engine < 3 c, `peak_near` < 6 c) and injected drift surfaces well past the no-drift gate |
 
-A throwaway full-path mutation (re-introducing the accumulating-drift bug into the
-*real* `beat_onset_sample`) confirmed the §1 gate turns red on a real regression —
-i.e. the bench is wired to production, not just to synthetic signals.
+The §1 gate renders the *real* metronome, so it is wired to production code. Its
+grid has a limit: at the bench rate of 48 kHz, 60 / 120 / 200 BPM give whole-sample
+beat intervals (48000, 24000, 14400 samples), and so do the tempos in §8, §11 and
+§14. A regression that rounds or truncates the beat interval drifts only when the
+interval has a fractional part, so the bench grid cannot see it. The test that
+catches that class is `test_metronome.py::test_beat_onset_round_once_is_bounded_and_does_not_drift`
+(130 BPM at 44.1 kHz, 20353.8 samples per beat, with a rounded-accumulator
+control that must drift).
 
 ### 5. Invariance — pitch + timing hold across sample rate *and* concert pitch
 | § | What | Why |
 |---|------|-----|
-| 14 | full input pipeline + test-tone + pitch-pipe + metronome grid at **48 k and 96 k** | invariant #1 (the engine hop is a constant *duration*, scaled in samples by `sr`) and the drift-zero scheduler exist *because* a real rate-scaling bug bit at 96 k / 192 k |
+| 14 | full input pipeline + test-tone + pitch-pipe + metronome grid at **48 k and 96 k** | the drift-zero scheduler and the constant-duration engine hop exist *because* a real rate-scaling bug bit at 96 k / 192 k. Scope: §14 runs YIN and the confirm path at 96 kHz, but `detect_tone` sets `eng.samplerate` and feeds fixed 16384-sample blocks, so the engine's rate-dependent hop and window sizing (computed when a stream opens) is outside what it exercises |
 | 15 | input cents + rendered pitch-pipe output at concert **A4 = 415 / 442 / 443** | the concert-pitch reference must flow through both the emitted cents and the reference tone the player tunes to — not silently hardcoded to 440 (orchestra-at-442, baroque-at-415) |
 
 ---
@@ -114,7 +131,7 @@ YIN-vs-FFT vs full-pipeline readout across a few frequencies.
 | Drone pitch (pure-sine voice: range / A4 stability) | < 2 c / < 0.5 c | §16 |
 | Player pitch through metronome-click bleed | < 3 c | §13 |
 | Metronome beat spacing (per-beat + cumulative) | ≤ 2 samples | §1, §8, §11, §14 |
-| Detection latency | ≤ 12 hops | §5 |
+| Detection latency | ≤ 12 bench hops (detection passes) | §5 |
 
 Cents are displayed to the user as **signed integers only** — a real sax tone
 vibratos by more than a cent, so decimal cents claim resolution the reading can't
@@ -151,7 +168,7 @@ hold (`format_cents`; locked by `test_format_cents.py`).
   beat closure (`sax_deck.py`: "so the GUI never needs a `QTimer.singleShot`
   marshal"). The tuner needle/visualizer pull the engine's real `_buf`/detections
   at ~30 fps, so their only audio→visual offset is *bounded detection latency*
-  (§5, ≤ 12 hops) plus one refresh tick — lag, not accumulating drift. There is
+  (§5; in the live app about 0.2–0.65 s depending on the response mode) plus one refresh tick — lag, not accumulating drift. There is
   thus nothing sample-synced on screen for the hardware-free bench to measure; the
   requirement is met by the *absence* of a per-beat visual claim, not by syncing
   one. (Adding a per-beat visual indicator later would reopen this — it would need

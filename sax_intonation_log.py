@@ -7,7 +7,8 @@ then export filtered/aggregated subsets as CSV.
 Persistence is OPT-IN. If a `path` is passed to `MeasurementLog`, every run
 and measurement is also appended as a JSON Lines record so history can
 survive between sessions. The default is in-memory only — the GUI enables
-persistence when the environment variable `SAX_INTONATION_LOG_PATH` is set.
+persistence when the user opts in on the welcome dialog, or when the
+environment variable `SAX_INTONATION_LOG_PATH` names a file.
 
 Run semantics
 -------------
