@@ -16,12 +16,10 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import pytest
 
-numpy = pytest.importorskip('numpy')
-import numpy as np  # noqa: E402
-
-from sax_audio_engine import (  # noqa: E402
+from sax_audio_engine import (
     DEFAULT_BLOCK_SIZE,
     FILTER_PRESETS,
     AudioEngine,

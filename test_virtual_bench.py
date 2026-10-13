@@ -16,11 +16,11 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+import sax_pitch_pipes as pp
 import sim_harness as H
 from sax_metronome import MetronomeController, beat_onset_sample, beats_per_bar
 from sax_mixer import Mixer, TestToneSource
 
-pp = pytest.importorskip("sax_pitch_pipes", reason="pitch pipes module")
 PitchPipeSource = pp.PitchPipeSource
 
 SR = 48000

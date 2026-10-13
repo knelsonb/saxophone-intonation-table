@@ -23,13 +23,12 @@ import wave
 import numpy as np
 import pytest
 
+import sax_deck
+from sax_mixer import Mixer
+
 # int16 PCM scale sax_deck encodes/decodes with (symmetric: +1.0<->+32767).
 # One LSB is 1/32767; round-trip error is bounded by half an LSB.
 _PCM_LSB = 1.0 / 32767.0
-
-sax_deck = pytest.importorskip("sax_deck", reason="sax_deck module")
-
-from sax_mixer import Mixer  # noqa: E402  (after the skip-guard by design)
 
 
 # ===========================================================================

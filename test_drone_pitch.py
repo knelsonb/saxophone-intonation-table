@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import pytest
 
-numpy = pytest.importorskip("numpy")
 pytest.importorskip("tinysoundfont")
 import sax_drone as D  # noqa: E402
 import sim_harness as H  # noqa: E402

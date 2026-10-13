@@ -29,8 +29,7 @@ import dataclasses
 
 import pytest
 
-sax_coordination = pytest.importorskip(
-    'sax_coordination', reason="sax_coordination module")
+import sax_coordination
 
 Decision = sax_coordination.Decision
 OutputCoordinator = sax_coordination.OutputCoordinator

@@ -9,9 +9,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+import sax_pitch_pipes as pp
 from sax_mixer import Mixer
-
-pp = pytest.importorskip("sax_pitch_pipes", reason="pitch pipes module")
 
 
 def _expected_freq(midi, a4):

@@ -166,7 +166,7 @@ def test_controller_set_a4_rejects_bad_input():
     the pitch pipe would render NaN into its sine. GUI/config clamp a4 to
     [430,450], but the public setters must be robust like the engine's set_a4."""
     import sax_drone
-    pp = pytest.importorskip("sax_pitch_pipes")
+    import sax_pitch_pipes as pp
     dctrl = sax_drone.DroneController(Mixer(max_block=1024), 48000, a4=440.0)
     pctrl = pp.PitchPipesController(Mixer(max_block=1024), 48000, a4=440.0)
     for bad in (0.0, -5.0, float("inf"), float("nan")):
