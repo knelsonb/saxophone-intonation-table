@@ -58,6 +58,20 @@ def sax_like(f: float, sr: int = DEFAULT_SR, n: int = DEFAULT_N,
     return (amp * out / peak).astype(np.float32)
 
 
+def weak_fundamental(f: float, sr: int = DEFAULT_SR, n: int = DEFAULT_N,
+                     amp: float = 0.7) -> np.ndarray:
+    """Tone whose 2nd harmonic is twice as strong as the fundamental (plus a
+    little 3rd). Real low-register saxophone, small-speaker and phone-mic
+    signals look like this, and it is where a pitch detector is most likely to
+    answer an octave high. Peak-normalised to ``amp``."""
+    t = np.arange(n, dtype=np.float64)
+    out = (0.25 * np.sin(2 * math.pi * 1 * f * t / sr)
+           + 0.50 * np.sin(2 * math.pi * 2 * f * t / sr + 0.9)
+           + 0.15 * np.sin(2 * math.pi * 3 * f * t / sr + 1.7))
+    peak = float(np.max(np.abs(out))) or 1.0
+    return (amp * out / peak).astype(np.float32)
+
+
 def noisy(f: float, sr: int = DEFAULT_SR, n: int = DEFAULT_N,
           snr_db: float = 20.0, seed: int = 42, amp: float = 0.5) -> np.ndarray:
     s = sine(f, sr, n, amp).astype(np.float64)
@@ -403,7 +417,8 @@ def detect_tone(freq, *, kind='sax', mode='normal', a4=440.0, mic_gain=1.0,
     fill, then the confirm/lock machinery to emit. Returns a DetectionResult
     with ``target_hz`` set, so ``.cents_error()`` is meaningful.
 
-    kind : 'sax' (5-harmonic), 'sine', or 'noisy' (sine + noise at snr_db).
+    kind : 'sax' (5-harmonic), 'sine', 'weak_fundamental' (2nd harmonic at
+           twice the fundamental), or 'noisy' (sine + noise at snr_db).
     mode : engine response preset ('fast' / 'normal' / 'slow').
     """
     from sax_audio_engine import AudioEngine
@@ -418,6 +433,8 @@ def detect_tone(freq, *, kind='sax', mode='normal', a4=440.0, mic_gain=1.0,
     total = DEFAULT_N * max(1, int(hops))
     if kind == 'sine':
         sig = sine(freq, sr, total, amp)
+    elif kind == 'weak_fundamental':
+        sig = weak_fundamental(freq, sr, total, amp)
     elif kind == 'noisy' or snr_db is not None:
         sig = noisy(freq, sr, total,
                     snr_db=(snr_db if snr_db is not None else 20.0), amp=amp)
