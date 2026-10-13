@@ -572,9 +572,9 @@ class AppDriver:
                         continue
                     mean = pay["mean"]
                     # The matrix cell is painted by a delegate; derive the band
-                    # from the same thresholds the delegate uses.
-                    band = ("green" if abs(mean) <= theme.IN_TUNE_CENTS else
-                            "amber" if abs(mean) <= theme.CLOSE_CENTS else "red")
+                    # with the same classifier the views share.
+                    band = {"in": "green", "close": "amber", "off": "red"}[
+                        theme.cents_band(mean)]
                     rows.append(Row(pay["fingered_name"], pay["sounding_name"],
                                     int(round(mean)), int(round(pay["std"])),
                                     int(pay["n"]), band))
