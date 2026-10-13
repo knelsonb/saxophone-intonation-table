@@ -12,8 +12,8 @@
 #     grep-ability.  MainWindow keeps one-line wrapper methods so the
 #     Qt signal/slot bindings (which PyQt type-checks at connect time)
 #     are unchanged — only the slot *bodies* move here.
-#   * The AudioPickerDialog Qt widget class stays in sax_intonation_gui
-#     because it is a Qt widget.  The controller just opens it.
+#   * The AudioPickerDialog lives in sax_dialogs.  The controller just
+#     opens it.
 #   * The two banner widgets the controller talks to (AudioRecoveryBanner
 #     and InfoBanner) are passed in at construction so the controller
 #     does not have to reach into MainWindow's widget tree by name.
@@ -31,11 +31,7 @@
 #     immutable DeviceSnapshot in the signal payload, which is an
 #     engine-surface change outside this module.
 #   * The controller's `_audio_ok` flag is captured at construction
-#     time from the GUI module's AUDIO_OK constant.  sax_intonation_gui
-#     imports this module at its top level, so the reverse imports here
-#     (AUDIO_OK, AudioPickerDialog) are function-local: they run after
-#     both modules are loaded and keep the module-level import graph
-#     free of a cycle.
+#     time from sax_audio_engine.AUDIO_OK (sounddevice importable).
 # =============================================================================
 from __future__ import annotations
 
@@ -45,10 +41,12 @@ from PyQt6.QtWidgets import QDialog
 
 import sax_config
 from sax_audio_engine import (
+    AUDIO_OK,
     AudioEngineState,
     DeviceInfo,
     DeviceSelection,
 )
+from sax_dialogs import AudioPickerDialog
 
 if TYPE_CHECKING:
     from PyQt6.QtWidgets import QMainWindow
@@ -82,16 +80,9 @@ class DeviceController:
         self._audio_banner = audio_banner
         self._get_lang = get_lang
         self._on_active_device_changed = on_active_device_changed
-        # AUDIO_OK is captured from the GUI module at construction time
-        # through a function-local import (a module-level import would
-        # cycle).  If sax_intonation_gui imported cleanly to build the
-        # window, sounddevice was importable — but the engine's open()
+        # AUDIO_OK only says sounddevice is importable; the engine's open()
         # can still fail at runtime and surface FAILED via state_changed.
-        try:
-            from sax_intonation_gui import AUDIO_OK as _audio_ok
-        except Exception:
-            _audio_ok = False
-        self._audio_ok = bool(_audio_ok)
+        self._audio_ok = bool(AUDIO_OK)
 
     # -------------------------------------------------------------------------
     # Persistence write-back
@@ -126,10 +117,6 @@ class DeviceController:
     def open_audio_picker(self) -> None:
         if not self._audio_ok:
             return
-        # AudioPickerDialog is a Qt widget class — it lives in the GUI
-        # module.  Imported here (not at module top) so this controller
-        # does not pull the entire GUI module at import time.
-        from sax_intonation_gui import AudioPickerDialog
         dlg = AudioPickerDialog(self._w, self._t, self._engine, self._cfg,
                                 self._engine.get_active_device())
         if dlg.exec() == QDialog.DialogCode.Accepted:

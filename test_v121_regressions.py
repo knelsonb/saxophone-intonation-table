@@ -37,6 +37,8 @@ os.environ["USERPROFILE"] = home
 sys.path.insert(0, repo)
 import sax_intonation_gui as G
 from PyQt6.QtWidgets import QApplication
+from sax_dialogs import AudioPickerDialog, RangeEditorDialog
+from sax_stats import NoteStats
 G.QMessageBox.information = staticmethod(lambda *a, **k: None)
 app = QApplication.instance() or QApplication([])
 win = G.MainWindow()
@@ -177,7 +179,7 @@ def test_matrix_span_follows_display_and_played_notes(tmp_path):
         out["klingend_live"] = list(ctrl._matrix_octave_range())
         out["klingend_painted"] = list(ctrl.painted_octave_span())
         # A played note far below the range widens the live span.
-        st = G.NoteStats()
+        st = NoteStats()
         for _ in range(6):
             st.add(0.0, 55.0)
         with win._lock:
@@ -198,7 +200,7 @@ def test_matrix_span_follows_display_and_played_notes(tmp_path):
 
         G.QMenu = _Menu
         midi = 50   # D3 sounding, inside the tenor's sounding range
-        st2 = G.NoteStats()
+        st2 = NoteStats()
         for _ in range(6):
             st2.add(0.0, 146.8)
         with win._lock:
@@ -324,7 +326,7 @@ def test_range_editor_stays_open_when_nothing_was_saved(tmp_path):
     out = _run_gui(tmp_path, '''
         import sax_instruments
         def make():
-            return G.RangeEditorDialog(
+            return RangeEditorDialog(
                 win, win._t, "eb_bari", "Bari", 45, 77, 45, 77, True,
                 display="klingend", transp=-21)
         # Sounding 127 is fingered 148: outside MIDI, must not save.
@@ -537,15 +539,16 @@ def test_bar_delegate_and_table_use_shared_thresholds(tmp_path):
         from PyQt6.QtGui import QImage, QPainter, QStandardItemModel, QStandardItem
         from PyQt6.QtWidgets import QStyleOptionViewItem
 
+        import sax_widgets as W
         roles = []
-        real_themed = G._themed
+        real_themed = W._themed
 
         def spy(role, alpha=255):
             roles.append(role)
             return real_themed(role, alpha)
 
-        G._themed = spy
-        delegate = G.CentBarDelegate()
+        W._themed = spy
+        delegate = W.CentBarDelegate()
         model = QStandardItemModel(1, 1)
         img = QImage(200, 30, QImage.Format.Format_ARGB32)
         bars = {}
@@ -561,13 +564,13 @@ def test_bar_delegate_and_table_use_shared_thresholds(tmp_path):
             delegate.paint(p, opt, model.index(0, 0))
             p.end()
             bars[str(cents)] = sorted(set(roles))
-        G._themed = real_themed
+        W._themed = real_themed
         out["bars"] = bars
 
         # Single-column table: +5.4 prints "+5" and must be green.
         win._cfg.layout_mode_preference = "single"
         win._cfg.min_n_visible = 0
-        st = G.NoteStats()
+        st = NoteStats()
         for _ in range(5):
             st.add(5.4, 440.0)
         with win._lock:
@@ -827,7 +830,7 @@ def test_picker_restores_wait_cursor_when_closed_mid_reopen(tmp_path):
         win._engine.get_active_device = lambda: dev
         win._engine.stop = lambda: None
         win._engine.open_device = lambda *a, **k: release.wait(10)
-        dlg = G.AudioPickerDialog(win, win._t, win._engine, win._cfg, None)
+        dlg = AudioPickerDialog(win, win._t, win._engine, win._cfg, None)
         idx = dlg._sr_combo.findData("48000")
         dlg._sr_combo.setCurrentIndex(idx)
         app.processEvents()

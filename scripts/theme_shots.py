@@ -53,6 +53,7 @@ def main() -> int:
 
     import sax_intonation_gui as G
     import sax_theme as TH
+    from sax_dialogs import AudioPickerDialog, RangeEditorDialog
 
     # The one modal we can't defuse via config (headless no-audio box).
     G.QMessageBox.information = staticmethod(lambda *a, **k: None)
@@ -87,9 +88,8 @@ def main() -> int:
         try:
             cur_lo, cur_hi = _si.fingered_range(key)
             baked_lo, baked_hi = _si.baked_fingered_range(key)
-            _name_fn = getattr(G, "instrument_display_name", lambda k, lang: str(k))
-            rdlg = G.RangeEditorDialog(
-                win, win._t, key, _name_fn(key, win.lang),
+            rdlg = RangeEditorDialog(
+                win, win._t, key, _si.display_name(key, win.lang),
                 cur_lo, cur_hi, baked_lo, baked_hi, _si.has_baked_range(key),
                 display=getattr(win, "display", "griff"),
                 transp=_si.transp_map().get(key, 0))
@@ -104,7 +104,7 @@ def main() -> int:
         except Exception as exc:                 # never let one target sink the run
             print(f"  (rangedlg skipped for {theme}: {exc})")
         try:
-            pdlg = G.AudioPickerDialog(win, win._t, win._engine, win._cfg, None)
+            pdlg = AudioPickerDialog(win, win._t, win._engine, win._cfg, None)
             pdlg.resize(560, 420)
             _grab(pdlg, f"{theme}-pickerdlg")
             pdlg.close()

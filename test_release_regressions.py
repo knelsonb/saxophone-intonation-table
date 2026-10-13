@@ -274,7 +274,7 @@ def test_transposition_line_has_single_sign(lang):
 
 # --- table frequencies behind a concert-pitch change ----------------------------
 def test_notestats_keeps_frequencies_for_a4_rederive():
-    from sax_intonation_gui import NoteStats
+    from sax_stats import NoteStats
     st = NoteStats()
     st.add(3.0, 440.76)
     st.add(-1.0)

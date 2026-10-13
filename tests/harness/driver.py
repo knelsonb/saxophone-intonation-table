@@ -65,7 +65,8 @@ the list below is the contract the rewrite must keep or update here:
     * welcome (objectName ``welcomeDlg``), maker/model, CSV slice, custom
       instrument (property ``_lang_title_key``), ``RangeEditorDialog``
       (``_lo_spin`` ``_hi_spin`` ``_btn_save`` ``_btn_cancel`` ``_btn_restore``
-      ``_error_lbl``), ``AudioPickerDialog`` (recognised, not scriptable).
+      ``_error_lbl``), ``AudioPickerDialog`` (recognised, not scriptable);
+      the classes live in ``sax_dialogs`` and are recognised by class name.
   Export capture
     * ``reportlab.platypus.SimpleDocTemplate.build`` (PDF story),
       ``sax_export.render_intonation_chart`` (chart arguments),

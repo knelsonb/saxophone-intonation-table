@@ -43,17 +43,13 @@ from typing import Iterable, Optional
 import numpy as np
 from PyQt6.QtWidgets import (
     QDialog,
-    QDialogButtonBox,
-    QFormLayout,
-    QLabel,
-    QLineEdit,
     QMessageBox,
-    QSpinBox,
-    QVBoxLayout,
 )
 
 import sax_config
 import sax_instruments
+from sax_audio_engine import AUDIO_OK
+from sax_dialogs import RangeEditorDialog, ask_custom_instrument
 from sax_instruments import (
     display_name as instrument_display_name,
     families as instrument_families,
@@ -195,11 +191,6 @@ class InstrumentController:
                 return
 
     def on_instr_changed(self, idx) -> None:
-        # Local imports keep the module decoupled from the GUI file while
-        # still using the same shared module-level state. AUDIO_OK is a
-        # module-level flag; importing it at call time picks up the
-        # value frozen at GUI import.
-        from sax_intonation_gui import AUDIO_OK
         key = self._instr_combo.itemData(idx)
         if key is None:
             return
@@ -229,7 +220,6 @@ class InstrumentController:
         previous horn under the new name. An empty current run is coalesced
         by start_run, so typing a name before playing just relabels it.
         Clearing the nickname opens a run with an empty label."""
-        from sax_intonation_gui import AUDIO_OK
         nickname = self._nick_edit.text().strip()
         if not (AUDIO_OK and getattr(self._w, '_recording', False)):
             return
@@ -247,7 +237,6 @@ class InstrumentController:
         """Open the per-instrument range editor for the active instrument.
         Accepts → persist via sax_instruments override DB → notify caller
         so the new bounds take effect immediately."""
-        from sax_intonation_gui import RangeEditorDialog
         w = self._w
         key = w.instrument
         cur_lo, cur_hi = sax_instruments.fingered_range(key)
@@ -324,73 +313,10 @@ class InstrumentController:
         self.populate_instrument_combo(select_key=key)
 
     def _ask_custom_instrument(self) -> tuple[str, int] | None:
-        w = self._w
-        dlg = QDialog(w)
-        dlg.setProperty('_lang_title_key', 'custom_dlg_title')
-        dlg.setWindowTitle(self._t('custom_dlg_title'))
-        dlg.setMinimumWidth(380)
-        dlg.setStyleSheet("""
-            QDialog { background: #1a1a2e; color: #ddd; }
-            QLabel  { color: #bbb; font-size: 13px; }
-            QLineEdit, QSpinBox {
-                background: #252540; border: 1px solid #444; border-radius: 5px;
-                color: #eee; padding: 6px 10px; font-size: 13px;
-            }
-            QLineEdit:focus, QSpinBox:focus { border: 1px solid #6699cc; }
-            QDialogButtonBox QPushButton {
-                background: #2c5282; color: white; border: none;
-                border-radius: 5px; padding: 6px 18px; font-size: 13px;
-            }
-        """)
-        layout = QVBoxLayout(dlg)
-        layout.setSpacing(10)
-        layout.setContentsMargins(20, 14, 20, 16)
-        info = QLabel(self._t('custom_dlg_info'))
-        info.setStyleSheet('color: #888; font-size: 12px;')
-        info.setWordWrap(True)
-        form = QFormLayout()
-        form.setSpacing(8)
-        edit_name = QLineEdit()
-        edit_name.setPlaceholderText('e.g. Eb Mezzo-Soprano')
-        name_lbl = QLabel(self._t('custom_lbl_name'))
-        form.addRow(name_lbl, edit_name)
-        spin_transp = QSpinBox()
-        spin_transp.setRange(-36, 36)
-        spin_transp.setValue(0)
-        transp_lbl = QLabel(self._t('custom_lbl_transp'))
-        form.addRow(transp_lbl, spin_transp)
-        btns = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok
-            | QDialogButtonBox.StandardButton.Cancel)
-        btns.accepted.connect(dlg.accept)
-        btns.rejected.connect(dlg.reject)
-
-        def relabel():
-            info.setText(self._t('custom_dlg_info'))
-            name_lbl.setText(self._t('custom_lbl_name'))
-            transp_lbl.setText(self._t('custom_lbl_transp'))
-
-        # The DE | EN toggle lives on MainWindow because it pokes the
-        # main lang combo so all subscribers update too. Reach back via
-        # the documented helper rather than duplicating it here.
-        w._add_dialog_lang_toggle(dlg, layout, on_change=relabel)
-        layout.addWidget(info)
-        layout.addLayout(form)
-        layout.addWidget(btns)
-        if dlg.exec() != QDialog.DialogCode.Accepted:
-            return None
-        name = edit_name.text().strip()
-        if not name:
-            QMessageBox.warning(w, self._t('err_title'),
-                                self._t('custom_err_name'))
-            return None
-        # The instrument key is a slug of letters and digits; a name with
-        # neither would produce an empty key.
-        if not any(c.isalnum() for c in name):
-            QMessageBox.warning(w, self._t('err_title'),
-                                self._t('custom_err_chars'))
-            return None
-        return (name, int(spin_transp.value()))
+        # The DE | EN toggle switches the whole window, so the dialog
+        # borrows the window's toggle rather than building its own.
+        return ask_custom_instrument(self._w, self._t,
+                                     self._w._add_dialog_lang_toggle)
 
     # ── Autotune ─────────────────────────────────────────────────────────────
     def on_autotune(self) -> None:

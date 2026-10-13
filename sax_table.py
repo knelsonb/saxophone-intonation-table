@@ -44,6 +44,7 @@ from PyQt6.QtWidgets import (
 import sax_instruments
 from sax_pitch import CHROMA, format_cents, midi_note_name
 from sax_theme import cents_band
+from sax_widgets import MatrixCellDelegate
 
 # Text colour of the mean column for each cents_band() result.
 _BAND_COLOR = {'in': '#3a9e5f', 'close': '#c8a020', 'off': '#c03030'}
@@ -124,9 +125,6 @@ class TableController:
         # historically; it may not exist yet if configure_for_mode is
         # called before that.  Build defensively.
         if not hasattr(w, '_matrix_delegate'):
-            # MatrixCellDelegate lives in sax_intonation_gui; import
-            # lazily to avoid a circular import at module load.
-            from sax_intonation_gui import MatrixCellDelegate
             w._matrix_delegate = MatrixCellDelegate(
                 self._table, sample_rate_getter=w._engine_sample_rate)
 

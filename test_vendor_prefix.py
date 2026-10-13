@@ -1,5 +1,5 @@
 """
-Regression tests for ``_promote_vendor_prefix`` in ``sax_intonation_gui``.
+Regression tests for ``_promote_vendor_prefix`` in ``sax_dialogs``.
 
 These tests were written after three consecutive rendering-defect fixes
 (v0.5.7.2, v0.5.7.4, v0.5.7.5) showed the function is high-churn and
@@ -10,10 +10,9 @@ this file.
 
 Import notes
 ------------
-``sax_intonation_gui`` imports PyQt6 class definitions at module scope but
-does NOT instantiate ``QApplication`` at import time (that is guarded by
-``if __name__ == '__main__'``).  Importing the module in a headless pytest
-run therefore requires PyQt6 to be installed but does not require a
+``sax_dialogs`` imports PyQt6 class definitions at module scope but
+does NOT instantiate ``QApplication``.  Importing the module in a headless
+pytest run therefore requires PyQt6 to be installed but does not require a
 display.  If PyQt6 is unavailable the whole module is skipped.
 
 Separator note
@@ -27,7 +26,7 @@ import pytest
 
 pytest.importorskip('PyQt6', reason='PyQt6 not installed; skipping vendor-prefix tests')
 
-from sax_intonation_gui import _promote_vendor_prefix  # noqa: E402
+from sax_dialogs import _promote_vendor_prefix  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Parametrised table
