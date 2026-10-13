@@ -16,7 +16,7 @@ import sax_config
 import sax_pitch_pipes as pp
 import sim_harness as H
 from sax_drone import _DEFAULT_PROGRAM, resolve_drone_voice
-from sax_intonation_log import MeasurementLog, _read_csv_text
+from sax_intonation_log import Measurement, MeasurementLog, RunMeta, _read_csv_text
 from sax_metronome import MetronomeController
 from sax_mixer import Mixer
 
@@ -87,11 +87,74 @@ def test_customs_strict_load_raises_on_read_failure(isolated_config, monkeypatch
 
 
 # --- measurement log ---------------------------------------------------------
-def test_log_skips_undecodable_and_non_object_lines(tmp_path):
+def _jsonl_run(run_id: str, started_at: str) -> bytes:
+    run = RunMeta(run_id=run_id, started_at=started_at, instrument="eb_alto",
+                  a4_hz=440.0)
+    return run.to_jsonl().encode("utf-8")
+
+
+def _jsonl_measurement(run_id: str, midi: int) -> bytes:
+    m = Measurement(run_id=run_id, timestamp="2026-10-13T10:00:00",
+                    instrument="eb_alto", a4_hz=440.0, midi_sounding=midi,
+                    midi_fingered=midi + 9, cents=1.5, freq_hz=440.0)
+    return m.to_jsonl().encode("utf-8")
+
+
+def test_log_recovers_valid_lines_around_damaged_ones(tmp_path):
+    """A history file with a torn write, a stray binary byte and foreign JSON
+    in the middle still yields every intact record, in order, and nothing
+    from the damaged lines."""
+    lines = [
+        _jsonl_run("r1", "2026-10-13T10:00:00"),
+        _jsonl_measurement("r1", 60),
+        b"42",                                        # JSON, but not an object
+        b"null",
+        b"[1]",
+        b'{"kind": "run", \xff}',                     # undecodable and malformed
+        b"not json at all",
+        _jsonl_measurement("r1", 62),
+        b'{"kind": "measurement", "run_id": "r1"}',   # fields missing
+        b'{"kind": "run", "run_id": "r9", "bogus": 1}',   # unknown field
+        b'{"kind": "mystery", "x": 1}',               # unknown record kind
+        b"",
+        b"   ",
+        _jsonl_run("r2", "2026-10-13T11:00:00"),
+        _jsonl_measurement("r2", 64),
+        b'{"kind": "measurement", "run_id": "r2"',    # torn final line, no newline
+    ]
+    path = tmp_path / "log.jsonl"
+    path.write_bytes(b"\n".join(lines))
+
+    log = MeasurementLog(path=str(path))
+
+    assert [r.run_id for r in log.runs()] == ["r2", "r1"]      # newest first
+    assert [m.midi_sounding for m in log.measurements()] == [60, 62, 64]
+    assert [m.run_id for m in log.measurements()] == ["r1", "r1", "r2"]
+
+
+def test_log_keeps_working_after_recovering_from_damage(tmp_path):
+    """The recovered log accepts new records and a later start reads both the
+    old and the new ones."""
+    path = tmp_path / "log.jsonl"
+    path.write_bytes(b"\n".join([
+        _jsonl_run("r1", "2026-10-13T10:00:00"), _jsonl_measurement("r1", 60),
+        b"garbage \xff\xfe",
+    ]) + b"\n")
+
+    log = MeasurementLog(path=str(path))
+    log.start_run("bb_tenor", 442.0)
+    log.add_measurement(midi_sounding=62, midi_fingered=76, cents=-2.0, freq_hz=293.0)
+
+    again = MeasurementLog(path=str(path))
+    assert len(again.runs()) == 2
+    assert sorted(m.midi_sounding for m in again.measurements()) == [60, 62]
+
+
+def test_log_with_only_damaged_lines_loads_empty(tmp_path):
     path = tmp_path / "log.jsonl"
     path.write_bytes(b'42\nnull\n[1]\n{"kind": "run", \xff}\n')
     log = MeasurementLog(path=str(path))
-    assert log is not None
+    assert log.runs() == [] and log.measurements() == []
 
 
 def test_csv_import_falls_back_to_cp1252(tmp_path):
