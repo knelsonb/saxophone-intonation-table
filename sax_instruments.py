@@ -346,10 +346,24 @@ def _coerce_range_entry(v) -> tuple[int, int] | None:
     return (lo, hi)
 
 
-def load_range_overrides() -> dict[str, tuple[int, int]]:
-    """Read the overrides file into a fresh dict. Tolerant: missing file,
-    malformed JSON, wrong shape, bad entries all degrade to {} or skip the
-    offending key. Updates the in-process cache as a side effect."""
+class RangeOverridesUnreadable(Exception):
+    """instrument_ranges.json exists but could not be read or understood.
+    Raised by the strict load so a caller never rewrites the file from an
+    empty result and wipes every other instrument's override."""
+
+
+def load_range_overrides(strict: bool = False) -> dict[str, tuple[int, int]]:
+    """Read the overrides file into a fresh dict and refresh the in-process
+    cache.
+
+    Tolerant by default: missing file, malformed JSON, wrong shape and bad
+    entries all degrade to {} or skip the offending key, because this runs
+    at import time and must never stop the app from starting.
+
+    ``strict=True`` is for read-modify-write callers. A file that exists but
+    cannot be read (OSError) or parsed (ValueError, wrong shape) raises
+    RangeOverridesUnreadable and leaves the cache alone. Individual bad
+    entries are still skipped; they carry nothing worth keeping."""
     global _OVERRIDES
     out: dict[str, tuple[int, int]] = {}
     if not _RANGES_FILE.exists():
@@ -358,16 +372,17 @@ def load_range_overrides() -> dict[str, tuple[int, int]]:
     try:
         with _RANGES_FILE.open("r", encoding="utf-8") as f:
             data = json.load(f)
-    except (OSError, ValueError):
-        # ValueError covers JSONDecodeError and undecodable bytes; this runs
-        # at import time, so any escape here stops the app from starting.
+    except (OSError, ValueError) as exc:
+        # ValueError covers JSONDecodeError and undecodable bytes.
+        if strict:
+            raise RangeOverridesUnreadable(str(exc)) from exc
         _OVERRIDES = out
         return out
-    if not isinstance(data, dict):
-        _OVERRIDES = out
-        return out
-    ranges = data.get("ranges")
+    ranges = data.get("ranges", {}) if isinstance(data, dict) else None
     if not isinstance(ranges, dict):
+        if strict:
+            raise RangeOverridesUnreadable(
+                f"{_RANGES_FILE} does not hold a ranges object")
         _OVERRIDES = out
         return out
     for key, val in ranges.items():
@@ -381,51 +396,45 @@ def load_range_overrides() -> dict[str, tuple[int, int]]:
     return out
 
 
-def _write_overrides_atomic(payload: dict) -> None:
-    """Write JSON to the overrides file via a temp file + rename so a
-    crashed write never leaves a half-baked file behind."""
-    atomic_write_json(
-        _RANGES_FILE, payload, tmp_prefix=".instrument_ranges.")
+def _write_overrides(current: dict[str, tuple[int, int]]) -> None:
+    """Write the full override table atomically (temp file + rename, so a
+    crashed write never leaves a half-baked file) and make it the cache.
+    Raises OSError when the write fails; the old file is left intact."""
+    global _OVERRIDES
+    payload = {
+        "version": _RANGES_SCHEMA_VERSION,
+        "ranges": {k: list(v) for k, v in current.items()},
+    }
+    if not atomic_write_json(
+            _RANGES_FILE, payload, tmp_prefix=".instrument_ranges."):
+        raise OSError(f"could not write {_RANGES_FILE}")
+    _OVERRIDES = dict(current)
 
 
 def save_range_override(key: str, lo: int, hi: int) -> None:
-    """Persist one override entry. Read-modify-write of the JSON file so
-    other keys in the file are preserved. Refreshes the in-process cache."""
+    """Persist one override entry, preserving every other key in the file.
+
+    Raises ValueError for a range outside 0..127 or with lo > hi,
+    RangeOverridesUnreadable when the existing file cannot be read (it is
+    left untouched), and OSError when the write fails. On success the
+    in-process cache matches the file."""
     coerced = _coerce_range_entry((lo, hi))
     if coerced is None:
-        return
-    # Re-read from disk so we don't clobber edits from a parallel process
-    # with the in-process cache (unlikely on a desktop app, but cheap).
-    current = load_range_overrides()
+        raise ValueError(f"invalid range {lo}..{hi} for {key}")
+    # Re-read from disk so a parallel process's edits are kept.
+    current = load_range_overrides(strict=True)
     current[key] = coerced
-    payload = {
-        "version": _RANGES_SCHEMA_VERSION,
-        "ranges": {k: list(v) for k, v in current.items()},
-    }
-    try:
-        _write_overrides_atomic(payload)
-    except OSError:
-        return
-    # Refresh cache from the file we just wrote so any future load sees
-    # the same view as the in-process cache.
-    load_range_overrides()
+    _write_overrides(current)
 
 
 def clear_range_override(key: str) -> None:
-    """Remove one override entry, if present. Refreshes the cache."""
-    current = load_range_overrides()
+    """Remove one override entry, if present. Same error contract as
+    save_range_override."""
+    current = load_range_overrides(strict=True)
     if key not in current:
         return
     del current[key]
-    payload = {
-        "version": _RANGES_SCHEMA_VERSION,
-        "ranges": {k: list(v) for k, v in current.items()},
-    }
-    try:
-        _write_overrides_atomic(payload)
-    except OSError:
-        return
-    load_range_overrides()
+    _write_overrides(current)
 
 
 # Prime the cache at import time.

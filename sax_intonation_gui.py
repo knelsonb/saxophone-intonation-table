@@ -282,9 +282,29 @@ def midi_note_name(m):
 # Returns the integer MIDI number or None if the string can't be parsed.
 # Used by the range editor's note-name input field so users don't have to
 # think in MIDI integers.
+# B is B natural, as midi_note_name prints it. H is the German name for the
+# same note and is accepted as an alias.
 _NOTE_PITCH_CLASSES = {
-    'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11,
+    'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11, 'H': 11,
 }
+
+
+def _pitch_class_offset(spelling: str) -> int | None:
+    """Semitone offset from C for a letter plus optional accidental
+    ("A", "A#", "Bb", "H"), or None."""
+    if not spelling:
+        return None
+    letter = spelling[0].upper()
+    if letter not in _NOTE_PITCH_CLASSES:
+        return None
+    rest = spelling[1:]
+    if rest == '':
+        return _NOTE_PITCH_CLASSES[letter]
+    if rest == '#':
+        return _NOTE_PITCH_CLASSES[letter] + 1
+    if rest == 'b':
+        return _NOTE_PITCH_CLASSES[letter] - 1
+    return None
 
 
 def note_name_to_midi(text: str) -> int | None:
@@ -295,28 +315,24 @@ def note_name_to_midi(text: str) -> int | None:
         return None
     # Normalise unicode accidentals to ASCII.
     s = s.replace('♯', '#').replace('♭', 'b')
-    # Letter (case-insensitive).
-    letter = s[0].upper()
-    if letter not in _NOTE_PITCH_CLASSES:
-        return None
-    pc = _NOTE_PITCH_CLASSES[letter]
-    rest = s[1:]
-    # Optional accidental.
-    accidental = 0
-    if rest and rest[0] == '#':
-        accidental = 1
-        rest = rest[1:]
-    elif rest and rest[0] == 'b':
-        accidental = -1
-        rest = rest[1:]
-    # Octave digit(s) — allow negative octave like "C-1".
-    if not rest:
+    # Split off the octave: everything from the first digit, or from a
+    # minus sign that starts a negative octave like "C-1".
+    i = 0
+    while i < len(s) and not (s[i].isdigit() or s[i] == '-'):
+        i += 1
+    name, octave_text = s[:i], s[i:]
+    if not octave_text:
         return None
     try:
-        octave = int(rest)
+        octave = int(octave_text)
     except ValueError:
         return None
-    midi = (octave + 1) * 12 + pc + accidental
+    # midi_note_name prints black keys as both spellings ("A#/Bb3"). Accept
+    # that form back as long as both halves name the same pitch class.
+    offsets = {_pitch_class_offset(part) for part in name.split('/')}
+    if len(offsets) != 1 or None in offsets:
+        return None
+    midi = (octave + 1) * 12 + offsets.pop()
     if midi < 0 or midi > 127:
         return None
     return midi
@@ -2132,15 +2148,33 @@ class RangeEditorDialog(QDialog):
             return
         lo = disp_lo - self._transp
         hi = disp_hi - self._transp
+        # In sounding display the spin boxes span 0..127 sounding, which
+        # can land outside 0..127 fingered (an Eb baritone's sounding 127
+        # is fingered 148). Say so and keep the dialog open.
+        if not (0 <= lo <= 127 and 0 <= hi <= 127):
+            self._show_error(self._t('range_out_of_midi', lo=lo, hi=hi))
+            return
         # If the user dialed back to the baked default AND a baked entry
         # exists, clear the override instead of writing a redundant
         # entry. Keeps the overrides file lean and lets future baked
         # changes flow through.
-        if self._has_baked and (lo, hi) == self._baked:
-            sax_instruments.clear_range_override(self._key)
-        else:
-            sax_instruments.save_range_override(self._key, lo, hi)
+        try:
+            if self._has_baked and (lo, hi) == self._baked:
+                sax_instruments.clear_range_override(self._key)
+            else:
+                sax_instruments.save_range_override(self._key, lo, hi)
+        except (OSError, ValueError,
+                sax_instruments.RangeOverridesUnreadable) as exc:
+            # Nothing was saved, so the dialog must not close as if it had.
+            self._show_error(self._t(
+                'range_save_failed',
+                path=str(sax_instruments._RANGES_FILE), err=str(exc)))
+            return
         self.accept()
+
+    def _show_error(self, text: str) -> None:
+        self._error_lbl.setText(text)
+        self._error_lbl.setVisible(True)
 
 
 # =============================================================================

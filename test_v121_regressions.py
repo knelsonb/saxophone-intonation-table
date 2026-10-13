@@ -219,3 +219,127 @@ def test_matrix_span_follows_display_and_played_notes(tmp_path):
     lo, hi = out["played_painted"]
     assert out["columns"] == hi - lo + 1
     assert out["menu_midi"] == 50
+
+
+# ---------------------------------------------------------------------------
+# 1.3  Range overrides: strict save, honest editor, parser accepts its output
+# ---------------------------------------------------------------------------
+@pytest.fixture()
+def ranges_file(tmp_path, monkeypatch):
+    import sax_instruments
+    path = tmp_path / "instrument_ranges.json"
+    monkeypatch.setattr(sax_instruments, "_RANGES_FILE", path)
+    monkeypatch.setattr(sax_instruments, "_OVERRIDES", {})
+    return path
+
+
+def _two_overrides(path: Path) -> str:
+    text = json.dumps({"version": 1,
+                       "ranges": {"eb_alto": [50, 80], "bb_tenor": [46, 78]}})
+    path.write_text(text, encoding="utf-8")
+    return text
+
+
+def test_save_override_keeps_other_keys(ranges_file):
+    import sax_instruments
+    _two_overrides(ranges_file)
+    sax_instruments.save_range_override("eb_bari", 45, 77)
+    data = json.loads(ranges_file.read_text(encoding="utf-8"))["ranges"]
+    assert data == {"eb_alto": [50, 80], "bb_tenor": [46, 78],
+                    "eb_bari": [45, 77]}
+    assert sax_instruments.fingered_range("eb_bari") == (45, 77)
+
+
+def test_save_override_never_rewrites_after_failed_read(ranges_file,
+                                                        monkeypatch):
+    import sax_instruments
+    original = _two_overrides(ranges_file)
+    real_open = Path.open
+
+    def locked(self, *args, **kwargs):
+        if self == ranges_file:
+            raise PermissionError(13, "locked", str(self))
+        return real_open(self, *args, **kwargs)
+
+    with monkeypatch.context() as mp:
+        mp.setattr(Path, "open", locked)
+        with pytest.raises(sax_instruments.RangeOverridesUnreadable):
+            sax_instruments.save_range_override("eb_bari", 45, 77)
+        with pytest.raises(sax_instruments.RangeOverridesUnreadable):
+            sax_instruments.clear_range_override("eb_alto")
+    assert ranges_file.read_text(encoding="utf-8") == original
+
+
+def test_save_override_never_rewrites_corrupt_file(ranges_file):
+    import sax_instruments
+    ranges_file.write_text("{not json", encoding="utf-8")
+    with pytest.raises(sax_instruments.RangeOverridesUnreadable):
+        sax_instruments.save_range_override("eb_bari", 45, 77)
+    assert ranges_file.read_text(encoding="utf-8") == "{not json"
+
+
+def test_save_override_reports_write_failure(ranges_file, monkeypatch):
+    import sax_instruments
+    _two_overrides(ranges_file)
+    monkeypatch.setattr(sax_instruments, "atomic_write_json",
+                        lambda *a, **k: False)
+    with pytest.raises(OSError):
+        sax_instruments.save_range_override("eb_bari", 45, 77)
+
+
+def test_save_override_rejects_out_of_midi_range(ranges_file):
+    import sax_instruments
+    with pytest.raises(ValueError):
+        sax_instruments.save_range_override("eb_bari", 40, 148)
+    assert not ranges_file.exists()
+
+
+@requires_qt
+@pytest.mark.parametrize("text,midi", [
+    ("A#/Bb3", 58), ("Bb3", 58), ("A#3", 58), ("H3", 59), ("h4", 71),
+    ("B3", 59), ("C-1", 0), ("G9", 127), ("F#/Gb4", 66),
+])
+def test_note_name_parser_accepts_display_forms(text, midi):
+    from sax_intonation_gui import note_name_to_midi
+    assert note_name_to_midi(text) == midi
+
+
+@requires_qt
+@pytest.mark.parametrize("text", ["A#/Cb3", "X3", "Bb", "3", "G#10", ""])
+def test_note_name_parser_rejects_garbage(text):
+    from sax_intonation_gui import note_name_to_midi
+    assert note_name_to_midi(text) is None
+
+
+@requires_qt
+def test_note_name_parser_round_trips_every_displayed_name():
+    from sax_intonation_gui import midi_note_name, note_name_to_midi
+    bad = [m for m in range(128) if note_name_to_midi(midi_note_name(m)) != m]
+    assert not bad, f"names the editor shows but cannot read back: {bad}"
+
+
+@requires_qt
+def test_range_editor_stays_open_when_nothing_was_saved(tmp_path):
+    out = _run_gui(tmp_path, '''
+        import sax_instruments
+        def make():
+            return G.RangeEditorDialog(
+                win, win._t, "eb_bari", "Bari", 45, 77, 45, 77, True,
+                display="klingend", transp=-21)
+        # Sounding 127 is fingered 148: outside MIDI, must not save.
+        dlg = make()
+        dlg._hi_spin.setValue(127)
+        dlg._on_save()
+        out["oor_result"] = dlg.result()
+        out["oor_error"] = dlg._error_lbl.isVisibleTo(dlg)
+        # Unreadable overrides file: the save fails and the editor says so.
+        dlg = make()
+        dlg._hi_spin.setValue(50)
+        dlg._on_save()
+        out["fail_result"] = dlg.result()
+        out["fail_error"] = dlg._error_lbl.isVisibleTo(dlg)
+        out["file"] = sax_instruments._RANGES_FILE.read_text(encoding="utf-8")
+    ''', files={"instrument_ranges.json": "{not json"})
+    assert out["oor_result"] == 0 and out["oor_error"]
+    assert out["fail_result"] == 0 and out["fail_error"]
+    assert out["file"] == "{not json"
