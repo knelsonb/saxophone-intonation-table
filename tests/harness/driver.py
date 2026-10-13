@@ -441,6 +441,10 @@ class AppDriver:
             for b in dlg.findChildren(QPushButton):
                 if b.text() == label:
                     b.click()
+            # Remembered for Welcome.language_buttons.
+            self._welcome_lang_buttons = {b.text(): b.isChecked()
+                                          for b in dlg.findChildren(QPushButton)
+                                          if b.text() in ("DE", "EN")}
         if "history" in fields:
             dlg.findChildren(QCheckBox)[0].setChecked(bool(fields["history"]))
         return self._finish_form(dlg, answer)
@@ -472,6 +476,15 @@ class AppDriver:
             dlg.findChildren(QLineEdit)[0].setText(fields["name"])
         if "transpose" in fields:
             dlg.findChildren(QSpinBox)[0].setValue(int(fields["transpose"]))
+        if "names" in fields:
+            # Retype until the form closes with Accepted (a form that checks
+            # the name itself stays open on a bad one).
+            for name in fields["names"]:
+                dlg.findChildren(QLineEdit)[0].setText(name)
+                if self._finish_form(dlg, "accept"):
+                    return True
+            self._finish_form(dlg, "reject")
+            return False
         return self._finish_form(dlg, answer)
 
     def _fill_range_editor(self, dlg, answer: str, fields: dict) -> bool:
@@ -975,3 +988,137 @@ class AppDriver:
 
     def history_enabled(self) -> bool:
         return bool(self.win._cfg.persistence_enabled)
+
+    # ============================================== launch / settings / language
+    # Additions for the first-launch, persistence and language scenarios.
+
+    def welcome_language_buttons(self) -> dict:
+        """Checked state of the welcome dialog's DE / EN buttons after the last
+        scripted welcome answer (recorded by ``_fill_welcome``)."""
+        return dict(getattr(self, "_welcome_lang_buttons", {}))
+
+    def theme(self) -> str:
+        # Internal: SETUP ``_theme_combo`` item data (theme id).
+        return str(self.win._theme_combo.currentData())
+
+    def response(self) -> str:
+        # Internal: toolbar ``_filter_combo`` item data ('fast' / 'normal' / 'slow').
+        return str(self.win._filter_combo.currentData())
+
+    def drone_set_volume(self, percent: int) -> None:
+        # Internal: drone bar ``_drone_vol_slider`` (0..100).
+        self.win._drone_vol_slider.setValue(int(percent))
+
+    def drone_volume(self) -> int:
+        return int(self.win._drone_vol_slider.value())
+
+    def enable_history(self) -> None:
+        """Turn on history saving after the first launch, from the app's own
+        controls. Looks for a checkbox carrying the welcome dialog's wording
+        (``welcome_persist``); the app offers none today, so this raises."""
+        from PyQt6.QtWidgets import QCheckBox, QDialog
+        wording = self.t("welcome_persist")
+        for cb in self.win.findChildren(QCheckBox):
+            # The finished welcome dialog is still a child of the window; its
+            # checkbox does nothing any more.
+            node, in_dialog = cb, False
+            while node is not None and node is not self.win:
+                in_dialog = in_dialog or isinstance(node, QDialog)
+                node = node.parentWidget()
+            if cb.text() == wording and not in_dialog:
+                if not cb.isChecked():
+                    cb.click()
+                return
+        raise HarnessError("the app has no control to turn history saving on "
+                           "after the first launch")
+
+    def try_custom_instrument_names(self, names: list, transpose: int):
+        """Open the custom-instrument form once and type each name in turn,
+        pressing OK after each, until the form accepts one. Message boxes the
+        app shows on the way are acknowledged. Returns the selected instrument
+        key if it changed, else None."""
+        before = self.instrument()
+        with self.dialogs.scope():
+            self.dialogs.expect("custom_instrument", "accept", names=list(names),
+                                transpose=transpose)
+            for _ in names:
+                self.dialogs.expect("warning", "Ok", optional=True)
+            self.win._btn_custom.click()
+        after = self.instrument()
+        return after if after != before else None
+
+    def ui_texts(self) -> list:
+        """Every piece of text the user can see or reach in the window:
+        ``(area, role, text)`` triples.
+
+        ``area`` is the tab key ('tuner', 'metro', 'deck', 'setup') for widgets
+        on a tab page, ``dialog:<title>`` for an open child dialog and 'window'
+        for the rest. ``role`` is 'title', 'tab', 'tab_tip', 'text', 'tooltip',
+        'placeholder' or 'item' (a combo-box entry). Widgets that are
+        explicitly hidden are skipped; pages of a tab widget count even when
+        another tab is in front, since one click shows them.
+        Internals: ``_tabs`` / ``_tab_keys`` and Qt widget classes.
+        """
+        from PyQt6.QtWidgets import (
+            QAbstractButton,
+            QComboBox,
+            QDialog,
+            QGroupBox,
+            QLabel,
+            QLineEdit,
+            QStackedWidget,
+            QTabBar,
+            QWidget,
+        )
+        w = self.win
+        pages = {}
+        tabs = getattr(w, "_tabs", None)
+        if tabs is not None:
+            for i, key in enumerate(w._tab_keys):
+                pages[tabs.widget(i)] = key
+
+        def placement(widget):
+            """(area, reachable) for ``widget``."""
+            area = "window"
+            node = widget
+            while node is not None and node is not w:
+                parent = node.parentWidget()
+                if node in pages:
+                    area = pages[node] if area == "window" else area
+                elif isinstance(node, QDialog):
+                    if node.isHidden():
+                        return area, False
+                    area = f"dialog:{node.windowTitle()}"
+                elif node.isHidden() and not isinstance(parent, QStackedWidget):
+                    return area, False
+                node = parent
+            return area, True
+
+        out = [("window", "title", w.windowTitle())]
+        for widget in w.findChildren(QWidget):
+            area, reachable = placement(widget)
+            if not reachable:
+                continue
+            if isinstance(widget, QDialog):
+                out.append((area, "title", widget.windowTitle()))
+            if isinstance(widget, QTabBar):
+                for i in range(widget.count()):
+                    out.append((area, "tab", widget.tabText(i)))
+                    out.append((area, "tab_tip", widget.tabToolTip(i)))
+            elif isinstance(widget, (QLabel, QAbstractButton)):
+                out.append((area, "text", widget.text()))
+            elif isinstance(widget, QGroupBox):
+                out.append((area, "title", widget.title()))
+            elif isinstance(widget, QComboBox):
+                for i in range(widget.count()):
+                    out.append((area, "item", widget.itemText(i)))
+            if isinstance(widget, QLineEdit):
+                out.append((area, "placeholder", widget.placeholderText()))
+            out.append((area, "tooltip", widget.toolTip()))
+        return [(a, r, t) for a, r, t in out if t and t.strip()]
+
+
+def i18n_texts() -> dict:
+    """``{lang: {key: format_string}}``: the app's UI wording. Needs no app."""
+    from sax_i18n import STRINGS
+    return {lang: dict(table) for lang, table in STRINGS.items()}

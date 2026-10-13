@@ -91,6 +91,12 @@ class Welcome(_Part):
         """Was the dialog shown during the most recent launch?"""
         return "welcome" in self._app.dialogs.forms_shown[self._app._forms_mark:]
 
+    @property
+    def language_buttons(self) -> dict:
+        """``{'DE': checked, 'EN': checked}`` right after the scripted answer
+        picked a language (empty when no language was picked)."""
+        return self._d.welcome_language_buttons()
+
 
 # ----------------------------------------------------------------------- table
 class Table(_Part):
@@ -244,6 +250,15 @@ class Drone(_Part):
     def state(self) -> DroneState:
         return self._d.drone_state()
 
+    def set_volume(self, percent: int) -> None:
+        self._d.drone_set_volume(percent)
+        self._done()
+
+    @property
+    def volume(self) -> int:
+        """The drone volume slider, 0..100."""
+        return self._d.drone_volume()
+
 
 class Pipes(_Part):
     def press(self, note: str) -> None:
@@ -364,6 +379,26 @@ class Settings(_Part):
     def add_custom_instrument(self, name: str, transpose: int = 0, accept: bool = True):
         """Add a custom instrument; returns its key (None if not added)."""
         return self._done(self._d.add_custom_instrument(name, transpose, accept))
+
+    def try_custom_instrument_names(self, names, transpose: int = 0):
+        """Open the custom-instrument form ONCE and try each name in turn,
+        pressing OK after each, as a person correcting a typo would. Returns
+        the new instrument's key, or None if the form never took a name."""
+        return self._done(self._d.try_custom_instrument_names(list(names), transpose))
+
+    def enable_history(self) -> None:
+        """Turn history saving on after the first launch, from the app's controls."""
+        self._d.enable_history()
+        self._done()
+
+    @property
+    def theme_name(self) -> str:
+        return self._d.theme()
+
+    @property
+    def response_mode(self) -> str:
+        """'fast' | 'normal' | 'slow' as the Response selector shows it."""
+        return self._d.response()
 
     @property
     def range_error(self) -> Optional[str]:
@@ -595,6 +630,13 @@ class HeadlessApp:
     @property
     def window_title(self) -> str:
         return self._require_driver().window_title()
+
+    def ui_texts(self) -> list[tuple[str, str, str]]:
+        """Every text the user can see or reach: ``(area, role, text)`` with
+        area 'window', a tab key ('tuner', 'metro', 'deck', 'setup') or
+        'dialog:<title>', and role 'title', 'tab', 'tab_tip', 'text',
+        'tooltip', 'placeholder' or 'item' (combo-box entry)."""
+        return self._require_driver().ui_texts()
 
     def text(self, key: str, **kw) -> str:
         """The app's own wording for a UI string key, in the current language."""

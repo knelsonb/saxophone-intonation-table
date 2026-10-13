@@ -12,7 +12,7 @@ from .app import DEFAULT_INPUT, DEFAULT_OUTPUT, HeadlessApp, default_host  # noq
 from .capture import OutputCapture  # noqa: E402
 from .clock import ManualClock  # noqa: E402
 from .dialogs import Dialogs, Message  # noqa: E402
-from .driver import i18n_catalog  # noqa: E402
+from .driver import i18n_catalog, i18n_texts  # noqa: E402
 from .fake_audio import FakeAudioHost, FakeDevice, HarnessError, PortAudioError  # noqa: E402
 from .golden import STANDARD, assert_golden, fixture_path  # noqa: E402
 from .model import (  # noqa: E402
@@ -34,5 +34,5 @@ __all__ = [
     "HarnessError", "PortAudioError", "STANDARD", "assert_golden", "fixture_path",
     "AudioStatus", "AutotuneResult", "DeckState", "DroneState", "ExportFailed",
     "ImportResult", "MetronomeState", "Reading", "Row", "Tone", "midi_to_freq",
-    "note_to_midi",
+    "note_to_midi", "i18n_texts",
 ]
