@@ -246,6 +246,8 @@
       "samplerate_auto",
       "samplerate_label",
       "samplerate_unsupported",
+      "settings_damaged",
+      "settings_unreadable",
       "setup_appearance_group",
       "setup_drone_voice",
       "setup_drone_voice_group",
@@ -446,6 +448,13 @@
       ],
       "samplerate_unsupported": [
         "rate"
+      ],
+      "settings_damaged": [
+        "backup",
+        "path"
+      ],
+      "settings_unreadable": [
+        "path"
       ],
       "setup_mic_gain_boost": [
         "db"
@@ -755,6 +764,8 @@
       "samplerate_auto",
       "samplerate_label",
       "samplerate_unsupported",
+      "settings_damaged",
+      "settings_unreadable",
       "setup_appearance_group",
       "setup_drone_voice",
       "setup_drone_voice_group",
@@ -955,6 +966,13 @@
       ],
       "samplerate_unsupported": [
         "rate"
+      ],
+      "settings_damaged": [
+        "backup",
+        "path"
+      ],
+      "settings_unreadable": [
+        "path"
       ],
       "setup_mic_gain_boost": [
         "db"

@@ -2275,6 +2275,11 @@ class MainWindow(QMainWindow):
             # rather than crash the combo population.
             if self._cfg.last_instrument_key in TRANSP_MAP:
                 self.instrument = self._cfg.last_instrument_key
+        # A saved custom instrument cannot be resolved while its file is
+        # unreadable. The session runs on the default instrument, but the
+        # saved choice is kept unless the player picks another one.
+        keep_saved_instrument = (self._settings.customs_unreadable
+                                 and self._cfg.last_instrument_key not in TRANSP_MAP)
         if getattr(self._cfg, 'last_display_mode', '') in ('griff', 'klingend'):
             self.display = self._cfg.last_display_mode
 
@@ -2315,6 +2320,7 @@ class MainWindow(QMainWindow):
             a4_combo=self._a4_combo,
             lang_combo=self._lang_combo,
             apply_a4=self._apply_a4,
+            keep_saved_instrument=keep_saved_instrument,
         )
         # TXT / PDF / CSV / PNG-chart export flows and
         # their helper dialogs live on ExportController. Live values
@@ -2417,9 +2423,11 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, self._t('audio_error_title'),
                                      self._t('audio_error'))
 
+        self._report_settings_problem()
         # First-boot welcome dialog asks about persistence. Skipped on every
-        # subsequent launch.
-        if not self._cfg.welcome_shown:
+        # subsequent launch, and when the settings file could not be read:
+        # that player is not new, their file is only locked.
+        if not self._cfg.welcome_shown and not self._settings.unreadable:
             self._show_welcome_dialog()
 
         self._refresh_timer = QTimer(self)
@@ -5321,6 +5329,18 @@ class MainWindow(QMainWindow):
         suspenders."""
         self._session_state.save()
         sax_config.save_config(self._cfg)
+
+    def _report_settings_problem(self) -> None:
+        """Tell the player once, at start-up, that their settings file could
+        not be used. Non-modal, so a locked file never blocks the window."""
+        store = self._settings
+        if store.unreadable:
+            self._info_banner.show_message(self._t(
+                'settings_unreadable', path=str(store.paths.config)))
+        elif store.corrupt_backup is not None:
+            self._info_banner.show_message(self._t(
+                'settings_damaged', path=str(store.paths.config),
+                backup=str(store.corrupt_backup)))
 
 
 def _today():

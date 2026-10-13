@@ -1,6 +1,10 @@
 """Unit contracts for the persistence layer: the settings schema and store
-and the data-directory paths, including that importing the modules touches
-no file.
+and the data-directory paths.
+
+The player-facing behaviour (a damaged or locked settings file) is covered by
+tests/acceptance; these tests pin the mechanics underneath, which a scenario
+cannot reach: the backup of a damaged file, a backup that cannot be written,
+and that importing the modules touches no file.
 """
 from __future__ import annotations
 
@@ -60,6 +64,38 @@ def test_settings_from_a_newer_release_survive_a_save(tmp_path):
     # A value strict JSON cannot hold is dropped rather than blocking the save.
     assert "future_nan" not in saved
     assert list(saved)[-2:] == ["future_toggle", "future_list"]
+
+
+def test_a_damaged_settings_file_is_kept_once_and_replaced(tmp_path):
+    store = ConfigStore(AppPaths(tmp_path / "data"))
+    store.paths.config.parent.mkdir(parents=True)
+    store.paths.config.write_bytes(b'{"last_bpm": 90,,}')
+    assert store.load() == AppConfig()
+    backup = store.corrupt_backup
+    assert backup is not None and backup.name.startswith("config.json.corrupt-")
+    assert backup.read_bytes() == b'{"last_bpm": 90,,}'
+    assert not store.unreadable and store.save(AppConfig(last_bpm=95))
+
+    again = ConfigStore(AppPaths(tmp_path / "data"))
+    assert again.load().last_bpm == 95 and again.corrupt_backup is None
+
+
+def test_a_damaged_settings_file_that_cannot_be_copied_is_left_alone(tmp_path, monkeypatch):
+    store = ConfigStore(AppPaths(tmp_path / "data"))
+    store.paths.config.parent.mkdir(parents=True)
+    store.paths.config.write_bytes(b"[]")
+    real_open = Path.open
+
+    def no_new_files(self, mode="r", *args, **kwargs):
+        if "x" in mode:
+            raise PermissionError(13, "read-only folder", str(self))
+        return real_open(self, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", no_new_files)
+    store.load()
+    assert store.unreadable and store.corrupt_backup is None
+    assert not store.save(AppConfig())
+    assert store.paths.config.read_bytes() == b"[]"
 
 
 def test_paths_follow_home_and_the_history_override(tmp_path):

@@ -53,7 +53,8 @@ class SessionStateController:
                  disp_combo: 'QComboBox | None' = None,
                  a4_combo: 'QComboBox | None' = None,
                  lang_combo: 'QComboBox | None' = None,
-                 apply_a4: 'Callable[[float], None]') -> None:
+                 apply_a4: 'Callable[[float], None]',
+                 keep_saved_instrument: bool = False) -> None:
         self._w = window
         self._cfg = cfg
         self._engine = engine
@@ -67,6 +68,11 @@ class SessionStateController:
         # writing engine.a4 here, is what retunes the drone and pitch pipes
         # and mirrors both A4 combos on start-up.
         self._apply_a4 = apply_a4
+        # Set when the saved instrument could not be resolved (its custom
+        # instruments file was unreadable) and the window fell back to its
+        # default. While the window still shows that fallback, save() keeps
+        # the saved choice instead of overwriting it.
+        self._fallback_instrument = window.instrument if keep_saved_instrument else None
 
     # -------------------------------------------------------------------------
     def restore(self) -> None:
@@ -175,7 +181,8 @@ class SessionStateController:
         if self._splitter is not None:
             cfg.splitter_sizes = list(self._splitter.sizes())
         # Per-widget UI state.
-        cfg.last_instrument_key = w.instrument
+        if w.instrument != self._fallback_instrument:
+            cfg.last_instrument_key = w.instrument
         if self._nick_edit is not None:
             cfg.last_nickname = self._nick_edit.text().strip()
         cfg.last_display_mode = w.display

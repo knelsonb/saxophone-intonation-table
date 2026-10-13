@@ -375,6 +375,9 @@ STRINGS = {
         'crash_title':            'Unerwarteter Fehler',
         'crash_msg':              'Es ist ein unerwarteter Fehler aufgetreten. Die Details stehen in:\n{path}\n\nDas Programm läuft weiter; speichere oder exportiere deine Messungen, falls etwas nicht mehr funktioniert.',
         'crash_msg_no_log':       'Es ist ein unerwarteter Fehler aufgetreten. Das Fehlerprotokoll konnte nicht geschrieben werden; die Details stehen unten.\n\nDas Programm läuft weiter; speichere oder exportiere deine Messungen, falls etwas nicht mehr funktioniert.',
+        # Settings file damaged or locked (sax_config.ConfigStore)
+        'settings_unreadable':    'Die Einstellungsdatei {path} konnte nicht gelesen werden. Diese Sitzung läuft mit Standardeinstellungen und lässt die Datei unverändert.',
+        'settings_damaged':       'Die Einstellungsdatei {path} war beschädigt. Sie wurde als {backup} aufbewahrt; diese Sitzung startet mit Standardeinstellungen.',
     },
     'en': {
         'window_title': 'Intonation Analyzer',
@@ -713,6 +716,9 @@ STRINGS = {
         'crash_title':            'Unexpected error',
         'crash_msg':              'An unexpected error occurred. The details are in:\n{path}\n\nThe app keeps running; save or export your measurements if something stops working.',
         'crash_msg_no_log':       "An unexpected error occurred. The crash log couldn't be written; the details are below.\n\nThe app keeps running; save or export your measurements if something stops working.",
+        # Settings file damaged or locked (sax_config.ConfigStore)
+        'settings_unreadable':    "The settings file {path} couldn't be read. This session runs on default settings and leaves the file unchanged.",
+        'settings_damaged':       'The settings file {path} was damaged. It was kept as {backup}; this session starts with default settings.',
     },
 }
 

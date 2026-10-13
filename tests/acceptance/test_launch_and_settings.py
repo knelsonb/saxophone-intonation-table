@@ -227,9 +227,6 @@ def test_a_corrupt_settings_file_does_not_stop_the_app(make_app):
     assert isinstance(app.read_config(), dict)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="New-1-2: corrupt config.json is replaced by defaults with no notice or backup")
 def test_a_corrupt_settings_file_is_reported_and_kept_for_repair(make_app):
     """The player is told their settings could not be read, and the damaged
     file is kept so a hand edit can be repaired instead of lost."""
@@ -266,9 +263,6 @@ def test_a_locked_settings_file_is_left_exactly_as_it_was(make_app):
     assert (app.a4, app.settings.theme_name) == (442, "light")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Ent-18: an unreadable config.json is not reported and the welcome question returns")
 def test_a_locked_settings_file_is_reported_instead_of_greeting_a_new_user(make_app):
     """A player whose settings file is locked is told so, and is not asked the
     first-launch question again as if they were new."""
@@ -512,9 +506,6 @@ def test_an_unreadable_customs_file_is_left_untouched(make_app):
     assert app.instrument == "custom_old_style"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="New-1-3: unreadable custom_instruments.json overwrites the saved custom choice")
 def test_an_unreadable_customs_file_does_not_lose_the_chosen_instrument(make_app):
     """A player on their own instrument whose customs file is briefly locked
     finds that instrument selected again once the file is readable."""

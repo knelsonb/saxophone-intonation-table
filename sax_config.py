@@ -14,12 +14,15 @@ value. Loading and saving are generated from that declaration.
 
 Damage is handled per kind. A missing file means "first launch". A file that
 cannot be read (permissions, a Windows sharing lock) is left alone for the
-whole session; ``ConfigStore`` remembers that. A file that can be read but
-not understood is unrecoverable and defaults are saved over it.
+whole session. A file that can be read but not understood is kept as
+``config.json.corrupt-<timestamp>`` and the session starts on defaults.
+Either way ``ConfigStore`` remembers what happened so the window can tell the
+user once.
 """
 
 from __future__ import annotations
 
+import datetime
 import json
 from dataclasses import MISSING, asdict, dataclass, field, fields
 from pathlib import Path
@@ -435,6 +438,10 @@ class ConfigStore:
     * ``unreadable`` — config.json exists but could not be read. ``save()``
       leaves it alone for the rest of the session, so a transient lock cannot
       replace the user's settings with defaults.
+    * ``corrupt_backup`` — config.json could be read but not understood; this
+      is where its bytes were kept. Defaults are saved over the original.
+    * ``customs_unreadable`` — set by ``load_customs()`` when
+      custom_instruments.json exists but could not be read.
 
     Keys this build does not know (written by a newer release) are kept and
     written back after the known ones, so opening an older build does not
@@ -444,11 +451,14 @@ class ConfigStore:
     def __init__(self, paths: AppPaths) -> None:
         self.paths = paths
         self.unreadable = False
+        self.corrupt_backup: Optional[Path] = None
+        self.customs_unreadable = False
         self._unknown_keys: dict[str, Any] = {}
 
     # -- config.json ------------------------------------------------------
     def load(self) -> AppConfig:
         self.unreadable = False
+        self.corrupt_backup = None
         self._unknown_keys = {}
         path = self.paths.config
         try:
@@ -465,10 +475,31 @@ class ConfigStore:
             # JSONDecodeError and UnicodeDecodeError are both ValueErrors.
             data = None
         if not isinstance(data, dict):
+            self._keep_damaged(raw)
             return AppConfig()
         self._unknown_keys = {k: v for k, v in data.items()
                               if k not in FIELD_NAMES and _json_safe(v)}
         return config_from_dict(data)
+
+    def _keep_damaged(self, raw: bytes) -> None:
+        """Copy an unusable config.json aside before defaults replace it, so
+        a hand edit gone wrong can be repaired. If even the copy fails, the
+        original must not be overwritten either: treat it as unreadable."""
+        path = self.paths.config
+        stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        for n in range(1, 100):
+            suffix = f".corrupt-{stamp}" + (f"-{n}" if n > 1 else "")
+            target = path.with_name(path.name + suffix)
+            try:
+                with target.open("xb") as f:
+                    f.write(raw)
+            except FileExistsError:
+                continue
+            except OSError:
+                break
+            self.corrupt_backup = target
+            return
+        self.unreadable = True
 
     def save(self, cfg: AppConfig) -> bool:
         """Persist the settings atomically (temp file + os.replace), so two
@@ -490,6 +521,7 @@ class ConfigStore:
         returning ``[]``. Callers that rewrite the file from the loaded list
         must use strict mode, otherwise one failed read followed by a save
         would delete every saved instrument."""
+        self.customs_unreadable = False
         path = self.paths.customs
         if not path.exists():
             return []
@@ -497,6 +529,7 @@ class ConfigStore:
             with path.open("r", encoding="utf-8") as f:
                 raw = json.load(f)
         except OSError:
+            self.customs_unreadable = True
             if strict:
                 raise
             return []
