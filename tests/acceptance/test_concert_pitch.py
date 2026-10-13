@@ -363,11 +363,11 @@ def test_summary_csv_keeps_sessions_at_different_concert_pitches_apart(app, mode
     assert not blended, f"A4 summary rows mixing both pitches: {blended}"
 
 
-@pytest.mark.xfail(strict=True, reason="Sauron-12: the TXT header drops the octave for a "
-                                       "+/-12 transposition ('fingered C sounds as C')")
 def test_txt_header_for_a_piccolo_says_it_sounds_an_octave_up(app):
     """A piccolo sounds an octave above written; the header must not read like no transposition."""
     app.pick_instrument("flute_piccolo")
+    # One played note: an empty table is refused at export (Frodo-18).
+    app.play(Tone(note="D6"))
 
     report = app.export.txt().read_text(encoding="utf-8")
 
