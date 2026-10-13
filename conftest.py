@@ -7,6 +7,7 @@ itself.
 """
 from __future__ import annotations
 
+import importlib.util
 import sys
 from pathlib import Path
 
@@ -48,3 +49,26 @@ def _config_unreadable_starts_false(monkeypatch):
     """
     import sax_config
     monkeypatch.setattr(sax_config, "_config_unreadable", False)
+
+
+@pytest.fixture()
+def load_engine_with_sounddevice(monkeypatch):
+    """Return ``load(fake_sd)``: a private copy of ``sax_audio_engine`` executed
+    against a fake ``sounddevice`` module.
+
+    The engine decides at import time whether audio is available, so a fake
+    device layer has to be in ``sys.modules`` while the module body runs. The
+    copy is installed through monkeypatch and removed again after the test; the
+    real ``sax_audio_engine`` that every other test imported is never reloaded,
+    so its classes and enums keep a single identity across the session.
+    """
+    def load(fake_sd):
+        monkeypatch.setitem(sys.modules, "sounddevice", fake_sd)
+        spec = importlib.util.spec_from_file_location(
+            "sax_audio_engine", _REPO_ROOT / "sax_audio_engine.py")
+        module = importlib.util.module_from_spec(spec)
+        monkeypatch.setitem(sys.modules, "sax_audio_engine", module)
+        spec.loader.exec_module(module)
+        return module
+
+    return load

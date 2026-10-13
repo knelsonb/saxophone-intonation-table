@@ -7,26 +7,25 @@ auto-recover, and a SEPARATE ``_out_transitioning`` guard so output lifecycle
 can never corrupt the input state machine. This file drives that lifecycle
 with a fake ``sounddevice`` so no PortAudio / audio hardware is required.
 
-Two fake-installation patterns, matching the existing suite:
-  * module-level fake ``sounddevice`` installed BEFORE importing the engine
-    (so AUDIO_OK is True at import) — same as test_hotplug_recovery.py.
-  * the orphan-disposal test drives ``_try_open_output`` directly with a slow
-    fake OutputStream — same shape as test_orphan_stream_cleanup.py.
+The fake ``sounddevice`` is defined here and put into sys.modules by the
+``_engine`` fixture for one test at a time, so the engine sees AUDIO_OK as
+True at import; the engine copy it loads is private to the test and the real
+``sax_audio_engine`` is left alone (same pattern as test_hotplug_recovery.py).
+The orphan-disposal tests drive ``_try_open_output`` / ``_try_open`` directly
+with a stream whose constructor blocks until the test releases it.
 """
 from __future__ import annotations
 
-import importlib
-import sys
-import time
+import threading
 import types
 
 import numpy as np
 import pytest
 
 # ---------------------------------------------------------------------------
-# Install a fake sounddevice BEFORE importing the engine. Extends the input
-# fake with the OUTPUT surface: OutputStream, check_output_settings, and
-# max_output_channels on the device dicts.
+# The fake sounddevice. Extends the input fake with the OUTPUT surface:
+# OutputStream, check_output_settings, and max_output_channels on the device
+# dicts. Installed per test by the ``_engine`` fixture below.
 # ---------------------------------------------------------------------------
 _fake_sd = types.ModuleType('sounddevice')
 
@@ -113,16 +112,28 @@ _fake_sd.check_input_settings = _check_input_settings
 _fake_sd.OutputStream = _FakeOutputStream
 _fake_sd.InputStream = _FakeInputStream
 
-sys.modules['sounddevice'] = _fake_sd
+# Bound by the autouse ``_engine`` fixture before each test.
+_engine_mod = None
+AudioEngine = None
+AudioEngineState = None
+AudioEngineError = None
+DeviceSelection = None
 
-if 'sax_audio_engine' in sys.modules:
-    del sys.modules['sax_audio_engine']
-_engine_mod = importlib.import_module('sax_audio_engine')
 
-AudioEngine = _engine_mod.AudioEngine
-AudioEngineState = _engine_mod.AudioEngineState
-AudioEngineError = _engine_mod.AudioEngineError
-DeviceSelection = _engine_mod.DeviceSelection
+@pytest.fixture(autouse=True)
+def _engine(load_engine_with_sounddevice):
+    """Load the engine against the fake sounddevice and expose its names to
+    the tests below as module globals. Nothing outlives the test."""
+    global _engine_mod, AudioEngine, AudioEngineState, AudioEngineError
+    global DeviceSelection
+    _engine_mod = load_engine_with_sounddevice(_fake_sd)
+    AudioEngine = _engine_mod.AudioEngine
+    AudioEngineState = _engine_mod.AudioEngineState
+    AudioEngineError = _engine_mod.AudioEngineError
+    DeviceSelection = _engine_mod.DeviceSelection
+    yield
+    _engine_mod = AudioEngine = AudioEngineState = None
+    AudioEngineError = DeviceSelection = None
 
 
 # ---------------------------------------------------------------------------
@@ -426,60 +437,96 @@ def test_output_hotplug_new_device_auto_recovers():
 
 
 # ---------------------------------------------------------------------------
-# 6. Orphan disposal — a slow open that overruns the join timeout must be
-#    stopped + closed by the worker, not leaked. Mirror of
-#    test_orphan_stream_cleanup for the OUTPUT path.
+# 6. Orphan disposal -- a slow open that overruns the join timeout must be
+#    stopped + closed by the worker, not leaked. Covers both the OUTPUT
+#    (_try_open_output) and INPUT (_try_open) paths.
+#
+#    The fake stream's constructor blocks on an Event and the join timeout is
+#    shortened to 50 ms, so the outcome is independent of wall-clock timing:
+#    the open is guaranteed to overrun the timeout, then the test releases it
+#    and waits for the worker to report the disposal.
 # ---------------------------------------------------------------------------
-def test_output_open_timeout_disposes_orphan_stream():
-    timeout = _engine_mod.HOST_API_OPEN_TIMEOUT_S
+_FAST_OPEN_TIMEOUT_S = 0.05
+
+
+class _WedgedStream:
+    """A stream whose constructor does not return until ``release`` is set."""
+
+    def __init__(self, release: threading.Event, disposed: threading.Event):
+        self._release = release
+        self._disposed = disposed
+        self.started = self.stopped = self.closed = False
+
+    def start(self):
+        self.started = True
+
+    def stop(self):
+        self.stopped = True
+
+    def close(self):
+        self.closed = True
+        self._disposed.set()
+
+
+def _wedged_factory(created: list, release: threading.Event,
+                    disposed: threading.Event):
+    def factory(**kwargs):
+        assert release.wait(5.0), 'test never released the wedged open'
+        stream = _WedgedStream(release, disposed)
+        created.append(stream)
+        return stream
+    return factory
+
+
+def test_output_open_timeout_disposes_orphan_stream(monkeypatch):
+    monkeypatch.setattr(_engine_mod, 'HOST_API_OPEN_TIMEOUT_S', _FAST_OPEN_TIMEOUT_S)
     created: list = []
-
-    class _SlowOutputStream:
-        def __init__(self, **kwargs):
-            time.sleep(timeout + 1.5)   # overrun the join timeout
-            self.started = self.stopped = self.closed = False
-            created.append(self)
-
-        def start(self):
-            self.started = True
-
-        def stop(self):
-            self.stopped = True
-
-        def close(self):
-            self.closed = True
-
+    release, disposed = threading.Event(), threading.Event()
     _reset([_SPEAKERS], default_out=0)
     eng = _new_engine()
     dev = _engine_mod.query_output_devices()[0]
+    monkeypatch.setattr(_engine_mod.sd, 'OutputStream',
+                        _wedged_factory(created, release, disposed))
 
-    orig = _engine_mod.sd.OutputStream
-    _engine_mod.sd.OutputStream = _SlowOutputStream
-    try:
-        t0 = time.monotonic()
-        ok, kind, msg = eng._try_open_output(dev, samplerate=48000)
-        elapsed = time.monotonic() - t0
-    finally:
-        _engine_mod.sd.OutputStream = orig
-
+    ok, kind, msg = eng._try_open_output(dev, samplerate=48000)
+    assert not created, 'the open must still be blocked when the call gives up'
     assert not ok, 'a wedged open must report failure'
     assert kind == AudioEngineError.HOSTAPI_FAILURE, kind
     assert 'timed out' in msg, msg
-    assert elapsed < timeout + 1.0, (
-        f'_try_open_output should return near the {timeout:.1f}s timeout, '
-        f'not wait for the slow open ({elapsed:.2f}s)')
 
-    # Wait for the worker to finish its slow open and dispose the orphan.
-    deadline = time.monotonic() + 4.0
-    while time.monotonic() < deadline:
-        if created and created[-1].closed:
-            break
-        time.sleep(0.05)
-    assert created, 'the worker never constructed a stream'
-    s = created[-1]
-    assert s.started, 'worker should have started the stream before cancel check'
-    assert s.stopped, 'orphaned output stream was not stopped'
-    assert s.closed, 'orphaned output stream was not closed'
+    release.set()
+    assert disposed.wait(5.0), 'the worker never disposed the orphaned stream'
+    stream = created[-1]
+    assert stream.started, 'worker should have started the stream before cancel check'
+    assert stream.stopped, 'orphaned output stream was not stopped'
+    assert stream.closed, 'orphaned output stream was not closed'
+    assert eng.output_running is False, 'an abandoned open must not become the output'
+
+
+def test_input_open_timeout_disposes_orphan_stream(monkeypatch):
+    """The input twin: _try_open gives up at the join timeout and the worker
+    stops and closes the stream it eventually obtains, so it cannot keep the
+    device busy."""
+    monkeypatch.setattr(_engine_mod, 'HOST_API_OPEN_TIMEOUT_S', _FAST_OPEN_TIMEOUT_S)
+    created: list = []
+    release, disposed = threading.Event(), threading.Event()
+    eng = _new_engine()
+    dev = types.SimpleNamespace(index=0, name='slow-dev', host_api='Test')
+    monkeypatch.setattr(_engine_mod.sd, 'InputStream',
+                        _wedged_factory(created, release, disposed))
+
+    ok, kind, msg = eng._try_open(dev, samplerate=48000)
+    assert not created, 'the open must still be blocked when the call gives up'
+    assert not ok, 'a wedged open must report failure'
+    assert kind == AudioEngineError.HOSTAPI_FAILURE, kind
+    assert 'timed out' in msg, msg
+
+    release.set()
+    assert disposed.wait(5.0), 'the worker never disposed the orphaned stream'
+    stream = created[-1]
+    assert stream.started, 'worker should have started the stream before cancel check'
+    assert stream.stopped, 'orphaned input stream was not stopped'
+    assert stream.closed, 'orphaned input stream was not closed'
 
 
 # ---------------------------------------------------------------------------

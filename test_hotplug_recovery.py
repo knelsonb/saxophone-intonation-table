@@ -1,24 +1,26 @@
 """
 Deterministic tests for the v0.5.7 FAILED -> NEW_DEVICE -> RECOVERY path.
 
-Each test function is independent in what it asserts, but they share a
-single fake-sounddevice installation and a single engine-module import
-that both happen at module load time.  This preserves the original
-requirement: the fake must be in sys.modules['sounddevice'] *before*
-sax_audio_engine is imported so that AUDIO_OK is True.
+Each test function is independent in what it asserts, but they share one
+fake-sounddevice definition and its mutable state.  The engine decides at
+import time whether audio is available (AUDIO_OK), so the fake has to be in
+sys.modules['sounddevice'] while the engine module executes.  The ``_engine``
+fixture below does that per test, on a private copy of the engine module, and
+removes it afterwards; the real ``sax_audio_engine`` is left untouched for the
+other test files.
 
 Safe to run under pytest; no GUI or real audio hardware required.
 """
 from __future__ import annotations
 
-import importlib
 import re
-import sys
 import types
 
+import pytest
+
 # ---------------------------------------------------------------------------
-# Install the fake sounddevice BEFORE importing sax_audio_engine.
-# All test functions below share this single fake and its mutable state.
+# The fake sounddevice. It is only put into sys.modules by the ``_engine``
+# fixture, for the duration of one test.
 # ---------------------------------------------------------------------------
 
 _fake_sd = types.ModuleType('sounddevice')
@@ -80,17 +82,29 @@ _fake_sd.query_hostapis = _query_hostapis
 _fake_sd.check_input_settings = _check_input_settings
 _fake_sd.InputStream = _FakeStream
 
-sys.modules['sounddevice'] = _fake_sd
+# Bound by the autouse ``_engine`` fixture before each test.
+_engine_mod = None
+AudioEngine = None
+AudioEngineState = None
+AudioEngineError = None
+DeviceSelection = None
 
-# Now import (or re-import) the engine with the fake in place.
-if 'sax_audio_engine' in sys.modules:
-    del sys.modules['sax_audio_engine']
-_engine_mod = importlib.import_module('sax_audio_engine')
 
-AudioEngine = _engine_mod.AudioEngine
-AudioEngineState = _engine_mod.AudioEngineState
-AudioEngineError = _engine_mod.AudioEngineError
-DeviceSelection = _engine_mod.DeviceSelection
+@pytest.fixture(autouse=True)
+def _engine(load_engine_with_sounddevice):
+    """Load the engine against the fake sounddevice and expose its names to
+    the tests below as module globals. Nothing outlives the test."""
+    global _engine_mod, AudioEngine, AudioEngineState, AudioEngineError
+    global DeviceSelection
+    _engine_mod = load_engine_with_sounddevice(_fake_sd)
+    AudioEngine = _engine_mod.AudioEngine
+    AudioEngineState = _engine_mod.AudioEngineState
+    AudioEngineError = _engine_mod.AudioEngineError
+    DeviceSelection = _engine_mod.DeviceSelection
+    yield
+    _engine_mod = AudioEngine = AudioEngineState = None
+    AudioEngineError = DeviceSelection = None
+
 
 # ---------------------------------------------------------------------------
 # Helper: a fresh FIIO device descriptor used by several tests.
