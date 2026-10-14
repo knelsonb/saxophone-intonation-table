@@ -4,7 +4,10 @@ Until 2.0 the app was a flat set of ``sax_*`` modules in this directory. Each
 old name stays importable for one release through a ``sax_*.py`` shim here
 that puts the package module itself under the old name in ``sys.modules``:
 ``import sax_config`` and ``intonation.persistence.config`` are then the same
-object, so a patch applied through either name is seen by both. The test
+object, so a patch applied through either name is seen by both. (A
+``from new import *`` re-export would copy the names into a second module
+object; a test that patches ``sax_config.X`` would then change a copy the app
+never reads.) The test
 harness reads this table to point the old names at the private copy of the
 app it loads, and test_legacy_shims.py checks every shim against it.
 
