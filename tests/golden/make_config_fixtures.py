@@ -61,16 +61,31 @@ FILENAME = {"v0.6.2": "config_v0.6.json", "v1.0.0": "config_v1.0.json",
             "v1.1.0": "config_v1.1.json", "v1.2.0": "config_v1.2.json"}
 
 
+def _show(tag: str, name: str) -> str | None:
+    shown = subprocess.run(["git", "show", f"{tag}:{name}"], cwd=REPO,
+                           capture_output=True, text=True)
+    return shown.stdout if shown.returncode == 0 else None
+
+
 def load_config_module(tag: str):
-    src = subprocess.run(["git", "show", f"{tag}:sax_config.py"], cwd=REPO, check=True,
-                         capture_output=True, text=True).stdout
-    tmp = Path(tempfile.mkdtemp()) / f"sax_config_{tag.replace('.', '_')}.py"
-    tmp.write_text(src, encoding="utf-8")
+    tmpdir = Path(tempfile.mkdtemp())
+    # The tag's settings module imports sax_atomic and sax_theme; give it the
+    # copies that shipped with the tag, so it runs as it did in that release.
+    for helper in ("sax_atomic", "sax_theme"):
+        sys.modules.pop(helper, None)
+        src = _show(tag, f"{helper}.py")
+        if src is not None:
+            (tmpdir / f"{helper}.py").write_text(src, encoding="utf-8")
+    tmp = tmpdir / f"sax_config_{tag.replace('.', '_')}.py"
+    tmp.write_text(_show(tag, "sax_config.py"), encoding="utf-8")
     spec = importlib.util.spec_from_file_location(tmp.stem, tmp)
     mod = importlib.util.module_from_spec(spec)
     sys.modules[tmp.stem] = mod        # dataclasses needs the module registered
-    sys.path.insert(0, str(REPO))      # sax_atomic / sax_theme are imported by it
-    spec.loader.exec_module(mod)
+    sys.path.insert(0, str(tmpdir))
+    try:
+        spec.loader.exec_module(mod)
+    finally:
+        sys.path.remove(str(tmpdir))
     return mod
 
 
