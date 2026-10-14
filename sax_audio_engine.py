@@ -1120,8 +1120,9 @@ class AudioEngine:
         the recovery from anyone who plugged in an interface after
         launch and assumed it would just work.
 
-        Hot-plug toast for vendor-class interfaces is emitted via
-        ``interface_appeared`` when applicable.
+        While another input runs, a newly plugged vendor-class interface,
+        or the saved input the engine fell back from, is offered via
+        ``interface_appeared`` (the GUI's "switch to it?" notice).
         """
         if not AUDIO_OK:
             return []
