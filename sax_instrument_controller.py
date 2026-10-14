@@ -3,26 +3,19 @@
 #
 # Extracted from sax_intonation_gui.py as a MainWindow controller. The
 # controller owns instrument-family selection, instrument selection,
-# nickname editing, per-instrument range editor, custom-instrument
-# registration, and the autotune-from-history flow.
+# the per-instrument range editor, custom-instrument registration, and the
+# autotune-from-history flow.
 #
 # Module name is `sax_instrument_controller.py` because `sax_instruments.py`
 # already exists for the catalog/transposition data.
 #
 # Design notes:
-#   * Live values that change during a session (the active instrument
-#     key, the per-note stats dict, the display mode, the UI language)
-#     reach the controller through getter callables, not via fixed
-#     references captured at construction time. That way the controller
-#     reads the *current* value at action time rather than freezing
-#     whatever was set on the window when __init__ ran.
-#   * The controller invokes `set_instrument(key)` and `set_a4(hz)`
-#     setter callbacks when it changes those values — MainWindow owns
-#     the source-of-truth attributes (`self.instrument`, the A4 dataset)
-#     so the controller never reaches across the boundary to mutate
-#     window state directly.
-#   * `on_instrument_changed` and `on_a4_changed` are optional
-#     notifications fired AFTER the set callback so MainWindow can
+#   * The instrument, display mode, A4 and the per-note statistics live on
+#     the SessionModel (sax_session); the controller reads and sets them
+#     there, so whatever else follows the session (the engine, the drone,
+#     the history log's runs) follows a change made here too.
+#   * `on_instrument_changed`, `on_range_changed` and `on_a4_changed` are
+#     optional notifications fired AFTER the change so the window can
 #     refresh the table / range banner / OOR counter without the
 #     controller having to know about those concerns.
 #   * The controller does NOT save the settings. The MainWindow owns
@@ -49,7 +42,6 @@ from PyQt6.QtWidgets import (
 
 import sax_config
 import sax_instruments
-from sax_audio_engine import AUDIO_OK
 from sax_dialogs import RangeEditorDialog, ask_custom_instrument
 from sax_instruments import (
     display_name as instrument_display_name,
@@ -110,41 +102,29 @@ def suggest_a4(note_stats: Iterable[tuple[float, int]],
 
 
 class InstrumentController:
-    """Owns instrument-family selection, instrument selection, nickname
-    editing, per-instrument range editor, custom-instrument
-    registration, and the autotune-from-history flow.
+    """Owns instrument-family selection, instrument selection, the
+    per-instrument range editor, custom-instrument registration, and the
+    autotune-from-history flow.
 
-    Reads MainWindow widgets via constructor injection; reads live
-    runtime values (current instrument key, A4, stats dict) via
-    getter callables so changes during a session are observed
-    correctly."""
+    Works on the two instrument combos it is given and the SessionModel;
+    dialogs open over ``parent``."""
 
-    def __init__(self, window, *,
-                 cfg, store, engine, log, t_func,
-                 family_combo, instr_combo, nick_edit, a4_combo,
-                 get_stats, get_display_mode, get_lang,
-                 set_instrument, set_a4,
+    def __init__(self, parent, *,
+                 session, store, engine, tr,
+                 family_combo, instr_combo, add_lang_toggle,
                  on_instrument_changed=None,
                  on_range_changed=None,
                  on_a4_changed=None) -> None:
-        self._w = window
-        self._cfg = cfg
+        self._parent = parent
+        self._session = session
         self._store = store
         self._engine = engine
-        self._log = log
-        self._t = t_func
+        self._tr = tr
+        self._t = tr.t
         self._family_combo = family_combo
         self._instr_combo = instr_combo
-        self._nick_edit = nick_edit
-        self._a4_combo = a4_combo
-        # Callables, not values — the active values change at runtime;
-        # we want to read them at action time, not at controller init.
-        self._get_stats = get_stats
-        self._get_display_mode = get_display_mode
-        self._get_lang = get_lang
-        # Setter callbacks — MainWindow owns the source-of-truth fields.
-        self._set_instrument = set_instrument
-        self._set_a4 = set_a4
+        # The window's DE | EN toggle for its own dialogs.
+        self._add_lang_toggle = add_lang_toggle
         # Optional post-change notifications.  `on_instrument_changed`
         # fires after the active instrument *key* changed (combo select);
         # `on_range_changed` fires after the per-instrument fingered
@@ -164,7 +144,7 @@ class InstrumentController:
         family_key = self._family_combo.currentData()
         if family_key is None:
             return
-        lang = self._get_lang()
+        lang = self._tr.lang
         self._instr_combo.blockSignals(True)
         self._instr_combo.clear()
         target_idx = 0
@@ -200,59 +180,31 @@ class InstrumentController:
         # auto-fires this handler even when the resolved key matches the
         # already-active instrument. Bail out so we don't spawn a fresh run
         # for every flicker through the family list.
-        w = self._w
-        if key == w.instrument:
+        if key == self._session.instrument:
             return
-        self._set_instrument(key)
-        self._engine.instr_key = key
-        # Instrument switch ⇒ new run, so per-run aggregates stay coherent.
-        # Empty predecessor runs are coalesced inside `start_run`.
-        if AUDIO_OK and w._recording:
-            self._log.start_run(instrument=key,
-                                a4_hz=self._engine.a4,
-                                label=self._nick_edit.text().strip())
+        # The session's followers open a new run, so per-run aggregates stay
+        # coherent (empty predecessor runs are coalesced by the log).
+        self._session.set_instrument(key)
         if self._on_instrument_changed is not None:
             self._on_instrument_changed()
-
-    # ── Nickname ─────────────────────────────────────────────────────────────
-    def on_nickname_changed(self) -> None:
-        """User finished editing the nickname. A nickname names a horn, so a
-        new nickname starts a new run, as an instrument or A4 change does:
-        relabelling the current run would move readings already taken on the
-        previous horn under the new name. An empty current run is coalesced
-        by start_run, so typing a name before playing just relabels it.
-        Clearing the nickname opens a run with an empty label."""
-        nickname = self._nick_edit.text().strip()
-        if not (AUDIO_OK and self._w._recording):
-            return
-        current = self._log.current_run()
-        # editingFinished also fires on a plain focus change; only an actual
-        # change of name opens a run.
-        if current is not None and current.label == nickname:
-            return
-        self._log.start_run(instrument=self._w.instrument,
-                            a4_hz=self._engine.a4,
-                            label=nickname)
 
     # ── Range editor ─────────────────────────────────────────────────────────
     def open_range_editor(self) -> None:
         """Open the per-instrument range editor for the active instrument.
         Accepts → persist via sax_instruments override DB → notify caller
         so the new bounds take effect immediately."""
-        w = self._w
-        key = w.instrument
+        key = self._session.instrument
         cur_lo, cur_hi = sax_instruments.fingered_range(key)
         baked_lo, baked_hi = sax_instruments.baked_fingered_range(key)
         has_baked = sax_instruments.has_baked_range(key)
-        lang = self._get_lang()
-        name = instrument_display_name(key, lang)
+        name = instrument_display_name(key, self._tr.lang)
         # v0.5.7.1: pass display mode + instrument transposition so the
         # dialog can render values in whichever notation the user is
         # already reading on the matrix. File format stays fingered.
-        display = self._get_display_mode()
+        display = self._session.display
         transp = transp_map().get(key, 0)
         dlg = RangeEditorDialog(
-            w, self._t, key, name,
+            self._parent, self._t, key, name,
             cur_lo, cur_hi, baked_lo, baked_hi, has_baked,
             display=display, transp=transp)
         if dlg.exec() == QDialog.DialogCode.Accepted:
@@ -305,7 +257,7 @@ class InstrumentController:
                 key=key, transp=transp, name_de=name, name_en=name))
             self._store.save_customs(customs)
         # Refresh combos and select the new instrument.
-        lang = self._get_lang()
+        lang = self._tr.lang
         self._family_combo.blockSignals(True)
         self._family_combo.clear()
         for fk, de, en in instrument_families():
@@ -317,15 +269,14 @@ class InstrumentController:
     def _ask_custom_instrument(self) -> tuple[str, int] | None:
         # The DE | EN toggle switches the whole window, so the dialog
         # borrows the window's toggle rather than building its own.
-        return ask_custom_instrument(self._w, self._t,
-                                     self._w._add_dialog_lang_toggle)
+        return ask_custom_instrument(self._parent, self._t, self._add_lang_toggle)
 
     # ── Autotune ─────────────────────────────────────────────────────────────
     def on_autotune(self) -> None:
-        # The live stats dict comes through the getter; like every reader
-        # of it, this runs on the Qt thread.
-        w = self._w
-        stats = self._get_stats()
+        # Like every reader of the session's stats, this runs on the Qt thread.
+        w = self._parent
+        session = self._session
+        stats = session.stats
         note_stats = [(st.mean, st.n) for st in stats.values()]
         # Count progress so the blocker is actionable. ``qualified`` = notes
         # meeting the sample threshold; ``touched`` = distinct notes that have
@@ -333,7 +284,7 @@ class InstrumentController:
         qualified = sum(1 for _m, n in note_stats if n >= AUTOTUNE_MIN_SAMPLES)
         touched = sum(1 for _m, n in note_stats if n > 0)
 
-        a4_current = self._engine.a4
+        a4_current = session.a4
         suggestion = suggest_a4(note_stats, a4_current)
         if suggestion is None:
             msg = (self._t('autotune_nodata') + '\n\n'
@@ -362,17 +313,16 @@ class InstrumentController:
             w, self._t('autotune_title'), msg,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         ) == QMessageBox.StandardButton.Yes:
-            # set_a4 callback owns the combo+engine update. We block
-            # signals at the combo level so _on_a4_changed does NOT fire
-            # (the autotune flow does its own stats clear + refresh
-            # via on_a4_changed). This matches the v0.5.x behaviour
-            # before the extraction.
+            # The session's followers move the combos, the engine, the drone
+            # and the pitch pipes and open the new run. Unlike a manual A4
+            # change, accepting a suggestion starts the table afresh (the
+            # stats clear below), refreshed through on_a4_changed.
             # Pause detection across the change, as the manual A4 path does,
             # so no reading lands between the stats clear and the new run.
             self._engine.pause_emissions()
             try:
-                self._set_a4(float(a4_clamped))
-                stats.clear()
+                session.set_a4(float(a4_clamped))
+                session.clear_stats()
                 if self._on_a4_changed is not None:
                     self._on_a4_changed()
             finally:

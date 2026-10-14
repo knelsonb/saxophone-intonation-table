@@ -84,14 +84,14 @@ def main() -> int:
         # Modal dialogs — constructed (NOT exec'd, which would block) with args
         # derived from the live window, so they're screenshot-verifiable too.
         import sax_instruments as _si
-        key = win.instrument
+        key = win._session.instrument
         try:
             cur_lo, cur_hi = _si.fingered_range(key)
             baked_lo, baked_hi = _si.baked_fingered_range(key)
             rdlg = RangeEditorDialog(
                 win, win._t, key, _si.display_name(key, win.lang),
                 cur_lo, cur_hi, baked_lo, baked_hi, _si.has_baked_range(key),
-                display=getattr(win, "display", "griff"),
+                display=win._session.display,
                 transp=_si.transp_map().get(key, 0))
             rdlg.resize(560, 380)
             _grab(rdlg, f"{theme}-rangedlg")

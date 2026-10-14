@@ -9,19 +9,14 @@
 # MeasurementLog.export_csv.
 #
 # Design notes:
-#   * Live values that change during a session (the active instrument,
-#     the per-note stats dict, the UI language, the user-entered
-#     maker/model/nickname) reach the controller through getter
-#     callables, not via fixed references captured at construction
-#     time. That way the controller reads the *current* value at
-#     export time rather than freezing whatever was set on the
-#     window when __init__ ran.
-#   * The controller never mutates engine state and never calls
+#   * What is exported (instrument, A4, display mode, nickname, the per-note
+#     statistics) is read from the SessionModel at export time, so an
+#     export always describes the session as it is on screen.
+#   * The controller never mutates engine state and never
 #     saves the settings — the window owns persistence timing.
-#   * `_instr_info_asked`, `_last_maker`, `_last_model` are read
-#     and written on the parent window (self._w) so the existing
-#     reset hook on MainWindow that clears the cache keeps working
-#     without modification.
+#   * The maker/model answer is remembered here for the rest of the
+#     session; Reset calls forget_instrument_info() so the next export
+#     asks again.
 #   * The dialog helpers stay package-private on the controller
 #     (`_ask_csv_slice`, `_ask_instrument_model`). MainWindow does
 #     not call them directly; only `export_*` does.
@@ -72,38 +67,46 @@ def _error_detail(exc: BaseException) -> str:
 
 
 if TYPE_CHECKING:
-    from PyQt6.QtWidgets import QMainWindow
+    from PyQt6.QtWidgets import QWidget
 
-    from sax_config import AppConfig
+    from sax_session import SessionModel
+    from sax_translator import Translator
 
 
 class ExportController:
     """Owns the TXT / PDF / CSV / PNG-chart export flows plus their
-    dialogs.  Reads MeasurementLog + AppConfig + the live stats dict and
-    hands a SessionSnapshot to sax_report.  Never mutates engine state."""
+    dialogs.  Reads the MeasurementLog and the SessionModel and hands a
+    SessionSnapshot to sax_report.  Never mutates engine state."""
 
-    def __init__(self, window: 'QMainWindow', *,
-                 log: MeasurementLog, cfg: 'AppConfig', engine,
-                 t_func: Callable[..., str],
-                 get_instrument_key: Callable[[], str],
-                 get_stats: Callable[[], dict],
-                 get_lang: Callable[[], str],
-                 get_maker: Callable[[], str],
-                 get_model: Callable[[], str],
-                 get_nickname: Callable[[], str]) -> None:
-        self._w = window
+    def __init__(self, parent: 'QWidget', *,
+                 log: MeasurementLog, session: 'SessionModel',
+                 tr: 'Translator',
+                 instrument_label: Callable[[str], str],
+                 sample_rate: Callable[[], int],
+                 add_lang_toggle: Callable[..., None]) -> None:
+        self._w = parent
         self._log = log
-        self._cfg = cfg
-        self._engine = engine
-        self._t = t_func
-        # Callables, not values — the active values change at runtime;
-        # we want to read them at export time, not at controller init.
-        self._get_instrument_key = get_instrument_key
-        self._get_stats = get_stats
-        self._get_lang = get_lang
-        self._get_maker = get_maker
-        self._get_model = get_model
-        self._get_nickname = get_nickname
+        self._session = session
+        self._tr = tr
+        self._t = tr.t
+        # The instrument's name as the window shows it, and the input's live
+        # sample rate (it sets the cents precision in the report).
+        self._instr_label = instrument_label
+        self._sample_rate = sample_rate
+        # The window's DE | EN toggle for its own dialogs.
+        self._add_lang_toggle = add_lang_toggle
+        # The maker/model answer, asked once per session (see Reset).
+        self._maker = ''
+        self._model = ''
+        self._instr_info_asked = False
+
+    def set_log(self, log: MeasurementLog) -> None:
+        """Export from another log (history was switched on mid-session)."""
+        self._log = log
+
+    def forget_instrument_info(self) -> None:
+        """Ask for maker and model again on the next export."""
+        self._instr_info_asked = False
 
     # ── Public entry points ───────────────────────────────────────────────
     def export_txt(self) -> None:
@@ -114,7 +117,7 @@ class ExportController:
         model_info = self._ask_instrument_model()
         if model_info is None:
             return   # Abgebrochen
-        instrument = self._get_instrument_key()
+        instrument = self._session.instrument
         path = self._ask_save_path(
             'txt_save_title', f"intonation_{instrument}_{_today()}.txt",
             'txt_filter', '.txt')
@@ -122,7 +125,7 @@ class ExportController:
             return
         snapshot = self._snapshot(*model_info)
         if self._write(path, lambda: sax_report.write_txt(
-                snapshot, self._get_lang(), path)):
+                snapshot, self._tr.lang, path)):
             self._saved(self._t('txt_saved', path=path))
 
     def export_pdf(self) -> None:
@@ -132,7 +135,7 @@ class ExportController:
         model_info = self._ask_instrument_model()
         if model_info is None:
             return   # Abgebrochen
-        instrument = self._get_instrument_key()
+        instrument = self._session.instrument
         path = self._ask_save_path(
             'pdf_save_title', f"intonation_{instrument}_{_today()}.pdf",
             'pdf_filter', '.pdf')
@@ -140,7 +143,7 @@ class ExportController:
             return
         snapshot = self._snapshot(*model_info)
         if self._write(path, lambda: sax_report.render_pdf(
-                snapshot, self._get_lang(), path)):
+                snapshot, self._tr.lang, path)):
             self._saved(self._t('pdf_saved', path=path))
 
     def export_csv(self) -> None:
@@ -195,7 +198,7 @@ class ExportController:
         model_info = self._ask_instrument_model()
         if model_info is None:
             return
-        instrument = self._get_instrument_key()
+        instrument = self._session.instrument
         path = self._ask_save_path(
             'chart_save_title', f"intonation_chart_{instrument}_{_today()}.png",
             'chart_filter', '.png')
@@ -203,26 +206,25 @@ class ExportController:
             return
         snapshot = self._snapshot(*model_info)
         if self._write(path, lambda: sax_report.render_chart(
-                snapshot, self._get_lang(), path)):
+                snapshot, self._tr.lang, path)):
             self._saved(self._t('chart_saved', path=path))
 
     # ── Shared steps ──────────────────────────────────────────────────────
     def _has_played_notes(self) -> bool:
-        # Rows seeded for the instrument range have n == 0 until played.
-        return any(st.n > 0 for st in self._get_stats().values())
+        return self._session.has_played_notes()
 
     def _snapshot(self, maker: str, model: str) -> sax_report.SessionSnapshot:
-        w = self._w
-        instrument = self._get_instrument_key()
+        session = self._session
+        instrument = session.instrument
         return sax_report.take_snapshot(
             instrument=instrument,
-            instrument_label=w._instr_label(instrument),
-            a4=self._engine.a4,
-            display=w.display,
-            sample_rate=w._engine_sample_rate(),
-            stats=self._get_stats(),
+            instrument_label=self._instr_label(instrument),
+            a4=session.a4,
+            display=session.display,
+            sample_rate=self._sample_rate(),
+            stats=session.stats,
             maker=maker, model=model,
-            nickname=self._get_nickname().strip())
+            nickname=session.label)
 
     def _ask_save_path(self, title_key: str, default_name: str,
                        filter_key: str, ext: str) -> str | None:
@@ -287,8 +289,8 @@ class ExportController:
         subsequent calls return the cached values without re-prompting.
         Reset clears the cache so a new instrument can be tagged."""
         w = self._w
-        if w._instr_info_asked:
-            return (w._last_maker, w._last_model)
+        if self._instr_info_asked:
+            return (self._maker, self._model)
         dlg = QDialog(w)
         dlg.setProperty('_lang_title_key', 'model_dialog_title')
         dlg.setWindowTitle(self._t('model_dialog_title'))
@@ -323,11 +325,11 @@ class ExportController:
 
         edit_maker = QLineEdit()
         edit_maker.setPlaceholderText(self._t('model_placeholder_maker'))
-        edit_maker.setText(w._last_maker)
+        edit_maker.setText(self._maker)
 
         edit_model = QLineEdit()
         edit_model.setPlaceholderText(self._t('model_placeholder_model'))
-        edit_model.setText(w._last_model)
+        edit_model.setText(self._model)
 
         maker_lbl = QLabel(self._t('model_label_maker'))
         model_lbl = QLabel(self._t('model_label_model'))
@@ -347,7 +349,7 @@ class ExportController:
             edit_maker.setPlaceholderText(self._t('model_placeholder_maker'))
             edit_model.setPlaceholderText(self._t('model_placeholder_model'))
 
-        w._add_dialog_lang_toggle(dlg, layout, on_change=relabel)
+        self._add_lang_toggle(dlg, layout, on_change=relabel)
         layout.addWidget(info)
         layout.addLayout(form)
         layout.addWidget(btns)
@@ -357,12 +359,10 @@ class ExportController:
 
         maker = edit_maker.text().strip()
         model = edit_model.text().strip()
-        # Für nächsten Export merken — cache lives on the window so the
-        # existing reset hook (MainWindow._on_reset) can clear it without
-        # having to know about this controller.
-        w._last_maker = maker
-        w._last_model = model
-        w._instr_info_asked = True
+        # Für nächsten Export merken.
+        self._maker = maker
+        self._model = model
+        self._instr_info_asked = True
         return maker, model
 
     def _ask_csv_slice(self) -> dict | None:
@@ -428,7 +428,7 @@ class ExportController:
                                      n=self._log.measurement_count(),
                                      runs=len(self._log.runs())))
 
-        w._add_dialog_lang_toggle(dlg, layout, on_change=relabel_slice_dialog)
+        self._add_lang_toggle(dlg, layout, on_change=relabel_slice_dialog)
 
         layout.addWidget(info)
 
@@ -445,7 +445,7 @@ class ExportController:
         run_combo = QComboBox()
         run_combo.addItem(self._t('csv_all_runs'), None)
         for run in self._log.runs():
-            label = (f"{run.started_at} · {w._instr_label(run.instrument)}"
+            label = (f"{run.started_at} · {self._instr_label(run.instrument)}"
                      f" · A={run.a4_hz:.0f} Hz")
             tail = ' '.join(x for x in (run.maker, run.model) if x)
             if tail:
@@ -457,7 +457,7 @@ class ExportController:
         instr_combo = QComboBox()
         instr_combo.addItem(self._t('csv_all_instruments'), None)
         for key in self._log.instruments():
-            instr_combo.addItem(w._instr_label(key), key)
+            instr_combo.addItem(self._instr_label(key), key)
         instr_lbl = QLabel(self._t('csv_instr_label'))
         form.addRow(instr_lbl, instr_combo)
 

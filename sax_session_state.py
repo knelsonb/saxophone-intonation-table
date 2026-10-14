@@ -3,8 +3,8 @@
 #
 # Extracted from sax_intonation_gui.py as a MainWindow controller. The
 # controller owns the round-trip of MainWindow's persistable session
-# state — window geometry, splitter widths, the currently-selected
-# instrument / nickname / display mode / A4 / language — through the
+# state — window geometry, splitter widths, the session's instrument /
+# nickname / display mode / A4 and the UI language — through the
 # AppConfig dataclass.
 #
 # Design notes:
@@ -13,9 +13,11 @@
 #     Keeping the store out of here makes the controller pure and
 #     testable: a test can hand it a fake window + a bare AppConfig and
 #     assert on the post-save() field values without touching disk.
-#   * The window and every widget the controller pokes are passed in
-#     explicitly through the constructor. Verbose but grep-friendly:
-#     the dependency surface is the constructor signature, full stop.
+#   * The window, the splitter, the SessionModel and the Translator are
+#     passed in explicitly through the constructor: the dependency surface
+#     is the constructor signature, full stop. The combos and editors that
+#     show those values follow the session, so restoring the session is
+#     enough to put them right.
 #   * No behavioural change vs. the inlined implementation that used
 #     to live on MainWindow — the order of operations, the defensive
 #     try/except blocks and the off-screen-rescue logic are preserved
@@ -29,14 +31,11 @@ from PyQt6.QtCore import QByteArray
 from PyQt6.QtGui import QGuiApplication
 
 if TYPE_CHECKING:
-    from PyQt6.QtWidgets import (
-        QComboBox,
-        QLineEdit,
-        QMainWindow,
-        QSplitter,
-    )
+    from PyQt6.QtWidgets import QMainWindow, QSplitter
 
     from sax_config import AppConfig
+    from sax_session import SessionModel
+    from sax_translator import Translator
 
 
 class SessionStateController:
@@ -46,44 +45,35 @@ class SessionStateController:
 
     def __init__(self, window: 'QMainWindow', cfg: 'AppConfig',
                  *,
-                 engine,
+                 session: 'SessionModel',
+                 translator: 'Translator',
                  splitter: 'QSplitter | None' = None,
-                 instr_combo: 'QComboBox | None' = None,
-                 nick_edit: 'QLineEdit | None' = None,
-                 disp_combo: 'QComboBox | None' = None,
-                 a4_combo: 'QComboBox | None' = None,
-                 lang_combo: 'QComboBox | None' = None,
                  apply_a4: 'Callable[[float], None]',
                  keep_saved_instrument: bool = False) -> None:
         self._w = window
         self._cfg = cfg
-        self._engine = engine
+        self._session = session
+        self._tr = translator
         self._splitter = splitter
-        self._instr_combo = instr_combo
-        self._nick_edit = nick_edit
-        self._disp_combo = disp_combo
-        self._a4_combo = a4_combo
-        self._lang_combo = lang_combo
-        # The window's A4 apply path. Restoring through it, instead of
-        # writing engine.a4 here, is what retunes the drone and pitch pipes
-        # and mirrors both A4 combos on start-up.
+        # The window's A4 apply path: it re-derives the table at the saved
+        # A4, and the session hands the value to the combos, engine, drone
+        # and pitch pipes.
         self._apply_a4 = apply_a4
         # Set when the saved instrument could not be resolved (its custom
         # instruments file was unreadable) and the window fell back to its
         # default. While the window still shows that fallback, save() keeps
         # the saved choice instead of overwriting it.
-        self._fallback_instrument = window.instrument if keep_saved_instrument else None
+        self._fallback_instrument = (session.instrument if keep_saved_instrument
+                                     else None)
 
     # -------------------------------------------------------------------------
     def restore(self) -> None:
-        """Apply persisted window geometry, splitter sizes, nickname,
-        language/instrument/display/A4 to the freshly-built widgets.
+        """Apply persisted window geometry, splitter sizes, nickname and A4
+        to the freshly-built window.
 
-        Called from MainWindow.__init__ right after _build_ui. Lang /
-        instrument / display were already applied earlier (they affect
-        _build_ui's first paint); here we sync the combos to those
-        values plus the widget-level state. First launch (empty cfg)
-        is a no-op."""
+        Called from MainWindow.__init__ right after _build_ui. Language,
+        instrument and display were applied earlier (they affect _build_ui's
+        first paint). First launch (empty cfg) is a no-op."""
         w = self._w
         cfg = self._cfg
 
@@ -129,27 +119,9 @@ class SessionStateController:
                 and all(s >= 0 for s in sizes) and sum(sizes) > 0):
             self._splitter.setSizes(sizes)
 
-        # Nickname text.
-        nick = cfg.last_nickname
-        if nick and self._nick_edit is not None:
-            self._nick_edit.setText(nick)
-
-        # Language combo — match w.lang set earlier in __init__.
-        if self._lang_combo is not None:
-            for i in range(self._lang_combo.count()):
-                if self._lang_combo.itemData(i) == w.lang:
-                    self._lang_combo.blockSignals(True)
-                    self._lang_combo.setCurrentIndex(i)
-                    self._lang_combo.blockSignals(False)
-                    break
-
-        # Display combo — match w.display.
-        if self._disp_combo is not None:
-            target_idx = 0 if w.display == 'griff' else 1
-            if self._disp_combo.currentIndex() != target_idx:
-                self._disp_combo.blockSignals(True)
-                self._disp_combo.setCurrentIndex(target_idx)
-                self._disp_combo.blockSignals(False)
+        # Nickname text (both editors follow the session).
+        if cfg.last_nickname:
+            self._session.set_nickname(cfg.last_nickname)
 
         # A4 — one path to the combos, engine, drone and pitch pipes.
         a4 = cfg.last_a4_hz
@@ -177,14 +149,11 @@ class SessionStateController:
         # Splitter sizes.
         if self._splitter is not None:
             cfg.splitter_sizes = list(self._splitter.sizes())
-        # Per-widget UI state.
-        if w.instrument != self._fallback_instrument:
-            cfg.last_instrument_key = w.instrument
-        if self._nick_edit is not None:
-            cfg.last_nickname = self._nick_edit.text().strip()
-        cfg.last_display_mode = w.display
-        try:
-            cfg.last_a4_hz = int(self._engine.a4)
-        except Exception:
-            pass
-        cfg.last_lang = w.lang
+        # The session.
+        session = self._session
+        if session.instrument != self._fallback_instrument:
+            cfg.last_instrument_key = session.instrument
+        cfg.last_nickname = session.label
+        cfg.last_display_mode = session.display
+        cfg.last_a4_hz = int(session.a4)
+        cfg.last_lang = self._tr.lang

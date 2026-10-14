@@ -24,8 +24,6 @@ if __name__ == '__main__':
     sys.exit(main.main())
 
 import csv
-import datetime
-import math
 from functools import partial
 from pathlib import Path
 
@@ -111,8 +109,8 @@ from sax_pitch import (  # noqa: F401  (re-exported for older importers)
     note_name_to_midi,
 )
 from sax_pitch_pipes import PitchPipesController
+from sax_session import RunTracker, SessionModel
 from sax_session_state import SessionStateController
-from sax_stats import NoteStats
 from sax_table import TableController
 from sax_translator import Translator
 from sax_widgets import (  # noqa: F401  (MatrixCellDelegate re-exported)
@@ -155,22 +153,15 @@ class MainWindow(QMainWindow):
         # sax. Existing users with a persisted ``last_instrument_key``
         # keep their own choice (restored a few lines below); this only
         # affects fresh installs and first-launches.
-        self.instrument = 'bb_tenor'
-        self.display    = 'griff'
-        # Per-note statistics behind the table. Main-thread only: the engine's
-        # note_event signal is delivered queued, so _on_note runs on the
-        # Qt thread like every other reader and writer, and needs no lock.
-        self.stats: dict[int, NoteStats] = {}
-        self._recording = True   # Aufnahme läuft beim Start
-        self._active_midi: int | None = None
-        self._active_midi_at: datetime.datetime | None = None
+        instrument = 'bb_tenor'
+        display = 'griff'
         self._layout_mode: str = 'single'   # 'single' | 'matrix'
         # Built after _build_ui; selecting the start-up instrument at the end
         # of _build_ui asks for a table refresh before it exists.
         self._table_ctrl: TableController | None = None
         # Cumulative count of distinct note emissions since launch (each
         # _on_note increments). Diagnostics readout consumes this; the
-        # table-level note count comes from `len(self.stats)`.
+        # table-level note count comes from the session's stats.
         self._notes_count: int = 0
         # Wrong-instrument detector. Counts
         # consecutive _on_note calls whose fingered MIDI lands outside the
@@ -183,12 +174,6 @@ class MainWindow(QMainWindow):
         self._oor_banner_shown: bool = False
         # Threshold: ~12 notes feels like one phrase of all-wrong notes.
         self._oor_threshold: int = 12
-        # Instrument maker/model for export headers. ExportController asks once
-        # and stores the answer here; Reset clears _instr_info_asked so the
-        # next export asks again.
-        self._last_maker = ''
-        self._last_model = ''
-        self._instr_info_asked = False
 
         # Load user config + previously-registered custom instruments before
         # building the UI so the catalog reflects them at first paint.
@@ -223,14 +208,22 @@ class MainWindow(QMainWindow):
             # stale custom instrument that was deleted should fall back
             # rather than crash the combo population.
             if self._cfg.last_instrument_key in transp_map():
-                self.instrument = self._cfg.last_instrument_key
+                instrument = self._cfg.last_instrument_key
         # A saved custom instrument cannot be resolved while its file is
         # unreadable. The session runs on the default instrument, but the
         # saved choice is kept unless the player picks another one.
         keep_saved_instrument = (self._store.customs_unreadable
                                  and self._cfg.last_instrument_key not in transp_map())
         if self._cfg.last_display_mode in ('griff', 'klingend'):
-            self.display = self._cfg.last_display_mode
+            display = self._cfg.last_display_mode
+        # What is being measured: A4, instrument, display, nickname,
+        # recording on/off and the per-note statistics. The combos, the
+        # engine, the drone, the pitch pipes and the history log follow its
+        # signals (wired below and in _build_ui); the table and the exports
+        # read it. Readings arrive through the engine's queued note signal,
+        # so it is only ever touched on the Qt thread.
+        self._session = SessionModel(instrument=instrument, display=display,
+                                     parent=self)
 
         self._engine = AudioEngine()
         self._engine.set_filter_mode(self._cfg.filter_mode)
@@ -240,8 +233,10 @@ class MainWindow(QMainWindow):
         # SAX_INTONATION_LOG_PATH as a power-user override that always wins.
         self._log = MeasurementLog(
             path=self._paths.history(self._cfg.effective_log_path(self._paths)))
-        # The first run opens after _restore_session_state below, so it is
-        # stamped with the restored A4 and nickname.
+        # Runs follow the session. The first one opens after
+        # _restore_session_state below, so it is stamped with the restored A4
+        # and nickname.
+        self._runs = RunTracker(self._session, self._log, enabled=AUDIO_OK)
         if AUDIO_OK:
             self._engine.signals.note_event.connect(self._on_note_event)
             self._engine.signals.state_changed.connect(self._on_engine_state)
@@ -269,33 +264,22 @@ class MainWindow(QMainWindow):
         # exist. The two thin MainWindow methods below delegate to it.
         self._session_state = SessionStateController(
             self, self._cfg,
-            engine=self._engine,
+            session=self._session,
+            translator=self._tr,
             splitter=self._splitter,
-            instr_combo=self._instr_combo,
-            nick_edit=self._nick_edit,
-            disp_combo=self._disp_combo,
-            a4_combo=self._a4_combo,
-            lang_combo=self._lang_combo,
             apply_a4=self._apply_a4,
             keep_saved_instrument=keep_saved_instrument,
         )
-        # TXT / PDF / CSV / PNG-chart export flows and
-        # their helper dialogs live on ExportController. Live values
-        # (instrument, stats, lang, maker, model, nickname) reach the
-        # controller via getter-callables so they're read at export time,
-        # not frozen at construction.
+        # TXT / PDF / CSV / PNG-chart export flows and their helper dialogs
+        # live on ExportController; it reads the session at export time.
         self._export = ExportController(
             self,
             log=self._log,
-            cfg=self._cfg,
-            engine=self._engine,
-            t_func=self._t,
-            get_instrument_key=lambda: self.instrument,
-            get_stats=lambda: self.stats,
-            get_lang=lambda: self.lang,
-            get_maker=lambda: self._last_maker,
-            get_model=lambda: self._last_model,
-            get_nickname=lambda: self._nick_edit.text(),
+            session=self._session,
+            tr=self._tr,
+            instrument_label=self._instr_label,
+            sample_rate=self._engine_sample_rate,
+            add_lang_toggle=self._add_dialog_lang_toggle,
         )
         # Intonation-table refresh + matrix paint
         # pipeline lives on TableController.  The QTimer that drives the
@@ -305,15 +289,13 @@ class MainWindow(QMainWindow):
         # QTableWidgetItem instances once per layout change and they are
         # reused across refresh ticks.
         self._table_ctrl = TableController(
-            self,
             table=self._table,
+            caption=self._table_lbl,
+            bar_delegate=self._bar_delegate,
             cfg=self._cfg,
-            engine=self._engine,
-            t_func=self._t,
-            get_instrument_key=lambda: self.instrument,
-            get_stats=lambda: self.stats,
-            get_display_mode=lambda: self.display,
-            get_a4=lambda: float(self._a4_combo.currentData()),
+            session=self._session,
+            tr=self._tr,
+            sample_rate=self._engine_sample_rate,
         )
         # Family/instrument selection, nickname editing,
         # per-instrument range editor, custom-instrument registration, and
@@ -326,11 +308,8 @@ class MainWindow(QMainWindow):
         # (OOR counter reset, seed expected notes, refresh table)
         # without the controller reaching into table or stats territory.
         self._restore_session_state()
-        self._seed_expected_notes()
-        if AUDIO_OK:
-            self._log.start_run(instrument=self.instrument,
-                                a4_hz=self._engine.a4,
-                                label=self._nick_edit.text().strip())
+        self._session.seed_expected_notes()
+        self._runs.start_run()
         self._update_record_btn_style()
 
         # Audio-device picker open,
@@ -472,7 +451,8 @@ class MainWindow(QMainWindow):
         # could see what they'd typed. Bump to 320 max / 280 min.
         self._nick_edit.setMinimumWidth(280)
         self._nick_edit.setMaximumWidth(320)
-        self._nick_edit.editingFinished.connect(self._on_nickname_changed)
+        self._nick_edit.textChanged.connect(self._session.set_nickname)
+        self._nick_edit.editingFinished.connect(self._runs.nickname_committed)
         # De-inlined (THEME-INLINE): styled via QLineEdit#nickEdit in
         # build_app_qss so it re-themes on a theme switch. DARK is byte-identical
         # (the rule's roles equal the old inline hardcodes).
@@ -501,6 +481,8 @@ class MainWindow(QMainWindow):
         self._disp_combo = QComboBox()
         tr.bind_items(self._disp_combo,
                       [('disp_griff', 'griff'), ('disp_klingend', 'klingend')])
+        self._disp_combo.setCurrentIndex(
+            self._disp_combo.findData(self._session.display))
         self._disp_combo.currentIndexChanged.connect(self._on_disp_changed)
         dl.addWidget(self._disp_combo)
 
@@ -528,7 +510,7 @@ class MainWindow(QMainWindow):
         self._a4_combo = QComboBox()
         for hz in range(430, 451):
             self._a4_combo.addItem(f'{hz} Hz', hz)
-        self._a4_combo.setCurrentIndex(10)   # 440 Hz
+        self._a4_combo.setCurrentIndex(self._a4_combo.findData(int(self._session.a4)))
         self._a4_combo.setMinimumWidth(100)
         self._a4_combo.currentIndexChanged.connect(self._on_a4_changed)
         al.addWidget(self._a4_combo)
@@ -555,6 +537,7 @@ class MainWindow(QMainWindow):
         self._lang_combo = QComboBox()
         self._lang_combo.addItem('Deutsch', 'de')
         self._lang_combo.addItem('English', 'en')
+        self._lang_combo.setCurrentIndex(self._lang_combo.findData(self.lang))
         self._lang_combo.setMinimumWidth(100)
         self._lang_combo.currentIndexChanged.connect(self._on_lang_changed)
         ll2.addWidget(self._lang_combo)
@@ -804,25 +787,24 @@ class MainWindow(QMainWindow):
         # invoked before this point.
         self._instr_ctrl = InstrumentController(
             self,
-            cfg=self._cfg, store=self._store, engine=self._engine, log=self._log,
-            t_func=self._t,
+            session=self._session, store=self._store, engine=self._engine,
+            tr=self._tr,
             family_combo=self._family_combo,
             instr_combo=self._instr_combo,
-            nick_edit=self._nick_edit,
-            a4_combo=self._a4_combo,
-            get_stats=lambda: self.stats,
-            get_display_mode=lambda: self.display,
-            get_lang=lambda: self.lang,
-            set_instrument=lambda key: setattr(self, 'instrument', key),
-            set_a4=self._instr_set_a4,
+            add_lang_toggle=self._add_dialog_lang_toggle,
             on_instrument_changed=self._on_instrument_changed_external,
             on_range_changed=self._on_range_changed_external,
             on_a4_changed=self._on_a4_changed_external,
         )
         # Now safe to populate the family + sub-instrument combos via the
         # controller (their _on_* wrappers delegate here).
-        self._select_family_for_instrument(self.instrument)
-        self._populate_instrument_combo(select_key=self.instrument)
+        self._select_family_for_instrument(self._session.instrument)
+        self._populate_instrument_combo(select_key=self._session.instrument)
+        # Everything that shows a session value follows it from here on.
+        self._session.a4_changed.connect(self._on_session_a4)
+        self._session.display_changed.connect(self._on_session_display)
+        self._session.nickname_changed.connect(self._on_session_nickname)
+        self._session.recording_changed.connect(self._on_session_recording)
 
     # ── Navigation shell helpers ─────────────────────────────────────────────
     def _build_setup_tab(self) -> QWidget:
@@ -934,8 +916,7 @@ class MainWindow(QMainWindow):
         ig.setContentsMargins(12, 10, 12, 10)
         # Horn nickname — promote the existing config field (cfg.last_nickname,
         # used by CSV per-nickname slicing) to a first-class SETUP editor.
-        # Mirrors the toolbar _nick_edit; the toolbar field stays canonical (the
-        # controller + session-state read it) and both sync via _apply_nickname.
+        # Both editors write the session's nickname and show it.
         # No inline style — rides the themed QLineEdit QSS (off the #31 tail).
         nick_row = QHBoxLayout()
         nick_lbl = QLabel()
@@ -945,9 +926,9 @@ class MainWindow(QMainWindow):
         self._setup_nick_edit.setObjectName('setupNickname')
         tr.bind(self._setup_nick_edit.setPlaceholderText, 'nickname_tip')
         tr.bind(self._setup_nick_edit.setAccessibleName, 'grp_nickname')
-        self._setup_nick_edit.setText(self._cfg.last_nickname)
-        self._setup_nick_edit.editingFinished.connect(
-            self._on_setup_nickname_changed)
+        self._setup_nick_edit.setText(self._session.nickname)
+        self._setup_nick_edit.textChanged.connect(self._session.set_nickname)
+        self._setup_nick_edit.editingFinished.connect(self._runs.nickname_committed)
         nick_row.addWidget(self._setup_nick_edit)
         ig.addLayout(nick_row)
         self._btn_setup_range = QPushButton()
@@ -959,10 +940,10 @@ class MainWindow(QMainWindow):
         outer.addWidget(instr_grp)
 
         # Concert pitch (A4) — mirrors the toolbar Kammerton combo.
-        # Both combos drive the engine A4 + the (heavy) measurement recalc via
-        # the shared _apply_a4, mirrored under blockSignals so the re-derive
-        # runs exactly once. Items are language-independent ("NNN Hz"), so no
-        # retranslate. No inline style — themed QSS (off the #31 tail).
+        # Both combos drive the (heavy) measurement recalc via the shared
+        # _apply_a4 and follow the session's A4 under blockSignals, so the
+        # re-derive runs exactly once. Items are language-independent
+        # ("NNN Hz"). No inline style — themed QSS (off the #31 tail).
         a4_grp = QGroupBox()
         tr.bind(a4_grp.setTitle, 'grp_a4')
         a4g = QVBoxLayout(a4_grp)
@@ -973,7 +954,8 @@ class MainWindow(QMainWindow):
         tr.bind(self._setup_a4_combo.setAccessibleName, 'grp_a4')
         for hz in range(430, 451):
             self._setup_a4_combo.addItem(f'{hz} Hz', hz)
-        self._setup_a4_combo.setCurrentIndex(self._a4_combo.currentIndex())
+        self._setup_a4_combo.setCurrentIndex(
+            self._setup_a4_combo.findData(int(self._session.a4)))
         self._setup_a4_combo.currentIndexChanged.connect(
             self._on_setup_a4_changed)
         a4g.addWidget(self._setup_a4_combo)
@@ -1916,7 +1898,7 @@ class MainWindow(QMainWindow):
             voice_id=self._drone_voice_id,
             volume=self._drone_volume,
             semitones=self._drone_semitones,
-            a4=float(self._engine.a4),
+            a4=self._session.a4,
             enabled=False,
             engine=self._engine,   # enables D3 duck-attach on enable
             on_state_changed=self._on_drone_state_changed)
@@ -2116,7 +2098,7 @@ class MainWindow(QMainWindow):
         if self._pipes_ctrl is None:
             self._pipes_ctrl = PitchPipesController(
                 self._engine.mixer, self._output_rate(),
-                a4=float(self._engine.a4),
+                a4=self._session.a4,
                 engine=self._engine,   # held pads are D3 duck consumers
                 on_state_changed=self._on_pipes_state_changed)
 
@@ -2235,9 +2217,14 @@ class MainWindow(QMainWindow):
         """After the translator re-rendered every bound text: rebuild what is
         not a translation key (instrument names come from the catalog in each
         language) and repaint the table, whose captions are drawn per refresh."""
+        idx = self._lang_combo.findData(self.lang)
+        if idx != self._lang_combo.currentIndex():
+            blocked = self._lang_combo.blockSignals(True)
+            self._lang_combo.setCurrentIndex(idx)
+            self._lang_combo.blockSignals(blocked)
         self._fill_family_combo()
-        self._select_family_for_instrument(self.instrument)
-        self._populate_instrument_combo(select_key=self.instrument)
+        self._select_family_for_instrument(self._session.instrument)
+        self._populate_instrument_combo(select_key=self._session.instrument)
         self._refresh_table()
 
     def _fill_family_combo(self) -> None:
@@ -2262,71 +2249,57 @@ class MainWindow(QMainWindow):
         self._on_note(ev.midi, ev.freq, ev.cents)
 
     def _on_note(self, midi_kl: int, freq: float, cents: float):
-        if not self._recording:
+        session = self._session
+        if not session.recording:
             return
         # Wrong-instrument detector. Run BEFORE the
         # OOR drop below so the counter still ticks when the user has
         # "filter to range" enabled — otherwise we'd never count notes
-        # outside the range. Compute the fingered MIDI relative to the
-        # currently selected instrument and bump/reset the counter.
+        # outside the range.
         try:
-            _t_oor = transp_map().get(self.instrument, 0)
-            _lo_f, _hi_f = sax_instruments.fingered_range(self.instrument)
-            _midi_fingered_oor = midi_kl - _t_oor
-            _in_range = (_lo_f <= _midi_fingered_oor <= _hi_f)
+            in_range = session.in_range(midi_kl)
         except Exception:
-            _in_range = True
-        if _in_range:
+            in_range = True
+        if in_range:
             self._oor_count = 0
         else:
             self._oor_count += 1
             if (not self._oor_banner_shown
                     and self._oor_count >= self._oor_threshold):
                 self._oor_banner_shown = True
-                instrument = self.instrument
+                instrument = session.instrument
                 self._info_banner.show_message(
                     lambda: self._t('wrong_instrument_banner_body',
                                     instrument=self._instr_label(instrument)))
 
         # Drop out-of-range notes when the toggle is off — keeps the table
         # bounded to the instrument's nominal range.
-        if not self._cfg.allow_out_of_range:
-            transp = transp_map().get(self.instrument, 0)
-            lo_f, hi_f = sax_instruments.fingered_range(self.instrument)
-            midi_fingered = midi_kl - transp
-            if not (lo_f <= midi_fingered <= hi_f):
-                return
-        if midi_kl not in self.stats:
-            self.stats[midi_kl] = NoteStats()
-        self.stats[midi_kl].add(cents, freq)
+        if not self._cfg.allow_out_of_range and not in_range:
+            return
+        # The note also becomes the table's highlighted row.
+        session.add_reading(midi_kl, cents, freq)
         # Diagnostics counter: every emitted note, including ones the table
         # later discards.
         self._notes_count += 1
         # Per-measurement log. Instrument/A4 are read off the active run
-        # inside the log, not from `self`, so a callback firing during a UI
-        # change still attributes to the run that was active when it fired.
-        midi_gr = midi_kl - transp_map().get(self.instrument, 0)
+        # inside the log, not from the session, so a callback firing during
+        # a UI change still attributes to the run that was active when it
+        # fired.
+        midi_gr = midi_kl - session.transposition
         self._log.add_measurement(midi_sounding=midi_kl,
                                    midi_fingered=midi_gr,
                                    cents=cents, freq_hz=freq)
 
-        transp     = transp_map().get(self.instrument, 0)
-        midi_gr    = midi_kl - transp
         kl_name    = midi_note_name(midi_kl)
         gr_name    = midi_note_name(midi_gr)
-        disp_name  = gr_name if self.display == 'griff' else kl_name
+        disp_name  = gr_name if session.display == 'griff' else kl_name
         sr_now = self._engine_sample_rate()
         self._tuner.sample_rate = sr_now
         self._tuner.set_note(disp_name, freq, cents)
         cents_str = format_cents(cents, freq, sr_now)
         self._tr.bind(self._status_lbl.setText,
                       'status_fmt', fingered=gr_name, sounding=kl_name,
-                      freq=freq, cents_str=cents_str, a4=self._engine.a4)
-        # Highlight the row currently being played so the user can see
-        # which entry in a long table just ticked. _refresh_table reads
-        # this on its next tick (every 300ms via _refresh_timer).
-        self._active_midi = midi_kl
-        self._active_midi_at = datetime.datetime.now()
+                      freq=freq, cents_str=cents_str, a4=session.a4)
 
     # ── Tabelle ──────────────────────────────────────────────────────────────────────
     # Two layout modes:
@@ -2428,7 +2401,7 @@ class MainWindow(QMainWindow):
         # looks like. Real measurements fill in as the player plays;
         # out-of-range notes (overtones, accidentals) appear automatically
         # via the existing _on_note path.
-        self._seed_expected_notes()
+        self._session.seed_expected_notes()
         self._refresh_table()
 
     def _on_range_changed_external(self) -> None:
@@ -2436,59 +2409,54 @@ class MainWindow(QMainWindow):
         editor accepts new bounds. The instrument *key* hasn't changed,
         so we do NOT reset the wrong-instrument detector — just re-seed
         expected notes against the new bounds and repaint."""
-        self._seed_expected_notes()
+        self._session.seed_expected_notes()
         self._refresh_table()
 
     def _on_a4_changed_external(self) -> None:
         """Called by InstrumentController after the autotune flow has
-        applied a new A4. The autotune body already cleared self.stats;
-        here we refresh the table so the new baseline
-        paints. The drone and pitch pipes were retuned by _instr_set_a4."""
-        a4 = float(self._engine.a4)
-        self._seed_expected_notes()
-        # New run at the new A4, as _apply_a4 does, so later measurements are
-        # logged against the reference they were measured with.
-        if AUDIO_OK and self._recording and a4 > 0:
-            self._log.start_run(instrument=self.instrument, a4_hz=a4,
-                                label=self._nick_edit.text().strip())
+        applied a new A4 and cleared the table: show the instrument's range
+        again and repaint. The session already moved everything that
+        follows A4 (combos, engine, drone, pipes, the history run)."""
+        self._session.seed_expected_notes()
         self._refresh_table()
 
-    def _instr_set_a4(self, hz: float) -> None:
-        """Setter callback used by InstrumentController's autotune flow.
-        Mirrors the v0.5.x in-line sequence: block the combo's signal so
-        _on_a4_changed does NOT fire (the autotune flow does its own
-        stats reset + refresh via on_a4_changed), set the index, then push
-        the new A4 to the engine, drone and pitch pipes."""
-        hz_int = int(hz)
-        _target = hz_int - 430
-        for _combo in (self._a4_combo, self._setup_a4_combo):
-            if not (0 <= _target < _combo.count()):
-                continue
-            _combo.blockSignals(True)
-            _combo.setCurrentIndex(_target)
-            _combo.blockSignals(False)
-        self._push_a4(float(hz_int))
-
-    def _push_a4(self, a4: float) -> None:
-        """Hand a concert-pitch value to everything that measures or sounds
-        against it: the detection engine, the drone and the pitch pipes.
-        Every A4 change (toolbar, SETUP, autotune, start-up restore) ends
-        here, so the three can never disagree about the reference."""
+    def _on_session_a4(self, a4: float) -> None:
+        """The session's A4 changed (toolbar, SETUP, autotune or start-up
+        restore): show it in both A4 combos and hand it to everything that
+        measures or sounds against it — the detection engine, the drone and
+        the pitch pipes — so they can never disagree about the reference."""
+        for combo in (self._a4_combo, self._setup_a4_combo):
+            idx = combo.findData(int(a4))
+            if idx >= 0 and combo.currentIndex() != idx:
+                blocked = combo.blockSignals(True)
+                combo.setCurrentIndex(idx)
+                combo.blockSignals(blocked)
         self._engine.set_a4(a4)
         self._drone_ctrl.set_a4(a4)
         if self._pipes_ctrl is not None:      # built on first open
             self._pipes_ctrl.set_a4(a4)
 
-    def _seed_expected_notes(self) -> None:
-        """Populate self.stats with empty NoteStats for the current
-        instrument's expected fingered range. Existing measurements are
-        preserved."""
-        transp = transp_map().get(self.instrument, 0)
-        lo, hi = sax_instruments.fingered_range(self.instrument)
-        for fingered in range(lo, hi + 1):
-            sounding = fingered + transp
-            if sounding in SAX_MIDI and sounding not in self.stats:
-                self.stats[sounding] = NoteStats()
+    def _on_session_display(self, mode: str) -> None:
+        idx = self._disp_combo.findData(mode)
+        if idx >= 0 and idx != self._disp_combo.currentIndex():
+            blocked = self._disp_combo.blockSignals(True)
+            self._disp_combo.setCurrentIndex(idx)
+            self._disp_combo.blockSignals(blocked)
+        self._refresh_table()
+
+    def _on_session_nickname(self, text: str) -> None:
+        """Both nickname editors show the session's nickname. The one being
+        typed in already does; touching it would move its cursor."""
+        for edit in (self._nick_edit, self._setup_nick_edit):
+            if edit.text() != text:
+                blocked = edit.blockSignals(True)
+                edit.setText(text)
+                edit.blockSignals(blocked)
+
+    def _on_session_recording(self, on: bool) -> None:
+        self._update_record_btn_style()
+        if on:
+            self._tr.bind(self._status_lbl.setText, 'no_signal')
 
     def _on_oor_toggled(self, checked: bool) -> None:
         """Persist the choice and refresh the table so the matrix can
@@ -2652,31 +2620,6 @@ class MainWindow(QMainWindow):
         self._save_settings()
         self._refresh_table()
 
-    def _on_nickname_changed(self) -> None:
-        """Toolbar nickname edited → mirror into SETUP + stamp the run label."""
-        self._apply_nickname(self._nick_edit.text(), source=self._nick_edit)
-
-    def _on_setup_nickname_changed(self) -> None:
-        """SETUP nickname edited → mirror into the toolbar + stamp the label.
-        Mirrors the toolbar horn-nickname field."""
-        self._apply_nickname(self._setup_nick_edit.text(),
-                             source=self._setup_nick_edit)
-
-    def _apply_nickname(self, text, source=None) -> None:
-        """Nickname changed from EITHER the toolbar or the SETUP editor. Mirror
-        the other editor (signals blocked) so both surfaces agree; the toolbar
-        _nick_edit stays canonical — the InstrumentController and session-state
-        read it — so it is updated before stamping. Then stamp the label onto
-        the active run via the controller (a no-op when not recording)."""
-        for edit in (self._nick_edit, self._setup_nick_edit):
-            if edit is source:
-                continue
-            if edit.text() != text:
-                edit.blockSignals(True)
-                edit.setText(text)
-                edit.blockSignals(False)
-        self._instr_ctrl.on_nickname_changed()
-
     def _on_add_custom(self) -> None:
         self._instr_ctrl.on_add_custom()
 
@@ -2712,24 +2655,20 @@ class MainWindow(QMainWindow):
             new_path = self._paths.history(self._cfg.effective_log_path(self._paths))
             if new_path:
                 self._log = MeasurementLog(path=new_path)
-                # The controllers were built with the previous log; point
-                # them at the new one or CSV export and run metadata would
-                # keep using the discarded in-memory log.
-                self._export._log = self._log
-                self._instr_ctrl._log = self._log
-                if AUDIO_OK:
-                    self._log.start_run(instrument=self.instrument,
-                                        a4_hz=self._engine.a4,
-                                        label=self._nick_edit.text().strip())
+                # Everything built with the previous log follows the new one,
+                # or CSV export and the runs would keep using the discarded
+                # in-memory log.
+                self._export.set_log(self._log)
+                self._runs.set_log(self._log)
+                self._runs.start_run()
         self._save_settings()
 
     # _ask_custom_instrument lives on InstrumentController.
     # It was only invoked by _on_add_custom (also extracted), so no
     # MainWindow wrapper is retained — the controller calls itself.
 
-    def _on_disp_changed(self, idx):
-        self.display = ['griff', 'klingend'][idx]
-        self._refresh_table()
+    def _on_disp_changed(self, _idx):
+        self._session.set_display(self._disp_combo.currentData())
 
     def _on_a4_changed(self, idx):
         """Toolbar concert-pitch (A4) combo changed → apply + mirror SETUP."""
@@ -2742,21 +2681,14 @@ class MainWindow(QMainWindow):
 
     def _apply_a4(self, new_a4) -> None:
         """Apply a concert-pitch (A4) change from EITHER the toolbar or the
-        SETUP combo. Mirror BOTH combos to new_a4 with signals blocked so this
-        heavy measurement recalc runs EXACTLY ONCE and is never re-entered by
-        the sibling combo. Cents are a function of frequency + A4, so the cents
-        in self.stats are invalidated — but the underlying frequencies are
-        immutable and still live in the log, so re-derive the table from them
-        instead of discarding what the user recorded."""
+        SETUP combo, or the saved one at start-up. The session hands the
+        value to both combos (signals blocked, so this heavy recalc runs
+        EXACTLY ONCE), the engine, the drone and the pitch pipes, and opens a
+        new history run. Cents are a function of frequency + A4, so the
+        table's cents are invalidated — but its frequencies are kept, so the
+        table is re-derived from them instead of discarding what the user
+        recorded."""
         new_a4 = float(new_a4)
-        hz_int = int(new_a4)
-        for _combo in (self._a4_combo, self._setup_a4_combo):
-            _target = hz_int - 430
-            if (0 <= _target < _combo.count()
-                    and _combo.currentIndex() != _target):
-                _combo.blockSignals(True)
-                _combo.setCurrentIndex(_target)
-                _combo.blockSignals(False)
         # A4 change recalibrates midi assignments,
         # so the wrong-instrument counter resets too.
         self._oor_count = 0
@@ -2769,54 +2701,23 @@ class MainWindow(QMainWindow):
         # it, and the engine discards readings it was still holding back.
         self._engine.pause_emissions()
         try:
-            self._push_a4(new_a4)
-            # Re-derive from the frequencies behind the CURRENT table only.
-            # The log also holds earlier sessions, other instruments, imports
-            # and notes the user reset or deleted; none of those belong here.
-            table_freqs = [f for st in self.stats.values() for f in st.freqs]
-            remapped: dict[int, NoteStats] = {}
-            for f in table_freqs:
-                # Non-positive / non-finite freqs carry no tuning information
-                # and would make freq_to_midi raise.
-                if not math.isfinite(f) or f <= 0.0:
-                    continue
-                midi_round, cents = cents_dev(f, new_a4)
-                if midi_round in SAX_MIDI:
-                    ns = remapped.setdefault(midi_round, NoteStats())
-                    ns.add(cents, f)
-            self.stats = remapped
+            self._session.set_a4(new_a4)
+            self._session.rederive_stats(new_a4)
         finally:
             self._engine.resume_emissions()
         # Re-seed expected blank rows on top of the remapped data so the
         # instrument's range still shows even after a clean re-derive.
-        self._seed_expected_notes()
-
-        # Open a new run at the new A4 so subsequent measurements are
-        # tagged correctly; coalescing in `start_run` keeps empty runs out
-        # of the log when the user is just scrubbing the combo.
-        if AUDIO_OK and self._recording:
-            self._log.start_run(instrument=self.instrument,
-                                a4_hz=new_a4,
-                                label=self._nick_edit.text().strip())
+        self._session.seed_expected_notes()
         self._refresh_table()
 
     # ── Start / Stop ──────────────────────────────────────────────────────────
     def _on_record_toggle(self):
-        self._recording = not self._recording
-        if self._recording:
-            # Resumed recording ⇒ open a fresh run for the log.
-            if AUDIO_OK:
-                self._log.start_run(instrument=self.instrument,
-                                    a4_hz=self._engine.a4,
-                                    label=self._nick_edit.text().strip())
-            self._update_record_btn_style()
-            self._tr.bind(self._status_lbl.setText, 'no_signal')
-        else:
-            self._log.end_run()
-            self._update_record_btn_style()
+        # The run follows (RunTracker); the button follows _on_session_recording.
+        self._session.set_recording(not self._session.recording)
 
     def _update_record_btn_style(self):
-        if self._recording:
+        recording = self._session.recording
+        if recording:
             color = '#b7770d'   # orange = läuft
         else:
             color = '#27ae60'   # grün = pausiert, klicken zum Starten
@@ -2827,7 +2728,7 @@ class MainWindow(QMainWindow):
             QPushButton:pressed{{background:{color}99;}}
         """)
         self._tr.bind(self._btn_record.setText,
-                      'btn_stop' if self._recording else 'btn_start')
+                      'btn_stop' if recording else 'btn_start')
 
     # ── Tabellen-Kontextmenü ──────────────────────────────────────────────────
     def _on_table_context_menu(self, pos):
@@ -2835,7 +2736,8 @@ class MainWindow(QMainWindow):
         if row < 0:
             return
 
-        transp = transp_map().get(self.instrument, 0)
+        session = self._session
+        transp = session.transposition
         midi_kl: int | None = None
 
         if self._layout_mode == 'matrix':
@@ -2850,12 +2752,12 @@ class MainWindow(QMainWindow):
             if oct_ > hi_oct:
                 return
             midi_visible = (oct_ + 1) * 12 + row
-            if self.display == 'griff':
+            if session.display == 'griff':
                 midi_kl = midi_visible + transp
             else:
                 midi_kl = midi_visible
             # Only offer the action if this cell actually holds played data.
-            st = self.stats.get(midi_kl)
+            st = session.stats.get(midi_kl)
             if st is None or st.n == 0:
                 return
         else:
@@ -2863,8 +2765,8 @@ class MainWindow(QMainWindow):
             # min-N filter (sax_table hides rows with 1..min_n-1 readings), so
             # index the same filtered list or the row maps to another note.
             min_n = self._cfg.min_n_visible
-            keys = sorted(k for k, s in self.stats.items()
-                          if s.n == 0 or s.n >= min_n)
+            keys = sorted(k for k, st in session.stats.items()
+                          if st.n == 0 or st.n >= min_n)
             if row >= len(keys):
                 return
             midi_kl = keys[row]
@@ -2883,7 +2785,7 @@ class MainWindow(QMainWindow):
                 self._t('ctx_discard_confirm', note=note_str),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
             ) == QMessageBox.StandardButton.Yes:
-                self.stats.pop(midi_kl, None)
+                session.discard(midi_kl)
                 self._refresh_table()
 
     # ── Reset ─────────────────────────────────────────────────────────────────
@@ -2892,10 +2794,10 @@ class MainWindow(QMainWindow):
             self, self._t('reset_title'), self._t('reset_msg'),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         ) == QMessageBox.StandardButton.Yes:
-            self.stats.clear()
+            self._session.clear_stats()
             # Reset implies "I might be switching instruments" — clear the
             # cached maker/model so the next export re-prompts.
-            self._instr_info_asked = False
+            self._export.forget_instrument_info()
             self._refresh_table()
 
     # ── Kammerton ermitteln ───────────────────────────────────────────────────
@@ -2977,21 +2879,6 @@ class MainWindow(QMainWindow):
         so external/internal call sites that reference this name keep
         working without change."""
         self._session_state.restore()
-        # Restore wrote the canonical toolbar widgets from cfg; mirror them into
-        # the SETUP twins so both surfaces agree on launch.
-        self._sync_setup_twins_from_toolbar()
-
-    def _sync_setup_twins_from_toolbar(self) -> None:
-        """Copy the canonical toolbar A4 + nickname into their SETUP twins
-        (signals blocked — a programmatic sync, not a user edit). Called after
-        session-state restore, which only knows about the toolbar widgets.
-        Idempotent."""
-        self._setup_nick_edit.blockSignals(True)
-        self._setup_nick_edit.setText(self._nick_edit.text())
-        self._setup_nick_edit.blockSignals(False)
-        self._setup_a4_combo.blockSignals(True)
-        self._setup_a4_combo.setCurrentIndex(self._a4_combo.currentIndex())
-        self._setup_a4_combo.blockSignals(False)
 
     def closeEvent(self, ev):
         # v0.5.5: snapshot the full session state to the config file so the

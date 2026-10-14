@@ -7,11 +7,9 @@
 # and the 300 ms QTimer-driven refresh cycle.
 #
 # Design notes:
-#   * Live values that change during a session (the active instrument,
-#     the per-note stats dict, the display mode, the A4 reading) reach
-#     the controller through getter callables, not via fixed references
-#     captured at construction time. That way every refresh tick reads
-#     the *current* values rather than ones frozen at __init__.
+#   * The instrument, display mode, A4, the per-note statistics and the
+#     note played last are read from the SessionModel on every refresh
+#     tick, so the table always shows the session as it is now.
 #   * Cell QTableWidgetItem objects are allocated ONCE per layout change
 #     in configure_for_mode().  The refresh() body methods read
 #     self._cells[(r, c)] and mutate the already-existing item via
@@ -49,10 +47,18 @@ from sax_widgets import MatrixCellDelegate
 # Text colour of the mean column for each cents_band() result.
 _BAND_COLOR = {'in': '#3a9e5f', 'close': '#c8a020', 'off': '#c03030'}
 
+# Matrix geometry. The window's width-driven layout choice uses the same
+# numbers, so a matrix it picks always fits two octave columns.
+MATRIX_COL_WIDTH = 112    # min usable width per octave column (px)
+MATRIX_HEADER_W = 64      # row-header width (note names)
+MATRIX_ROW_HEIGHT = 60    # tall enough for: names + mean+std + bar + N
+
 if TYPE_CHECKING:
-    from PyQt6.QtWidgets import QMainWindow, QTableWidget
+    from PyQt6.QtWidgets import QLabel, QTableWidget
 
     from sax_config import AppConfig
+    from sax_session import SessionModel
+    from sax_translator import Translator
 
 
 class TableController:
@@ -69,24 +75,21 @@ class TableController:
     practice session.
     """
 
-    def __init__(self, window: 'QMainWindow', *,
+    def __init__(self, *,
                  table: 'QTableWidget',
+                 caption: 'QLabel',
+                 bar_delegate: QStyledItemDelegate,
                  cfg: 'AppConfig',
-                 engine,
-                 t_func: Callable[..., str],
-                 get_instrument_key: Callable[[], str],
-                 get_stats: Callable[[], dict],
-                 get_display_mode: Callable[[], str],
-                 get_a4: Callable[[], float]) -> None:
-        self._w = window
+                 session: 'SessionModel',
+                 tr: 'Translator',
+                 sample_rate: Callable[[], int]) -> None:
         self._table = table
+        self._caption = caption
+        self._bar_delegate = bar_delegate
         self._cfg = cfg
-        self._engine = engine
-        self._t = t_func
-        self._get_instrument_key = get_instrument_key
-        self._get_stats = get_stats
-        self._get_display_mode = get_display_mode
-        self._get_a4 = get_a4
+        self._session = session
+        self._t = tr.t
+        self._sample_rate = sample_rate
         # Cell cache: (row, col) -> QTableWidgetItem.  Populated in
         # configure_for_mode(); read and mutated by refresh().
         self._cells: dict[tuple[int, int], QTableWidgetItem] = {}
@@ -106,7 +109,7 @@ class TableController:
         # single layout's text columns, the painted cell for the matrix.
         self._default_delegate = QStyledItemDelegate(table)
         self._matrix_delegate = MatrixCellDelegate(
-            table, sample_rate_getter=window._engine_sample_rate)
+            table, sample_rate_getter=sample_rate)
 
     # -------------------------------------------------------------------------
     # Public surface
@@ -120,7 +123,6 @@ class TableController:
         items in place — no further QTableWidgetItem allocations on the
         300 ms hot path.
         """
-        w = self._w
         # Drop stale items before reconfiguring.  Without this, a
         # single→matrix switch would leave the old single-mode items
         # parented to the table after setRowCount/setColumnCount churn.
@@ -136,15 +138,15 @@ class TableController:
             self._table.setRowCount(12)
             self._table.verticalHeader().setVisible(True)
             self._table.verticalHeader().setDefaultSectionSize(
-                w._MATRIX_ROW_HEIGHT)
+                MATRIX_ROW_HEIGHT)
             # Fixed column widths — playable notes always render at full
             # cell size. If the columns don't all fit, Qt's horizontal
             # scrollbar takes over instead of the cells getting squished.
             hh = self._table.horizontalHeader()
             hh.setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
-            hh.setDefaultSectionSize(w._MATRIX_COL_WIDTH)
+            hh.setDefaultSectionSize(MATRIX_COL_WIDTH)
             for c in range(n_oct):
-                self._table.setColumnWidth(c, w._MATRIX_COL_WIDTH)
+                self._table.setColumnWidth(c, MATRIX_COL_WIDTH)
             self._table.setHorizontalScrollBarPolicy(
                 Qt.ScrollBarPolicy.ScrollBarAsNeeded)
             self._table.setItemDelegateForColumn(5, self._default_delegate)
@@ -165,7 +167,7 @@ class TableController:
             # Restore the default per-table delegate, then the bar
             # delegate for the tendency column.
             self._table.setItemDelegate(self._default_delegate)
-            self._table.setItemDelegateForColumn(5, w._bar_delegate)
+            self._table.setItemDelegateForColumn(5, self._bar_delegate)
             # Row count for single-mode is determined per-refresh by the
             # filtered stats list — _refresh_single() calls setRowCount
             # and grows the cell cache to match.  Cache starts empty.
@@ -210,8 +212,8 @@ class TableController:
         its octave) we pad one column above so the C a half-step higher
         is visible.  Extra context octaves beyond that are configurable
         via cfg.matrix_extra_octaves."""
-        instrument = self._get_instrument_key()
-        display = self._get_display_mode()
+        instrument = self._session.instrument
+        display = self._session.display
         transp = sax_instruments.transp_map().get(instrument, 0)
         lo_f, hi_f = sax_instruments.fingered_range(instrument)
         if display == 'griff':
@@ -219,7 +221,7 @@ class TableController:
         else:
             lo_midi, hi_midi = lo_f + transp, hi_f + transp
         # Played-note expansion (only when OOR is allowed).
-        played = [m for m, st in self._get_stats().items() if st.n > 0]
+        played = [m for m, st in self._session.stats.items() if st.n > 0]
         if played and self._cfg.allow_out_of_range:
             if display == 'griff':
                 played = [m - transp for m in played]
@@ -249,19 +251,6 @@ class TableController:
                 self._t('col_mean'), self._t('col_std'),
                 self._t('col_n'), self._t('col_tendency')]
 
-    def _active_midi_now(self):
-        """Currently-played MIDI if the highlight is still fresh, else
-        None.  Reads the window's _active_midi / _active_midi_at pair
-        directly — they're updated from the audio thread's _on_note
-        path and that wiring stays on MainWindow."""
-        import datetime
-        w = self._w
-        if (w._active_midi_at is None
-                or (datetime.datetime.now() - w._active_midi_at)
-                .total_seconds() > 1.5):
-            return None
-        return w._active_midi
-
     def _ensure_single_cells(self, n_rows: int) -> None:
         """Grow / shrink the single-mode cell cache to n_rows × 6.
         Items are allocated once and reused; rows removed by the user's
@@ -285,9 +274,8 @@ class TableController:
     # Single-column body
     # -------------------------------------------------------------------------
     def _refresh_single(self) -> None:
-        w = self._w
-        instrument = self._get_instrument_key()
-        display = self._get_display_mode()
+        instrument = self._session.instrument
+        display = self._session.display
         transp = sax_instruments.transp_map().get(instrument, 0)
         disp_griff = (display == 'griff')
 
@@ -299,7 +287,7 @@ class TableController:
             hdrs + [self._t('col_mean'), self._t('col_std'),
                     self._t('col_n'), self._t('col_tendency')])
 
-        raw_items = sorted(self._get_stats().items())
+        raw_items = sorted(self._session.stats.items())
 
         # Min-N filter: rows with 1..min_n-1 measurements are below
         # threshold and hidden as noise. N=0 seeded blanks still show so
@@ -314,9 +302,9 @@ class TableController:
         self._ensure_single_cells(len(items))
 
         played_n = 0
-        active_midi = self._active_midi_now()
-        sr_now = w._engine_sample_rate()
-        a4 = self._engine.a4
+        active_midi = self._session.active_midi()
+        sr_now = self._sample_rate()
+        a4 = self._session.a4
         for row, (midi_kl, st) in enumerate(items):
             midi_gr = midi_kl - transp
             kl_name = midi_note_name(midi_kl)
@@ -378,15 +366,14 @@ class TableController:
             label = self._t('table_empty_hint')
         else:
             label = self._t('table_summary', notes=played_n, total=total)
-        w._table_lbl.setText(label)
+        self._caption.setText(label)
 
     # -------------------------------------------------------------------------
     # Matrix body
     # -------------------------------------------------------------------------
     def _refresh_matrix(self) -> None:
-        w = self._w
-        instrument = self._get_instrument_key()
-        display = self._get_display_mode()
+        instrument = self._session.instrument
+        display = self._session.display
         transp = sax_instruments.transp_map().get(instrument, 0)
         disp_griff = (display == 'griff')
         lo_f, hi_f = sax_instruments.fingered_range(instrument)
@@ -420,9 +407,9 @@ class TableController:
         self._table.setVerticalHeaderLabels(
             [c.split('/')[0] for c in CHROMA])
 
-        stats_by_midi = dict(self._get_stats())
-        active_midi = self._active_midi_now()
-        a4 = self._engine.a4
+        stats_by_midi = dict(self._session.stats)
+        active_midi = self._session.active_midi()
+        a4 = self._session.a4
 
         played_n = 0
         in_range_cells = 0
@@ -481,4 +468,4 @@ class TableController:
         else:
             label = self._t('table_matrix_title',
                              played=played_n, total=in_range_cells)
-        w._table_lbl.setText(label)
+        self._caption.setText(label)

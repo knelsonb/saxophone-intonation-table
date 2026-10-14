@@ -134,15 +134,15 @@ def test_nickname_change_starts_a_new_run(tmp_path):
             # One reading on the first horn, so the run is not coalesced.
             win._log.add_measurement(69, 69, 0.0, 440.0)
             win._nick_edit.setText("Selmer")
-            win._on_nickname_changed()
+            win._nick_edit.editingFinished.emit()
             second = win._log.current_run()
             # A focus change with the same text must not open another run.
-            win._on_nickname_changed()
+            win._nick_edit.editingFinished.emit()
             out["same_after_refocus"] = (
                 win._log.current_run().run_id == second.run_id)
             win._log.add_measurement(69, 69, 0.0, 440.0)
             win._nick_edit.setText("")
-            win._on_nickname_changed()
+            win._nick_edit.editingFinished.emit()
             third = win._log.current_run()
             runs = {r.run_id: r.label for r in win._log.runs()}
             out["first_label_kept"] = runs.get(first.run_id)
@@ -182,7 +182,7 @@ def test_matrix_span_follows_display_and_played_notes(tmp_path):
         st = NoteStats()
         for _ in range(6):
             st.add(0.0, 55.0)
-        win.stats[33] = st
+        win._session.stats[33] = st
         win._refresh_table()
         lo, hi = ctrl.painted_octave_span()
         out["played_live"] = list(ctrl._matrix_octave_range())
@@ -202,7 +202,7 @@ def test_matrix_span_follows_display_and_played_notes(tmp_path):
         st2 = NoteStats()
         for _ in range(6):
             st2.add(0.0, 146.8)
-        win.stats[midi] = st2
+        win._session.stats[midi] = st2
         win._refresh_table()
         lo, _hi = ctrl.painted_octave_span()
         row, col = midi % 12, (midi // 12 - 1) - lo
@@ -575,8 +575,8 @@ def test_bar_delegate_and_table_use_shared_thresholds(tmp_path):
         st = NoteStats()
         for _ in range(5):
             st.add(5.4, 440.0)
-        win.stats.clear()
-        win.stats[69] = st
+        win._session.stats.clear()
+        win._session.stats[69] = st
         win._refresh_table()
         out["mean_text"] = win._table.item(0, 2).text()
         out["mean_color"] = win._table.item(0, 2).foreground().color().name()

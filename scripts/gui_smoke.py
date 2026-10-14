@@ -124,16 +124,17 @@ def main() -> int:
     # readout EVENT-DRIVEN (note_detected -> _on_note -> tuner + status label),
     # so a detected note must reach the display with the CORRECT note and
     # INTEGER cents (never decimal). Drive _on_note (the connected slot) directly.
-    win._recording = True
+    win._session.set_recording(True)
     win._cfg.allow_out_of_range = True       # don't drop the probe note
     win._on_note(69, 440.0, 7.3)             # A4 detected, +7.3 cents
     app.processEvents()
-    check(win._active_midi == 69,
-          f"detected note did not reach the readout (active_midi={win._active_midi})")
+    check(win._session.active_midi() == 69,
+          "detected note did not reach the readout "
+          f"(active_midi={win._session.active_midi()})")
     _st = win._status_lbl.text()
     check("+7" in _st and "+7.3" not in _st,
           f"live readout must show INTEGER cents for a detected note: {_st!r}")
-    win._recording = False
+    win._session.set_recording(False)
 
     # SETUP controls present.
     check(win._out_device_combo.count() >= 1,
@@ -185,25 +186,22 @@ def main() -> int:
             win._filter_combo.setCurrentIndex(_ri)
         app.processEvents()
 
-    # SETUP: horn nickname editor mirrors the toolbar nickname field
-    # (both edit cfg.last_nickname; the toolbar field stays canonical). The
-    # editingFinished signal can't be driven headless, so call the REAL
-    # handlers after setText and confirm the mirror both directions.
+    # SETUP: horn nickname editor mirrors the toolbar nickname field. Both
+    # edit the session's nickname and show it, so typing in either one
+    # updates the other (and the session) at once.
     check(hasattr(win, "_setup_nick_edit"), "SETUP nickname editor missing")
     if hasattr(win, "_setup_nick_edit"):
         win._setup_nick_edit.setText("Tenor SmokeTest")
-        win._on_setup_nickname_changed()
         app.processEvents()
-        check(win._nick_edit.text() == "Tenor SmokeTest",
-              "SETUP nickname did not mirror into the toolbar field")
+        check(win._nick_edit.text() == "Tenor SmokeTest"
+              and win._session.nickname == "Tenor SmokeTest",
+              "SETUP nickname did not reach the session and the toolbar field")
         win._nick_edit.setText("Alto SmokeTest")
-        win._on_nickname_changed()
         app.processEvents()
         check(win._setup_nick_edit.text() == "Alto SmokeTest",
               "toolbar nickname did not mirror into the SETUP field")
         # Blank both so save-on-close can't persist a smoke value.
         win._setup_nick_edit.setText("")
-        win._on_setup_nickname_changed()
         app.processEvents()
 
     # SETUP: concert-pitch (A4) combo mirrors the toolbar Kammerton combo
@@ -254,24 +252,19 @@ def main() -> int:
         win._setup_mic_gain_combo.setCurrentIndex(_mg_saved)
         app.processEvents()
 
-    # Restore-mirror: the post-restore sync must propagate the
-    # canonical toolbar A4 + nickname into the SETUP twins. Drive the extracted
-    # sync directly with non-default toolbar values (no full restore side-effects).
-    if hasattr(win, "_sync_setup_twins_from_toolbar"):
-        win._nick_edit.setText("MarkVI")
-        win._a4_combo.blockSignals(True)
-        win._a4_combo.setCurrentIndex(win._a4_combo.findData(443))
-        win._a4_combo.blockSignals(False)
-        win._sync_setup_twins_from_toolbar()
-        app.processEvents()
-        check(win._setup_nick_edit.text() == "MarkVI",
-              "restore mirror did not propagate nickname to the SETUP twin")
-        check(win._setup_a4_combo.currentData() == 443,
-              "restore mirror did not propagate A4 to the SETUP twin")
-        win._nick_edit.setText("")           # don't let close-save persist it
-        win._sync_setup_twins_from_toolbar()
-        win._a4_combo.setCurrentIndex(win._a4_combo.findData(440))
-        app.processEvents()
+    # Restore-mirror: start-up restore sets the session's A4 and nickname;
+    # both toolbar and SETUP twins must follow it. Drive the session directly
+    # with non-default values (no full restore side-effects).
+    win._session.set_nickname("MarkVI")
+    win._session.set_a4(443.0)
+    app.processEvents()
+    check(win._nick_edit.text() == "MarkVI" and win._setup_nick_edit.text() == "MarkVI",
+          "a session nickname did not reach both nickname editors")
+    check(win._a4_combo.currentData() == 443 and win._setup_a4_combo.currentData() == 443,
+          "a session A4 did not reach both A4 combos")
+    win._session.set_nickname("")            # don't let close-save persist it
+    win._a4_combo.setCurrentIndex(win._a4_combo.findData(440))
+    app.processEvents()
 
     # _apply_a4 must fire EXACTLY once per change — the sibling combo's mirrored
     # index update is blockSignals'd, so no second recalc.
@@ -288,21 +281,21 @@ def main() -> int:
         win._a4_combo.setCurrentIndex(win._a4_combo.findData(440))
         app.processEvents()
 
-    # Autotune A4 setter must sync BOTH combos + engine, and its bounds guard
-    # must no-op an out-of-range hz without crashing or corrupting the combo.
-    if hasattr(win, "_instr_set_a4"):
-        win._instr_set_a4(445.0)
-        app.processEvents()
-        check(win._a4_combo.currentData() == 445
-              and win._setup_a4_combo.currentData() == 445
-              and int(win._engine.a4) == 445,
-              "autotune A4 setter did not sync both combos + engine")
-        win._instr_set_a4(9999.0)            # out of 430..450 → guard skips combos
-        app.processEvents()
-        check(win._a4_combo.currentData() == 445,
-              "out-of-range _instr_set_a4 corrupted the A4 combo (missing bounds guard)")
-        win._a4_combo.setCurrentIndex(win._a4_combo.findData(440))
-        app.processEvents()
+    # The autotune path sets the session's A4 directly: BOTH combos + the
+    # engine must follow, and an A4 the combos do not offer must leave them
+    # alone without crashing.
+    win._session.set_a4(445.0)
+    app.processEvents()
+    check(win._a4_combo.currentData() == 445
+          and win._setup_a4_combo.currentData() == 445
+          and int(win._engine.a4) == 445,
+          "a session A4 did not sync both combos + engine")
+    win._session.set_a4(9999.0)              # out of 430..450 → combos stay
+    app.processEvents()
+    check(win._a4_combo.currentData() == 445,
+          "an A4 outside 430..450 corrupted the A4 combo (missing bounds guard)")
+    win._a4_combo.setCurrentIndex(win._a4_combo.findData(440))
+    app.processEvents()
 
     # Test tone with no engine mirror (headless): must NOT claim to be playing.
     # The button reverts to unchecked and surfaces a failure status (N2).

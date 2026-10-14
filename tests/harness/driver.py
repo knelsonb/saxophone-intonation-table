@@ -48,7 +48,8 @@ the list below is the contract the rewrite must keep or update here:
       matrix layout: cell UserRole payload dicts), ``_table_lbl``,
       ``_layout_mode``, ``_refresh_table()``, signal
       ``_table.customContextMenuRequested``;
-    * state: ``instrument`` ``display`` ``lang`` ``stats`` ``_cfg`` ``_log``
+    * state: ``_session`` (sax_session.SessionModel: ``instrument``
+      ``display`` ``a4`` ``stats``), ``lang``, ``_cfg``, ``_log``,
       ``_engine`` (``state`` ``last_error`` ``output_running`` ``samplerate``
       ``output_samplerate`` ``active_device`` ``active_output_device`` ``a4``).
   Banners
@@ -563,7 +564,7 @@ class AppDriver:
         self._combo_select(w._instr_combo, key, "instrument")
 
     def instrument(self) -> str:
-        return self.win.instrument
+        return self.win._session.instrument
 
     def set_a4(self, hz: int) -> None:
         if int(hz) != hz or not 430 <= hz <= 450:
@@ -583,7 +584,7 @@ class AppDriver:
         self.win._disp_combo.setCurrentIndex(idx)
 
     def display(self) -> str:
-        return {"griff": "fingered", "klingend": "sounding"}[self.win.display]
+        return {"griff": "fingered", "klingend": "sounding"}[self.win._session.display]
 
     def set_language(self, lang: str) -> None:
         self._combo_select(self.win._lang_combo, lang, "language")
@@ -605,7 +606,7 @@ class AppDriver:
         t = w._table
         rows: list[Row] = []
         if w._layout_mode == "single":
-            griff = (w.display == "griff")
+            griff = (w._session.display == "griff")
             for r in range(t.rowCount()):
                 cells = [t.item(r, c).text() if t.item(r, c) else "" for c in range(6)]
                 fingered, sounding = (cells[0], cells[1]) if griff else (cells[1], cells[0])
@@ -693,7 +694,7 @@ class AppDriver:
                 for c in range(t.columnCount())]
 
     def stats_total_n(self) -> int:
-        return sum(s.n for s in self.win.stats.values())
+        return sum(s.n for s in self.win._session.stats.values())
 
     # =================================================================== tuner
     def tuner_reading(self) -> Reading:
