@@ -326,7 +326,8 @@
       "welcome_skip",
       "welcome_title",
       "window_title",
-      "wrong_instrument_banner_body"
+      "wrong_instrument_banner_body",
+      "wrong_instrument_edit_range"
     ],
     "placeholders": {
       "audio_banner_busy": [
@@ -915,7 +916,8 @@
       "welcome_skip",
       "welcome_title",
       "window_title",
-      "wrong_instrument_banner_body"
+      "wrong_instrument_banner_body",
+      "wrong_instrument_edit_range"
     ],
     "placeholders": {
       "audio_banner_busy": [

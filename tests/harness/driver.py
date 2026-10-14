@@ -64,7 +64,8 @@ must keep or update here:
       ``output_samplerate`` ``active_device`` ``active_output_device`` ``a4``).
   Banners
     * ``_audio_banner`` (``_msg``, ``_btn_retry``),
-      ``_info_banner`` (``_msg``, ``_btn_action``); ``_engine.mixer.active_sources()``.
+      ``_info_banner`` (``_msg``, ``_btn_action``, ``_btn_dismiss``);
+      ``_engine.mixer.active_sources()``.
   METRO tab (``_metro_tab``, intonation.ui.tabs.metro.MetroTab)
     * ``_slider`` ``_ts_btns`` ``_btn_start`` ``controller`` ``bpm``
       ``time_sig`` ``_status`` ``_vol_slider`` ``_btn_tap``.
@@ -1109,6 +1110,20 @@ class AppDriver:
         # ``_info_banner`` (InfoBanner: ``_msg``, ``_btn_action``).
         b = self.win._info_banner
         return b._msg.text() if not b.isHidden() else None
+
+    def notice_action_text(self) -> Optional[str]:
+        # ``_info_banner._btn_action``: shown only when the notice has an action.
+        b = self.win._info_banner
+        if b.isHidden() or b._btn_action.isHidden():
+            return None
+        return b._btn_action.text()
+
+    def notice_dismiss(self) -> None:
+        # ``_info_banner._btn_dismiss``.
+        b = self.win._info_banner
+        if b.isHidden():
+            raise HarnessError("no notice is shown")
+        b._btn_dismiss.click()
 
     def notice_accept(self) -> None:
         b = self.win._info_banner

@@ -282,6 +282,7 @@ STRINGS = {
         'output_err_none':         'Kein Audioausgang gefunden.',
         'output_err_failed':       '"{name}" konnte nicht geöffnet werden.',
         'wrong_instrument_banner_body':    'Du spielst gerade außerhalb des Tonumfangs von {instrument}. Ist das richtige Instrument ausgewählt?',
+        'wrong_instrument_edit_range':     'Tonumfang bearbeiten…',
         'autotune_nodata_progress':        'Aktuell haben {qualified} von 3 Tönen mindestens 5 Messungen ({touched} verschiedene Töne insgesamt). Weiter spielen!',
         'audio_sr_notice':         'Audio läuft mit {sr} Hz.',
         # v0.5.5 — per-instrument range editor
@@ -656,6 +657,7 @@ STRINGS = {
         'output_err_none':         'No audio output device found.',
         'output_err_failed':       '"{name}" could not be opened.',
         'wrong_instrument_banner_body':    'You are playing outside the {instrument} range. Is this the right instrument selected?',
+        'wrong_instrument_edit_range':     'Edit range…',
         'autotune_nodata_progress':        'Currently {qualified} of 3 notes have at least 5 measurements ({touched} different notes so far). Keep playing!',
         'audio_sr_notice':         'Audio is running at {sr} Hz.',
         # v0.5.5 — per-instrument range editor

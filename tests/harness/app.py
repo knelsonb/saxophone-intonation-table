@@ -443,6 +443,17 @@ class Audio(_Part):
         or None when none is shown."""
         return self._d.notice_text()
 
+    @property
+    def notice_action(self) -> Optional[str]:
+        """The label of the notice's action button, or None when no notice
+        with an action is shown."""
+        return self._d.notice_action_text()
+
+    def dismiss_notice(self) -> None:
+        """Click the notice's Dismiss button."""
+        self._d.notice_dismiss()
+        self._done()
+
     def accept_notice(self) -> AudioStatus:
         """Click the notice's action button (for example 'Switch')."""
         self._d.notice_accept()

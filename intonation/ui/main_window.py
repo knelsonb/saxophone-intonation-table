@@ -77,10 +77,11 @@ from intonation.ui.widgets import (
 
 TAB_KEYS = ('tuner', 'metro', 'deck', 'setup')
 
-# Wrong-instrument hint: this many readings in a row outside the selected
-# instrument's range (about one phrase of all-wrong notes) suggest the player
-# picked the wrong instrument.
-WRONG_INSTRUMENT_READINGS = 12
+# Wrong-instrument hint: this many DIFFERENT notes, each actually measured and
+# each outside the selected instrument's extended range, suggest the player
+# picked the wrong instrument. Counting distinct notes (not readings) means one
+# long held note, a squeak or an altissimo run can never raise the hint alone.
+WRONG_INSTRUMENT_NOTES = 3
 
 # Hot-plug poll: cached device queries cost ~0 ms; only a re-init is
 # expensive, and the engine re-inits only when the device set changed.
@@ -101,10 +102,10 @@ class MainWindow(QMainWindow):
         # Readings since launch, for the diagnostics panel (the table counts
         # its own from the session's statistics).
         self._notes_count = 0
-        # Wrong-instrument detector: consecutive readings outside the selected
-        # instrument's range. A reading inside resets it, as does picking
-        # another instrument or A4; the hint is shown once per selection.
-        self._oor_count = 0
+        # Wrong-instrument detector: the distinct sounding notes measured
+        # outside the selected instrument's extended range. Picking another
+        # instrument starts over; the hint is shown once per selection.
+        self._oor_notes: set[int] = set()
         self._oor_banner_shown = False
 
         # Every file the app keeps is resolved once, here, and handed to the
@@ -402,18 +403,8 @@ class MainWindow(QMainWindow):
             in_range = session.in_range(midi_kl)
         except Exception:
             in_range = True
-        if in_range:
-            self._oor_count = 0
-        else:
-            self._oor_count += 1
-            if (not self._oor_banner_shown
-                    and self._oor_count >= WRONG_INSTRUMENT_READINGS):
-                self._oor_banner_shown = True
-                instrument = session.instrument
-                label = self._instr_ctrl.instrument_label
-                self._info_banner.show_message(
-                    lambda: self._t('wrong_instrument_banner_body',
-                                    instrument=label(instrument)))
+        if not in_range:
+            self._note_out_of_range(midi_kl)
         # "Filter to range" keeps the table bounded to the instrument's range.
         if not self._cfg.allow_out_of_range and not in_range:
             return
@@ -427,8 +418,25 @@ class MainWindow(QMainWindow):
                                   cents=cents, freq_hz=freq)
         self._tuner_tab.show_reading(midi_kl, freq, cents)
 
+    def _note_out_of_range(self, midi_sounding: int) -> None:
+        """Count a measured note outside the range; at the threshold, ask
+        once whether the right instrument is selected and offer the range
+        editor, since a player whose range is simply wider needs that."""
+        self._oor_notes.add(midi_sounding)
+        if (self._oor_banner_shown
+                or len(self._oor_notes) < WRONG_INSTRUMENT_NOTES):
+            return
+        self._oor_banner_shown = True
+        instrument = self._session.instrument
+        label = self._instr_ctrl.instrument_label
+        self._info_banner.show_message(
+            lambda: self._t('wrong_instrument_banner_body',
+                            instrument=label(instrument)),
+            action_label=lambda: self._t('wrong_instrument_edit_range'),
+            action_callback=self._open_range_editor)
+
     def _reset_wrong_instrument_hint(self) -> None:
-        self._oor_count = 0
+        self._oor_notes.clear()
         self._oor_banner_shown = False
 
     def _engine_sample_rate(self) -> int:
@@ -447,7 +455,8 @@ class MainWindow(QMainWindow):
         its frequencies are kept, and the table is re-derived from them
         instead of discarding what the player recorded."""
         new_a4 = float(new_a4)
-        self._reset_wrong_instrument_hint()
+        # The wrong-instrument hint is kept: a new A4 does not change which
+        # instrument is selected or which notes lie outside its range.
         # Readings are handled on this thread, so none can land in the middle
         # of the rebuild. pause_emissions() stops the engine emitting while
         # the reference changes, and the new A4 starts a new A4 generation: a
@@ -474,8 +483,11 @@ class MainWindow(QMainWindow):
 
     def _on_range_changed(self) -> None:
         """The range editor saved new bounds for the same instrument: show the
-        new range (the wrong-instrument hint is not reset)."""
-        self._session.seed_expected_notes()
+        new range. The hint is not shown again for this instrument, but notes
+        the new range now covers no longer count towards it."""
+        session = self._session
+        self._oor_notes = {m for m in self._oor_notes if not session.in_range(m)}
+        session.seed_expected_notes()
         self._tuner_tab.refresh_table()
 
     def _on_autotune_applied(self) -> None:

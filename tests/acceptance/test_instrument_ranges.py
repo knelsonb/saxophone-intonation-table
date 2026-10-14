@@ -55,11 +55,13 @@ def test_a_note_a_skilled_player_reaches_is_kept_and_not_flagged(make_app, instr
     assert app.audio.notice is None
 
 
-def test_a_note_beyond_the_alto_is_dropped_by_the_filter_and_flagged(make_app):
-    """Fingered F#7 is past the alto's extended top F7."""
+def test_notes_beyond_the_alto_are_dropped_by_the_filter_and_flagged(make_app):
+    """Fingered F#7, G7 and G#7 are past the alto's extended top F7. The hint
+    needs three different such notes (see test_wrong_instrument_hint.py)."""
     app = make_app(config=on("eb_alto", **FILTER_ON))
     app.launch()
-    app.play(Tone(note="A6", seconds=2.0))
+    for note in ("A6", "A#6", "B6"):            # fingered F#7, G7, G#7
+        app.play(Tone(note=note, seconds=1.0))
     assert app.table.rows() == []
     assert app.audio.notice is not None
 
