@@ -88,12 +88,12 @@ def test_the_colour_matches_the_whole_cents_number_shown(make_app, played, shown
 
 # ------------------------------------------------------------------- ranges
 @pytest.mark.parametrize("instrument, low, high", [
-    ("bb_bass", ("A3", "G1"), ("C7", "A#/Bb4")),
+    ("bb_bass", ("A#/Bb3", "G#/Ab1"), ("F#/Gb6", "E4")),
     ("tuba_f", ("D1", "D1"), ("E4", "E4")),
     ("flute_piccolo", ("D4", "D5"), ("A6", "A7")),
-    ("bb_soprano", ("A3", "G3"), ("C7", "A#/Bb6")),
-    ("bb_tenor", ("A3", "G2"), ("C7", "A#/Bb5")),
-    ("eb_bari", ("A3", "C2"), ("C7", "D#/Eb5")),
+    ("bb_soprano", ("A#/Bb3", "G#/Ab3"), ("F#/Gb6", "E6")),
+    ("bb_tenor", ("A#/Bb3", "G#/Ab2"), ("F#/Gb6", "E5")),
+    ("eb_bari", ("A3", "C2"), ("F#/Gb6", "A4")),
 ])
 def test_the_lowest_and_highest_notes_read_as_the_right_note_in_tune(make_app, instrument,
                                                                      low, high):

@@ -1,0 +1,367 @@
+{
+  "banjo": {
+    "extended": "C3..D#/Eb6 (48..87)",
+    "keyed": "C3..D#/Eb6 (48..87)",
+    "transposition": 0
+  },
+  "baritone_bc": {
+    "extended": "E2..A#/Bb4 (40..70)",
+    "keyed": "E2..G4 (40..67)",
+    "transposition": 0
+  },
+  "baritone_tc": {
+    "extended": "F#/Gb3..C6 (54..84)",
+    "keyed": "F#/Gb3..A5 (54..81)",
+    "transposition": -14
+  },
+  "bass_guitar": {
+    "extended": "E2..G5 (40..79)",
+    "keyed": "E2..F5 (40..77)",
+    "transposition": -12
+  },
+  "bassoon": {
+    "extended": "A#/Bb1..E5 (34..76)",
+    "keyed": "A#/Bb1..A4 (34..69)",
+    "transposition": 0
+  },
+  "bb_bass": {
+    "extended": "A#/Bb3..C7 (58..96)",
+    "keyed": "A#/Bb3..F#/Gb6 (58..90)",
+    "transposition": -26
+  },
+  "bb_soprano": {
+    "extended": "A#/Bb3..F7 (58..101)",
+    "keyed": "A#/Bb3..F#/Gb6 (58..90)",
+    "transposition": -2
+  },
+  "bb_tenor": {
+    "extended": "A#/Bb3..F7 (58..101)",
+    "keyed": "A#/Bb3..F#/Gb6 (58..90)",
+    "transposition": -14
+  },
+  "c": {
+    "extended": "C3..G5 (48..79)",
+    "keyed": "C3..G5 (48..79)",
+    "transposition": 0
+  },
+  "cello": {
+    "extended": "C2..F#/Gb6 (36..90)",
+    "keyed": "C2..G4 (36..67)",
+    "transposition": 0
+  },
+  "clar_a": {
+    "extended": "E3..C7 (52..96)",
+    "keyed": "E3..C7 (52..96)",
+    "transposition": -3
+  },
+  "clar_alto_eb": {
+    "extended": "E3..A6 (52..93)",
+    "keyed": "E3..F6 (52..89)",
+    "transposition": -9
+  },
+  "clar_bass_bb": {
+    "extended": "C3..C7 (48..96)",
+    "keyed": "C3..C7 (48..96)",
+    "transposition": -14
+  },
+  "clar_basset_f": {
+    "extended": "C3..C7 (48..96)",
+    "keyed": "C3..C7 (48..96)",
+    "transposition": -7
+  },
+  "clar_bb": {
+    "extended": "E3..C7 (52..96)",
+    "keyed": "E3..C7 (52..96)",
+    "transposition": -2
+  },
+  "clar_c": {
+    "extended": "E3..C7 (52..96)",
+    "keyed": "E3..C7 (52..96)",
+    "transposition": 0
+  },
+  "clar_contraalto_eb": {
+    "extended": "C3..C7 (48..96)",
+    "keyed": "C3..G6 (48..91)",
+    "transposition": -21
+  },
+  "clar_contrabass_bb": {
+    "extended": "C3..C7 (48..96)",
+    "keyed": "C3..G6 (48..91)",
+    "transposition": -26
+  },
+  "clar_d": {
+    "extended": "E3..C7 (52..96)",
+    "keyed": "E3..C7 (52..96)",
+    "transposition": 2
+  },
+  "clar_eb": {
+    "extended": "E3..C7 (52..96)",
+    "keyed": "E3..C7 (52..96)",
+    "transposition": 3
+  },
+  "contrabassoon": {
+    "extended": "A#/Bb1..C5 (34..72)",
+    "keyed": "A#/Bb1..A4 (34..69)",
+    "transposition": -12
+  },
+  "cornet_bb": {
+    "extended": "F#/Gb3..C6 (54..84)",
+    "keyed": "F#/Gb3..A5 (54..81)",
+    "transposition": -2
+  },
+  "double_bass": {
+    "extended": "C2..G5 (36..79)",
+    "keyed": "E2..D5 (40..74)",
+    "transposition": -12
+  },
+  "eb_alto": {
+    "extended": "A#/Bb3..F7 (58..101)",
+    "keyed": "A#/Bb3..F#/Gb6 (58..90)",
+    "transposition": -9
+  },
+  "eb_bari": {
+    "extended": "A3..F7 (57..101)",
+    "keyed": "A3..F#/Gb6 (57..90)",
+    "transposition": -21
+  },
+  "eb_contrabass": {
+    "extended": "A#/Bb3..F#/Gb6 (58..90)",
+    "keyed": "A#/Bb3..F#/Gb6 (58..90)",
+    "transposition": -33
+  },
+  "eb_sopranino": {
+    "extended": "A#/Bb3..F#/Gb6 (58..90)",
+    "keyed": "A#/Bb3..F#/Gb6 (58..90)",
+    "transposition": 3
+  },
+  "english_horn": {
+    "extended": "B3..F#/Gb6 (59..90)",
+    "keyed": "B3..E6 (59..88)",
+    "transposition": -7
+  },
+  "euph_bc": {
+    "extended": "E2..D5 (40..74)",
+    "keyed": "E2..A#/Bb4 (40..70)",
+    "transposition": 0
+  },
+  "euph_tc": {
+    "extended": "F#/Gb3..E6 (54..88)",
+    "keyed": "F#/Gb3..C6 (54..84)",
+    "transposition": -14
+  },
+  "flugel_bb": {
+    "extended": "F#/Gb3..C6 (54..84)",
+    "keyed": "F#/Gb3..A5 (54..81)",
+    "transposition": -2
+  },
+  "flute_alto_g": {
+    "extended": "C4..C7 (60..96)",
+    "keyed": "C4..A6 (60..93)",
+    "transposition": -5
+  },
+  "flute_bass_c": {
+    "extended": "C4..A6 (60..93)",
+    "keyed": "C4..F6 (60..89)",
+    "transposition": -12
+  },
+  "flute_c": {
+    "extended": "B3..D7 (59..98)",
+    "keyed": "C4..A6 (60..93)",
+    "transposition": 0
+  },
+  "flute_piccolo": {
+    "extended": "D4..C7 (62..96)",
+    "keyed": "D4..A6 (62..93)",
+    "transposition": 12
+  },
+  "guitar": {
+    "extended": "E2..C6 (40..84)",
+    "keyed": "E2..B5 (40..83)",
+    "transposition": 0
+  },
+  "harp": {
+    "extended": "B0..G#/Ab7 (23..104)",
+    "keyed": "B0..G#/Ab7 (23..104)",
+    "transposition": 0
+  },
+  "horn_bb": {
+    "extended": "F#/Gb2..C6 (42..84)",
+    "keyed": "A#/Bb2..G5 (46..79)",
+    "transposition": -2
+  },
+  "horn_eb_alto": {
+    "extended": "F#/Gb3..C6 (54..84)",
+    "keyed": "F#/Gb3..A5 (54..81)",
+    "transposition": -9
+  },
+  "horn_f": {
+    "extended": "D2..C6 (38..84)",
+    "keyed": "C3..E5 (48..76)",
+    "transposition": -7
+  },
+  "mandolin": {
+    "extended": "G3..E7 (55..100)",
+    "keyed": "G3..C#/Db6 (55..85)",
+    "transposition": 0
+  },
+  "mellophone_f": {
+    "extended": "F#/Gb3..C6 (54..84)",
+    "keyed": "F#/Gb3..A5 (54..81)",
+    "transposition": -7
+  },
+  "oboe": {
+    "extended": "A#/Bb3..C7 (58..96)",
+    "keyed": "A#/Bb3..D#/Eb6 (58..87)",
+    "transposition": 0
+  },
+  "oboe_damore": {
+    "extended": "B3..F#/Gb6 (59..90)",
+    "keyed": "B3..D#/Eb6 (59..87)",
+    "transposition": -3
+  },
+  "piano": {
+    "extended": "A0..C8 (21..108)",
+    "keyed": "A0..C8 (21..108)",
+    "transposition": 0
+  },
+  "rec_alto_f": {
+    "extended": "E4..C7 (64..96)",
+    "keyed": "F4..E6 (65..88)",
+    "transposition": 0
+  },
+  "rec_bass_f": {
+    "extended": "F3..F5 (53..77)",
+    "keyed": "F3..D5 (53..74)",
+    "transposition": 0
+  },
+  "rec_sopranino_f": {
+    "extended": "F4..G6 (65..91)",
+    "keyed": "F4..E6 (65..88)",
+    "transposition": 12
+  },
+  "rec_soprano_c": {
+    "extended": "C4..G6 (60..91)",
+    "keyed": "C4..A5 (60..81)",
+    "transposition": 12
+  },
+  "rec_tenor_c": {
+    "extended": "C4..G6 (60..91)",
+    "keyed": "C4..A5 (60..81)",
+    "transposition": 0
+  },
+  "sousaphone_bbb": {
+    "extended": "C1..D5 (24..74)",
+    "keyed": "F#/Gb1..C4 (30..60)",
+    "transposition": 0
+  },
+  "tbn_alto_eb": {
+    "extended": "A2..F5 (45..77)",
+    "keyed": "A2..D5 (45..74)",
+    "transposition": 0
+  },
+  "tbn_bass": {
+    "extended": "A0..F5 (21..77)",
+    "keyed": "G#/Ab1..F4 (32..65)",
+    "transposition": 0
+  },
+  "tbn_contrabass": {
+    "extended": "A0..C5 (21..72)",
+    "keyed": "E1..D4 (28..62)",
+    "transposition": 0
+  },
+  "tbn_tenor": {
+    "extended": "C2..D5 (36..74)",
+    "keyed": "E2..B4 (40..71)",
+    "transposition": 0
+  },
+  "trp_a": {
+    "extended": "F#/Gb3..D#/Eb6 (54..87)",
+    "keyed": "F#/Gb3..A#/Bb5 (54..82)",
+    "transposition": -3
+  },
+  "trp_bass_bb": {
+    "extended": "F#/Gb3..C6 (54..84)",
+    "keyed": "F#/Gb3..A5 (54..81)",
+    "transposition": -14
+  },
+  "trp_bb": {
+    "extended": "F#/Gb3..D#/Eb6 (54..87)",
+    "keyed": "F#/Gb3..A#/Bb5 (54..82)",
+    "transposition": -2
+  },
+  "trp_c": {
+    "extended": "F#/Gb3..C#/Db6 (54..85)",
+    "keyed": "F#/Gb3..A#/Bb5 (54..82)",
+    "transposition": 0
+  },
+  "trp_d": {
+    "extended": "F#/Gb3..C6 (54..84)",
+    "keyed": "F#/Gb3..A5 (54..81)",
+    "transposition": 2
+  },
+  "trp_e": {
+    "extended": "F#/Gb3..C6 (54..84)",
+    "keyed": "F#/Gb3..A5 (54..81)",
+    "transposition": 4
+  },
+  "trp_eb": {
+    "extended": "F#/Gb3..C6 (54..84)",
+    "keyed": "F#/Gb3..A5 (54..81)",
+    "transposition": 3
+  },
+  "trp_f": {
+    "extended": "F#/Gb3..D6 (54..86)",
+    "keyed": "C4..F5 (60..77)",
+    "transposition": 5
+  },
+  "trp_piccolo_a": {
+    "extended": "C#/Db3..G5 (49..79)",
+    "keyed": "C#/Db3..E5 (49..76)",
+    "transposition": 9
+  },
+  "trp_piccolo_bb": {
+    "extended": "C#/Db3..G5 (49..79)",
+    "keyed": "C#/Db3..E5 (49..76)",
+    "transposition": 10
+  },
+  "tuba_bbb": {
+    "extended": "A#/Bb0..C5 (22..72)",
+    "keyed": "E1..A#/Bb3 (28..58)",
+    "transposition": 0
+  },
+  "tuba_cc": {
+    "extended": "C1..C5 (24..72)",
+    "keyed": "D1..C4 (26..60)",
+    "transposition": 0
+  },
+  "tuba_eb": {
+    "extended": "C1..C5 (24..72)",
+    "keyed": "D1..E4 (26..64)",
+    "transposition": 0
+  },
+  "tuba_f": {
+    "extended": "C1..C5 (24..72)",
+    "keyed": "D1..E4 (26..64)",
+    "transposition": 0
+  },
+  "ukulele": {
+    "extended": "C4..A5 (60..81)",
+    "keyed": "C4..A5 (60..81)",
+    "transposition": 0
+  },
+  "viola": {
+    "extended": "C3..A6 (48..93)",
+    "keyed": "C3..G5 (48..79)",
+    "transposition": 0
+  },
+  "violin": {
+    "extended": "G3..G7 (55..103)",
+    "keyed": "G3..E6 (55..88)",
+    "transposition": 0
+  },
+  "voice": {
+    "extended": "D2..C6 (38..84)",
+    "keyed": "F2..G5 (41..79)",
+    "transposition": 0
+  }
+}

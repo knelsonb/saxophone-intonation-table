@@ -208,134 +208,262 @@ def display_name(instrument_key: str, lang: str = 'en') -> str:
     return instrument_key
 
 
-# Typical fingered MIDI range per instrument: (lo, hi) inclusive. Used to
-# pre-seed the intonation table with blank rows when the user selects an
-# instrument, so they immediately see what's "expected" for that horn. Notes
-# played outside this range (overtones, altissimo, extensions) still pop in
-# automatically through the normal _on_note path.
-# Ranges sourced from MuseScore's instruments.xml (their `aPitchRange`
-# — amateur range — converted from sounding to FINGERED via
-# `transposeChromatic`). MuseScore is an open-source notation app with
-# ~10M users; the ranges are vetted by orchestrators and notation
-# experts and are about as close to a single source of truth as we can
-# get programmatically. Real-player overrides (saxes at low A, contras
-# at low C) layered on top — see tools/musescore/sync_ranges.py for
-# the reproducible regeneration script.
-_RANGES: dict[str, tuple[int, int]] = {
-    # Saxophones — fingered low A (57) to altissimo C7 (96). Generous on
-    # the top end so altissimo work isn't clipped; the filter-to-range
-    # toggle is off by default, so this is mostly a display guide for the
-    # grid layout. When players disagree, we include more.
-    'eb_sopranino':           ( 57,  96),
-    'bb_soprano':             ( 57,  96),
-    'eb_alto':                ( 57,  96),
-    'bb_tenor':               ( 57,  96),
-    'eb_bari':                ( 57,  96),
-    'bb_bass':                ( 57,  96),
-    'eb_contrabass':          ( 57,  96),
-    # Clarinets — top widened to cover altissimo where players disagree.
-    'clar_eb':                ( 52,  96),   # MS via eb-clarinet + altissimo
-    'clar_d':                 ( 52,  96),   # MS via d-clarinet + altissimo
-    'clar_c':                 ( 52,  96),   # MS via c-clarinet + altissimo
-    'clar_bb':                ( 52,  96),   # MS via bb-clarinet + altissimo
-    'clar_a':                 ( 52,  96),   # MS via a-clarinet + altissimo
-    'clar_basset_f':          ( 48,  96),   # MS via basset-horn + altissimo
-    'clar_alto_eb':           ( 52,  91),   # MS via alto-clarinet
-    'clar_bass_bb':           ( 48,  96),   # low-C extension; altissimo widened
-    'clar_contraalto_eb':     ( 48,  91),   # override-lo + altissimo
-    'clar_contrabass_bb':     ( 48,  91),   # override-lo + altissimo
-    # Flutes
-    'flute_piccolo':          ( 62,  93),   # MS via piccolo
-    'flute_c':                ( 60,  93),   # MS via flute
-    'flute_alto_g':           ( 60,  93),   # MS via alto-flute
-    'flute_bass_c':           ( 60,  89),   # MS via bass-flute
-    # Trumpets
-    'trp_piccolo_bb':         ( 49,  76),   # MS via bb-piccolo-trumpet
-    'trp_piccolo_a':          ( 49,  76),   # MS via a-piccolo-trumpet
-    'trp_f':                  ( 60,  77),   # MS via f-trumpet
-    'trp_e':                  ( 54,  81),   # MS via e-trumpet
-    'trp_eb':                 ( 54,  81),   # MS via eb-trumpet
-    'trp_d':                  ( 54,  81),   # MS via d-trumpet
-    'trp_c':                  ( 54,  82),   # MS via c-trumpet
-    'trp_bb':                 ( 54,  82),   # MS via bb-trumpet
-    'trp_a':                  ( 54,  82),   # MS via a-trumpet
-    'trp_bass_bb':            ( 54,  81),   # MS via bb-bass-trumpet
-    'cornet_bb':              ( 54,  81),   # MS via bb-cornet
-    'flugel_bb':              ( 54,  81),   # MS via flugelhorn
-    # Horns
-    'horn_f':                 ( 48,  76),   # MS via horn
-    'horn_bb':                ( 46,  79),   # MS via bb-horn-alto
-    'horn_eb_alto':           ( 54,  81),   # MS via eb-alto-horn
-    'mellophone_f':           ( 54,  79),   # manual (no MuseScore entry)
-    # Trombones
-    'tbn_alto_eb':            ( 45,  74),   # MS via alto-trombone
-    'tbn_tenor':              ( 40,  71),   # MS via trombone
-    'tbn_bass':               ( 32,  65),   # MS via bass-trombone
-    'tbn_contrabass':         ( 28,  62),   # MS via contrabass-trombone
-    # Low brass
-    'euph_bc':                ( 40,  70),   # MS via euphonium
-    'euph_tc':                ( 54,  84),   # MS via euphonium-treble
-    'baritone_bc':            ( 43,  64),   # MS via baritone
-    'baritone_tc':            ( 54,  81),   # MS via baritone-horn-treble
-    'tuba_f':                 ( 26,  64),   # MS via f-tuba
-    'tuba_eb':                ( 26,  64),   # MS via eb-tuba
-    'tuba_cc':                ( 26,  60),   # MS via c-tuba
-    'tuba_bbb':               ( 28,  58),   # MS via bb-tuba
-    'sousaphone_bbb':         ( 30,  60),   # MS via bb-sousaphone
-    # Double reeds
-    'oboe':                   ( 58,  87),   # MS via oboe
-    'oboe_damore':            ( 59,  87),   # MS via oboe-d'amore
-    'english_horn':           ( 59,  88),   # MS via english-horn
-    'bassoon':                ( 34,  69),   # MS via bassoon
-    'contrabassoon':          ( 34,  69),   # MS via contrabassoon
-    # Recorders
-    'rec_sopranino_f':        ( 65,  88),   # MS via sopranino-recorder
-    'rec_soprano_c':          ( 60,  81),   # MS via soprano-recorder
-    'rec_alto_f':             ( 65,  88),   # MS via alto-recorder
-    'rec_tenor_c':            ( 60,  81),   # MS via tenor-recorder
-    'rec_bass_f':             ( 53,  74),   # MS via bass-recorder
+# Two baked ranges per instrument, both FINGERED MIDI (lo, hi) inclusive.
+#
+# _KEYED_RANGES: the notes the keywork or normal compass gives. It seeds the
+# table's blank guide rows when an instrument is picked, and the matrix span.
+# _EXTENDED_RANGES: what skilled players reach (altissimo, pedal and high
+# registers). It decides whether a played note counts as in range: chart
+# greying, the filter-to-range switch and the wrong-instrument hint. It always
+# contains the keyed range.
+#
+# Both come from MuseScore's instruments.xml: keyed from `aPitchRange` (the
+# handbook calls it an "early amateur" range), extended from `pPitchRange` (the
+# professional range). Saxophones and clarinets take their keyed range from
+# keywork and published compasses instead, and a few extended ranges carry
+# labelled extensions. Every departure and its reason is recorded as data in
+# tools/musescore/sync_ranges.py, which prints these two tables; a contract test
+# requires them to match its output exactly, so edit the data there and paste.
+_KEYED_RANGES: dict[str, tuple[int, int]] = {
+    # Saxophone
+    'eb_sopranino':           ( 58,  90),   # sopranino-saxophone, keyed exception
+    'bb_soprano':             ( 58,  90),   # soprano-saxophone, keyed exception
+    'eb_alto':                ( 58,  90),   # alto-saxophone, keyed exception
+    'bb_tenor':               ( 58,  90),   # tenor-saxophone, keyed exception
+    'eb_bari':                ( 57,  90),   # baritone-saxophone, keyed exception
+    'bb_bass':                ( 58,  90),   # bass-saxophone, keyed exception
+    'eb_contrabass':          ( 58,  90),   # contrabass-saxophone, keyed exception
+    # Clarinet
+    'clar_eb':                ( 52,  96),   # eb-clarinet, keyed exception
+    'clar_d':                 ( 52,  96),   # d-clarinet, keyed exception
+    'clar_c':                 ( 52,  96),   # c-clarinet, keyed exception
+    'clar_bb':                ( 52,  96),   # bb-clarinet, keyed exception
+    'clar_a':                 ( 52,  96),   # a-clarinet, keyed exception
+    'clar_basset_f':          ( 48,  96),   # basset-horn, keyed exception
+    'clar_alto_eb':           ( 52,  89),   # alto-clarinet
+    'clar_bass_bb':           ( 48,  96),   # bb-bass-clarinet, keyed exception
+    'clar_contraalto_eb':     ( 48,  91),   # contra-alto-clarinet, keyed exception
+    'clar_contrabass_bb':     ( 48,  91),   # contrabass-clarinet, keyed exception
+    # Flute
+    'flute_piccolo':          ( 62,  93),   # piccolo
+    'flute_c':                ( 60,  93),   # flute
+    'flute_alto_g':           ( 60,  93),   # alto-flute
+    'flute_bass_c':           ( 60,  89),   # bass-flute
+    # Trumpet
+    'trp_piccolo_bb':         ( 49,  76),   # bb-piccolo-trumpet
+    'trp_piccolo_a':          ( 49,  76),   # a-piccolo-trumpet
+    'trp_f':                  ( 60,  77),   # f-trumpet
+    'trp_e':                  ( 54,  81),   # e-trumpet
+    'trp_eb':                 ( 54,  81),   # eb-trumpet
+    'trp_d':                  ( 54,  81),   # d-trumpet
+    'trp_c':                  ( 54,  82),   # c-trumpet
+    'trp_bb':                 ( 54,  82),   # bb-trumpet
+    'trp_a':                  ( 54,  82),   # a-trumpet
+    'trp_bass_bb':            ( 54,  81),   # bb-bass-trumpet
+    'cornet_bb':              ( 54,  81),   # bb-cornet
+    'flugel_bb':              ( 54,  81),   # flugelhorn
+    # Horn
+    'horn_f':                 ( 48,  76),   # horn
+    'horn_bb':                ( 46,  79),   # bb-horn-alto
+    'horn_eb_alto':           ( 54,  81),   # eb-alto-horn
+    'mellophone_f':           ( 54,  81),   # mellophone
+    # Trombone
+    'tbn_alto_eb':            ( 45,  74),   # alto-trombone
+    'tbn_tenor':              ( 40,  71),   # trombone
+    'tbn_bass':               ( 32,  65),   # bass-trombone
+    'tbn_contrabass':         ( 28,  62),   # contrabass-trombone
+    # Low Brass
+    'euph_bc':                ( 40,  70),   # euphonium
+    'euph_tc':                ( 54,  84),   # euphonium-treble
+    'baritone_bc':            ( 40,  67),   # baritone-horn
+    'baritone_tc':            ( 54,  81),   # baritone-horn-treble
+    'tuba_f':                 ( 26,  64),   # f-tuba
+    'tuba_eb':                ( 26,  64),   # eb-tuba
+    'tuba_cc':                ( 26,  60),   # c-tuba
+    'tuba_bbb':               ( 28,  58),   # bb-tuba
+    'sousaphone_bbb':         ( 30,  60),   # bb-sousaphone
+    # Double Reed
+    'oboe':                   ( 58,  87),   # oboe
+    'oboe_damore':            ( 59,  87),   # oboe-d'amore
+    'english_horn':           ( 59,  88),   # english-horn
+    'bassoon':                ( 34,  69),   # bassoon
+    'contrabassoon':          ( 34,  69),   # contrabassoon
+    # Recorder
+    'rec_sopranino_f':        ( 65,  88),   # sopranino-recorder
+    'rec_soprano_c':          ( 60,  81),   # soprano-recorder
+    'rec_alto_f':             ( 65,  88),   # alto-recorder
+    'rec_tenor_c':            ( 60,  81),   # tenor-recorder
+    'rec_bass_f':             ( 53,  74),   # bass-recorder
     # Strings
-    'violin':                 ( 55,  88),   # MS via violin
-    'viola':                  ( 48,  79),   # MS via viola
-    'cello':                  ( 36,  67),   # MS via violoncello
-    'double_bass':            ( 40,  74),   # MS via contrabass
-    'mandolin':               ( 55,  85),   # MS via mandolin
+    'violin':                 ( 55,  88),   # violin
+    'viola':                  ( 48,  79),   # viola
+    'cello':                  ( 36,  67),   # violoncello
+    'double_bass':            ( 40,  74),   # contrabass
+    'mandolin':               ( 55,  85),   # mandolin
     # Plucked
-    'guitar':                 ( 40,  83),   # MS via guitar-steel
-    'bass_guitar':            ( 40,  77),   # MS via bass-guitar
-    'ukulele':                ( 60,  81),   # MS via ukulele
-    'banjo':                  ( 48,  87),   # MS via banjo
-    'harp':                   ( 23, 104),   # MS via harp
-    # Concert / generic
-    'voice':                  ( 41,  79),   # MS via voice
-    'c':                      ( 48,  79),   # manual (generic concert-pitch fallback)
-    'piano':                  ( 21, 108),   # MS via piano
+    'guitar':                 ( 40,  83),   # guitar-steel
+    'bass_guitar':            ( 40,  77),   # bass-guitar
+    'ukulele':                ( 60,  81),   # ukulele
+    'banjo':                  ( 48,  87),   # banjo
+    'harp':                   ( 23, 104),   # harp
+    # Voice / Concert
+    'voice':                  ( 41,  79),   # voice
+    'c':                      ( 48,  79),   # hand-set
+    'piano':                  ( 21, 108),   # piano
 }
 
+_EXTENDED_RANGES: dict[str, tuple[int, int]] = {
+    # Saxophone
+    'eb_sopranino':           ( 58,  90),   # sopranino-saxophone, widened to keyed
+    'bb_soprano':             ( 58, 101),   # soprano-saxophone, extension
+    'eb_alto':                ( 58, 101),   # alto-saxophone
+    'bb_tenor':               ( 58, 101),   # tenor-saxophone
+    'eb_bari':                ( 57, 101),   # baritone-saxophone
+    'bb_bass':                ( 58,  96),   # bass-saxophone
+    'eb_contrabass':          ( 58,  90),   # contrabass-saxophone, widened to keyed
+    # Clarinet
+    'clar_eb':                ( 52,  96),   # eb-clarinet
+    'clar_d':                 ( 52,  96),   # d-clarinet
+    'clar_c':                 ( 52,  96),   # c-clarinet, widened to keyed
+    'clar_bb':                ( 52,  96),   # bb-clarinet
+    'clar_a':                 ( 52,  96),   # a-clarinet
+    'clar_basset_f':          ( 48,  96),   # basset-horn, widened to keyed
+    'clar_alto_eb':           ( 52,  93),   # alto-clarinet
+    'clar_bass_bb':           ( 48,  96),   # bb-bass-clarinet
+    'clar_contraalto_eb':     ( 48,  96),   # contra-alto-clarinet, widened to keyed
+    'clar_contrabass_bb':     ( 48,  96),   # contrabass-clarinet
+    # Flute
+    'flute_piccolo':          ( 62,  96),   # piccolo
+    'flute_c':                ( 59,  98),   # flute
+    'flute_alto_g':           ( 60,  96),   # alto-flute
+    'flute_bass_c':           ( 60,  93),   # bass-flute
+    # Trumpet
+    'trp_piccolo_bb':         ( 49,  79),   # bb-piccolo-trumpet
+    'trp_piccolo_a':          ( 49,  79),   # a-piccolo-trumpet
+    'trp_f':                  ( 54,  86),   # f-trumpet
+    'trp_e':                  ( 54,  84),   # e-trumpet
+    'trp_eb':                 ( 54,  84),   # eb-trumpet
+    'trp_d':                  ( 54,  84),   # d-trumpet
+    'trp_c':                  ( 54,  85),   # c-trumpet
+    'trp_bb':                 ( 54,  87),   # bb-trumpet
+    'trp_a':                  ( 54,  87),   # a-trumpet
+    'trp_bass_bb':            ( 54,  84),   # bb-bass-trumpet
+    'cornet_bb':              ( 54,  84),   # bb-cornet
+    'flugel_bb':              ( 54,  84),   # flugelhorn
+    # Horn
+    'horn_f':                 ( 38,  84),   # horn
+    'horn_bb':                ( 42,  84),   # bb-horn-alto
+    'horn_eb_alto':           ( 54,  84),   # eb-alto-horn
+    'mellophone_f':           ( 54,  84),   # mellophone
+    # Trombone
+    'tbn_alto_eb':            ( 45,  77),   # alto-trombone
+    'tbn_tenor':              ( 36,  74),   # trombone
+    'tbn_bass':               ( 21,  77),   # bass-trombone
+    'tbn_contrabass':         ( 21,  72),   # contrabass-trombone, extension
+    # Low Brass
+    'euph_bc':                ( 40,  74),   # euphonium
+    'euph_tc':                ( 54,  88),   # euphonium-treble
+    'baritone_bc':            ( 40,  70),   # baritone-horn
+    'baritone_tc':            ( 54,  84),   # baritone-horn-treble
+    'tuba_f':                 ( 24,  72),   # f-tuba
+    'tuba_eb':                ( 24,  72),   # eb-tuba
+    'tuba_cc':                ( 24,  72),   # c-tuba
+    'tuba_bbb':               ( 22,  72),   # bb-tuba
+    'sousaphone_bbb':         ( 24,  74),   # bb-sousaphone
+    # Double Reed
+    'oboe':                   ( 58,  96),   # oboe
+    'oboe_damore':            ( 59,  90),   # oboe-d'amore
+    'english_horn':           ( 59,  90),   # english-horn
+    'bassoon':                ( 34,  76),   # bassoon
+    'contrabassoon':          ( 34,  72),   # contrabassoon
+    # Recorder
+    'rec_sopranino_f':        ( 65,  91),   # sopranino-recorder
+    'rec_soprano_c':          ( 60,  91),   # soprano-recorder
+    'rec_alto_f':             ( 64,  96),   # alto-recorder
+    'rec_tenor_c':            ( 60,  91),   # tenor-recorder
+    'rec_bass_f':             ( 53,  77),   # bass-recorder
+    # Strings
+    'violin':                 ( 55, 103),   # violin
+    'viola':                  ( 48,  93),   # viola
+    'cello':                  ( 36,  90),   # violoncello
+    'double_bass':            ( 36,  79),   # contrabass
+    'mandolin':               ( 55, 100),   # mandolin
+    # Plucked
+    'guitar':                 ( 40,  84),   # guitar-steel
+    'bass_guitar':            ( 40,  79),   # bass-guitar
+    'ukulele':                ( 60,  81),   # ukulele
+    'banjo':                  ( 48,  87),   # banjo
+    'harp':                   ( 23, 104),   # harp
+    # Voice / Concert
+    'voice':                  ( 38,  84),   # voice
+    'c':                      ( 48,  79),   # hand-set
+    'piano':                  ( 21, 108),   # piano
+}
 
-def fingered_range(instrument_key: str) -> tuple[int, int]:
-    """Return (lo, hi) inclusive fingered-MIDI range for this instrument.
+# A generic two-and-a-half-octave middle range for keys without baked data
+# (user-defined custom instruments).
+_FALLBACK_RANGE: tuple[int, int] = (48, 79)
 
-    Consults the user override DB first, then the baked MuseScore-sourced
-    map, then a generic 2.5-octave middle range fallback for keys without
-    an explicit entry (mainly user-defined custom instruments)."""
+
+def keyed_range(instrument_key: str) -> tuple[int, int]:
+    """The KEYED tier (lo, hi), fingered MIDI: the guide rows and matrix span.
+
+    A user override from the range editor replaces it; otherwise the baked
+    value, or the generic fallback for keys without baked data."""
     ov = range_overrides().get(instrument_key)
     if ov is not None:
         return ov
-    return _RANGES.get(instrument_key, (48, 79))
+    return baked_keyed_range(instrument_key)
+
+
+def extended_range(instrument_key: str) -> tuple[int, int]:
+    """The EXTENDED tier (lo, hi), fingered MIDI: whether a played note is in
+    range.
+
+    A user override widens it: the result spans both the override and the
+    baked extended range, so editing the guide rows never makes notes a
+    skilled player reaches count as wrong. Keys without baked data (custom
+    instruments) have nothing to widen; there the override, or the fallback,
+    is the whole range."""
+    ov = range_overrides().get(instrument_key)
+    baked = _EXTENDED_RANGES.get(instrument_key)
+    if ov is None:
+        return baked if baked is not None else _FALLBACK_RANGE
+    if baked is None:
+        return ov
+    # One span from the lower start to the higher end, including any gap
+    # between an override and a baked range that do not overlap.
+    return (min(ov[0], baked[0]), max(ov[1], baked[1]))
+
+
+def baked_keyed_range(instrument_key: str) -> tuple[int, int]:
+    """The baked keyed range, ignoring user overrides. The range editor's
+    Restore Default button restores this."""
+    return _KEYED_RANGES.get(instrument_key, _FALLBACK_RANGE)
+
+
+def baked_extended_range(instrument_key: str) -> tuple[int, int]:
+    """The baked extended range, ignoring user overrides."""
+    return _EXTENDED_RANGES.get(instrument_key, _FALLBACK_RANGE)
+
+
+def fingered_range(instrument_key: str) -> tuple[int, int]:
+    """The KEYED tier; the name predates the two tiers. New code should call
+    keyed_range() or extended_range() so the choice of tier is visible."""
+    return keyed_range(instrument_key)
 
 
 def baked_fingered_range(instrument_key: str) -> tuple[int, int]:
-    """Return the baked (non-overridden) range for the instrument. Used by
-    the range editor's Restore Default button."""
-    return _RANGES.get(instrument_key, (48, 79))
+    """The baked KEYED tier; the name predates the two tiers. New code should
+    call baked_keyed_range()."""
+    return baked_keyed_range(instrument_key)
 
 
 def has_baked_range(instrument_key: str) -> bool:
-    """Whether the instrument has a baked range from the MuseScore source.
-    Custom instruments without a baked entry get the generic fallback;
-    the editor uses this to label the Restore button accordingly."""
-    return instrument_key in _RANGES
+    """Whether the instrument has baked ranges. Custom instruments without
+    them get the generic fallback; the editor uses this to label the Restore
+    button accordingly."""
+    return instrument_key in _KEYED_RANGES
 
 
 # ---------------------------------------------------------------------------
@@ -343,8 +471,8 @@ def has_baked_range(instrument_key: str) -> bool:
 # ---------------------------------------------------------------------------
 # Stored in instrument_ranges.json in the data directory. Read on first use
 # (never at import, so importing the catalog touches no file) and refreshed
-# in-process whenever save/clear is called, so the next fingered_range()
-# consult reflects the change without restart.
+# in-process whenever save/clear is called, so the next keyed_range() or
+# extended_range() consult reflects the change without restart.
 _RANGES_SCHEMA_VERSION = 1
 
 

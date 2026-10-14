@@ -30,9 +30,12 @@
   state and splitter sizes are blanked: they depend on the display).
 * `i18n_snapshot.json`: every UI string key per language and its format
   placeholders.
+* `baked_ranges.json`: every catalogue instrument's baked keyed and extended
+  range with note names (tests/contracts/test_range_tiers.py), so a range change
+  shows up in review.
 
 Wall-clock text (`13.10.2026 16:44`, `2026-10-13 16:44`) is replaced by
 `<DD.MM.YYYY HH:MM>` / `<YYYY-MM-DD HH:MM>` before comparing.
 
-Regenerate with `UPDATE_GOLDEN=1 pytest tests/acceptance/test_goldens.py` on the
-BT2 venv, then review the diff.
+Regenerate with `UPDATE_GOLDEN=1 pytest tests/acceptance/test_goldens.py
+tests/contracts/test_range_tiers.py` on the BT2 venv, then review the diff.

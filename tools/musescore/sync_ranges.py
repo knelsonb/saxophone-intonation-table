@@ -1,29 +1,38 @@
 """
-Sync instrument fingered-MIDI ranges from MuseScore's instruments.xml into
-the Intonation Analyzer's catalog.
+Generate the catalogue's two baked range tables from MuseScore's instruments.xml.
 
-MuseScore is open-source, ~10M users; the ranges in their instruments.xml
-are vetted by orchestrators and notation experts and are about as close
-as we'll get to a "single source of truth" for instrument ranges. We use
-their **amateur** range (`aPitchRange`) as our default — it's the
-"competent working player" envelope, broader than student-only and
-narrower than virtuoso-only.
+Every catalogue instrument has two ranges, both in FINGERED (written) MIDI:
 
-How transposition + ranges relate (verified against tenor sax):
-* `aPitchRange` and `pPitchRange` are SOUNDING pitch (concert), expressed
-  as MIDI numbers in the form ``lo-hi``.
-* `transposeChromatic` is ``sounding_midi - written_midi`` (negative when
-  the instrument sounds lower than written).
-* Our catalog stores FINGERED (written) ranges. Convert via
-  ``written = sounding - transposeChromatic``.
+* keyed: the notes the instrument's keywork or normal compass gives. It seeds
+  the table's blank guide rows and the matrix span. Source: MuseScore's
+  ``aPitchRange``, unless KEYED_EXCEPTIONS records a better-supported value.
+* extended: what skilled players reach. It decides whether a played note counts
+  as in range (chart greying, the filter-to-range switch, the wrong-instrument
+  hint). Source: MuseScore's ``pPitchRange``, widened where needed so it always
+  contains the keyed range, unless EXTENDED_EXCEPTIONS records a labelled
+  extension.
 
-A tester's hard overrides (from real-player feedback) win over
-MuseScore where they conflict — saxophones at low A, contras at low C.
-The override list is explicit in OVERRIDES.
+MuseScore's handbook calls ``aPitchRange`` the range of an "early amateur" (notes
+outside it turn olive) and ``pPitchRange`` the professional range (notes outside
+it turn red). Neither is a keywork specification, which is why saxophones and
+clarinets carry recorded exceptions for the keyed tier.
 
-Output: a freshly generated `_RANGES` dict that we paste into
-intonation/catalog/instruments.py (the script prints it; the caller chooses what to
-merge).
+How the numbers relate:
+* ``aPitchRange`` and ``pPitchRange`` are SOUNDING MIDI, written ``lo-hi``.
+* The catalogue's transposition is ``sounding - fingered``, so
+  ``fingered = sounding - transposition``. The conversion uses the catalogue's
+  own transposition, not MuseScore's ``transposeChromatic``: the catalogue
+  writes the sousaphone and two recorders differently from MuseScore, and
+  converting with its own value keeps the sounding range equal to MuseScore's.
+
+Run ``python tools/musescore/sync_ranges.py`` to print both tables. The contract
+tests require the printed blocks to appear verbatim in
+intonation/catalog/instruments.py, so this script is the source of those tables:
+change the data here, rerun, paste.
+
+The vendored XML comes from
+https://raw.githubusercontent.com/musescore/MuseScore/main/share/instruments/instruments.xml
+(GPL-3.0).
 """
 
 from __future__ import annotations
@@ -34,11 +43,12 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 XML = Path(__file__).resolve().parent / 'instruments.xml'
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+Range = tuple[int, int]
 
 
-# Our catalog key → MuseScore instrument id. Keys without a MuseScore
-# equivalent are left commented out; they keep whatever range the catalog
-# already has.
+# Catalogue key -> MuseScore instrument id.
 MUSESCORE_ID = {
     # Saxes
     'eb_sopranino':       'sopranino-saxophone',
@@ -81,16 +91,17 @@ MUSESCORE_ID = {
     'horn_f':             'horn',
     'horn_bb':            'bb-horn-alto',
     'horn_eb_alto':       'eb-alto-horn',
-    # mellophone — no MuseScore entry; keeps existing range
+    'mellophone_f':       'mellophone',
     # Trombones
     'tbn_alto_eb':        'alto-trombone',
     'tbn_tenor':          'trombone',
     'tbn_bass':           'bass-trombone',
     'tbn_contrabass':     'contrabass-trombone',
-    # Low brass
+    # Low brass. 'baritone' in MuseScore is the singing voice; the bass-clef
+    # horn is 'baritone-horn', the same horn as the treble-clef entry below.
     'euph_bc':            'euphonium',
     'euph_tc':            'euphonium-treble',
-    'baritone_bc':        'baritone',
+    'baritone_bc':        'baritone-horn',
     'baritone_tc':        'baritone-horn-treble',
     'tuba_f':             'f-tuba',
     'tuba_eb':            'eb-tuba',
@@ -123,165 +134,202 @@ MUSESCORE_ID = {
     'harp':               'harp',
     # Concert / generic
     'voice':              'voice',
-    # 'c': intentionally no mapping — generic concert-pitch fallback
     'piano':              'piano',
 }
 
 
-# Hard overrides from real-player feedback (a tester). These win over
-# whatever MuseScore says.
-OVERRIDES: dict[str, tuple[int, int]] = {
-    'eb_sopranino':       (57, 78),
-    'bb_soprano':         (57, 78),
-    'eb_alto':            (57, 78),
-    'bb_tenor':           (57, 78),
-    'eb_bari':            (57, 78),
-    'bb_bass':            (57, 78),
-    'eb_contrabass':      (57, 78),
-    'clar_contraalto_eb': (48,),   # 1-tuple = override LO only, keep MS HI
-    'clar_contrabass_bb': (48,),
+# Catalogue keys with no MuseScore counterpart: one hand-set range used for
+# both tiers, with the reason.
+HAND_SET: dict[str, tuple[Range, str]] = {
+    'c': ((48, 79), 'generic concert-pitch entry with no instrument to look up; '
+                    'a two-and-a-half-octave middle range'),
 }
 
 
-def parse_instruments() -> dict[str, dict]:
-    """Return {musescore_id: {'a_lo','a_hi','p_lo','p_hi','transp'}}."""
-    tree = ET.parse(XML)
-    root = tree.getroot()
+_SAX_KEYWORK = (
+    'saxophone keywork: written low Bb to high F#, as manufacturer key '
+    'specifications list it; MuseScore\'s amateur top is a playing level, not a key')
+_CLARINET_COMPASS = (
+    'clarinet written compass E3 to C7, as VSL, the Iowa recordings and Buffet '
+    'give it; MuseScore\'s amateur top is lower')
+
+# Keyed tier: fingered (lo, hi) that replaces the converted aPitchRange, with
+# the reason. A stale entry (equal to the MuseScore value) fails the contract
+# tests, so this list only holds real departures.
+KEYED_EXCEPTIONS: dict[str, tuple[Range, str]] = {
+    # Saxophones
+    'eb_sopranino': ((58, 90), _SAX_KEYWORK + '; the sopranino top is not '
+                               'confirmed against a maker\'s page'),
+    'bb_soprano': ((58, 90), _SAX_KEYWORK),
+    'eb_alto': ((58, 90), _SAX_KEYWORK),
+    'bb_tenor': ((58, 90), _SAX_KEYWORK),
+    'eb_bari': ((57, 90), _SAX_KEYWORK + '; the baritone adds the low A key'),
+    'bb_bass': ((58, 90), _SAX_KEYWORK + '; MuseScore\'s amateur top G6 is above '
+                          'the high F# key'),
+    'eb_contrabass': ((58, 90), _SAX_KEYWORK + '; the contrabass top is not '
+                                'confirmed against a maker\'s page'),
+    # Clarinets
+    'clar_eb': ((52, 96), _CLARINET_COMPASS),
+    'clar_d': ((52, 96), _CLARINET_COMPASS),
+    'clar_c': ((52, 96), _CLARINET_COMPASS),
+    'clar_bb': ((52, 96), _CLARINET_COMPASS),
+    'clar_a': ((52, 96), _CLARINET_COMPASS),
+    'clar_basset_f': ((48, 96), 'basset extension down to written C3, clarinet '
+                                'compass up to C7'),
+    'clar_bass_bb': ((48, 96), 'keyed down to written low C (Buffet BC1193); top '
+                               'C7 as VSL and the Iowa recordings give it'),
+    'clar_contraalto_eb': ((48, 91), 'low C extension reported by a player; '
+                                     'MuseScore stops at written low Eb'),
+    'clar_contrabass_bb': ((48, 91), 'keyed down to written low C, which '
+                                     'MuseScore\'s professional range also reaches'),
+}
+
+# Extended tier: fingered (lo, hi) that replaces the default (pPitchRange
+# widened to contain the keyed range), with the reason. Every extended range
+# must sound inside the detector window, MIDI 21..108.
+EXTENDED_EXCEPTIONS: dict[str, tuple[Range, str]] = {
+    'bb_soprano': ((58, 101), 'altissimo to written F7, as MuseScore gives the '
+                              'alto, tenor and baritone; its soprano stops at A6'),
+    'tbn_contrabass': ((21, 72), 'MuseScore\'s professional low end, F#0, sounds '
+                                 'below A0, the lowest note the detector reads'),
+}
+
+
+def parse_instruments(path: Path = XML) -> dict[str, dict]:
+    """Return {musescore_id: {'transp', 'a_lo', 'a_hi', 'p_lo', 'p_hi'}}.
+
+    The range fields are SOUNDING MIDI; an instrument missing one tier lacks
+    those two fields."""
+    root = ET.parse(path).getroot()
     out: dict[str, dict] = {}
     for inst in root.iter('Instrument'):
         mid = inst.attrib.get('id')
         if not mid:
             continue
-        a = (inst.findtext('aPitchRange') or '').strip()
-        p = (inst.findtext('pPitchRange') or '').strip()
-        tc = (inst.findtext('transposeChromatic') or '0').strip()
-        if not a and not p:
+        entry: dict = {}
+        for tag, prefix in (('aPitchRange', 'a'), ('pPitchRange', 'p')):
+            m = re.match(r'(\d+)-(\d+)', (inst.findtext(tag) or '').strip())
+            if m:
+                entry[f'{prefix}_lo'], entry[f'{prefix}_hi'] = int(m.group(1)), int(m.group(2))
+        if not entry:
             continue
         try:
-            transp = int(tc)
+            entry['transp'] = int((inst.findtext('transposeChromatic') or '0').strip())
         except ValueError:
-            transp = 0
-        m = re.match(r'(\d+)-(\d+)', a or p)
-        if not m:
-            continue
-        entry = {'transp': transp}
-        if a:
-            am = re.match(r'(\d+)-(\d+)', a)
-            if am:
-                entry['a_lo'], entry['a_hi'] = int(am.group(1)), int(am.group(2))
-        if p:
-            pm = re.match(r'(\d+)-(\d+)', p)
-            if pm:
-                entry['p_lo'], entry['p_hi'] = int(pm.group(1)), int(pm.group(2))
+            entry['transp'] = 0
         out[mid] = entry
     return out
 
 
-def fingered_range_from_ms(entry: dict) -> tuple[int, int]:
-    """Convert MuseScore sounding range to FINGERED range.
+def sounding_tier(entry: dict, tier: str) -> Range:
+    """One tier ('a' amateur or 'p' professional) as SOUNDING (lo, hi)."""
+    return (entry[f'{tier}_lo'], entry[f'{tier}_hi'])
 
-    written = sounding - transposeChromatic. We use the amateur range as
-    the default; fall back to professional if amateur is missing."""
-    transp = entry.get('transp', 0)
-    if 'a_lo' in entry:
-        lo, hi = entry['a_lo'], entry['a_hi']
-    else:
-        lo, hi = entry['p_lo'], entry['p_hi']
-    return (lo - transp, hi - transp)
+
+def to_fingered(sounding: Range, transp: int) -> Range:
+    """Sounding (lo, hi) to fingered, with the catalogue's transposition."""
+    return (sounding[0] - transp, sounding[1] - transp)
+
+
+def hull(a: Range, b: Range) -> Range:
+    """The smallest range containing both."""
+    return (min(a[0], b[0]), max(a[1], b[1]))
+
+
+def catalogue_families() -> list:
+    """The catalogue's baked family table (never runtime customs)."""
+    if str(_REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(_REPO_ROOT))
+    from intonation.catalog import instruments
+    return instruments._FAMILIES
+
+
+def _transpositions(families) -> dict[str, int]:
+    return {key: transp for (_fk, _de, _en, instrs) in families
+            for (key, transp, _d, _e) in instrs}
+
+
+def default_keyed(entry: dict, transp: int) -> Range:
+    return to_fingered(sounding_tier(entry, 'a'), transp)
+
+
+def default_extended(entry: dict, transp: int, keyed: Range) -> Range:
+    return hull(to_fingered(sounding_tier(entry, 'p'), transp), keyed)
+
+
+def generate_ranges(musescore: dict[str, dict] | None = None,
+                    families=None) -> tuple[dict[str, Range], dict[str, Range], dict[str, str]]:
+    """Build (keyed, extended, sources) for every catalogue key, in catalogue
+    order. ``sources`` holds a short provenance tag per key for the printed
+    table. Raises KeyError for a catalogue key with no decision."""
+    if musescore is None:
+        musescore = parse_instruments()
+    if families is None:
+        families = catalogue_families()
+    keyed: dict[str, Range] = {}
+    extended: dict[str, Range] = {}
+    keyed_src: dict[str, str] = {}
+    extended_src: dict[str, str] = {}
+    for key, transp in _transpositions(families).items():
+        if key in HAND_SET:
+            keyed[key] = extended[key] = HAND_SET[key][0]
+            keyed_src[key] = extended_src[key] = 'hand-set'
+            continue
+        ms_id = MUSESCORE_ID[key]
+        entry = musescore[ms_id]
+        if key in KEYED_EXCEPTIONS:
+            keyed[key] = KEYED_EXCEPTIONS[key][0]
+            keyed_src[key] = f'{ms_id}, keyed exception'
+        else:
+            keyed[key] = default_keyed(entry, transp)
+            keyed_src[key] = ms_id
+        if key in EXTENDED_EXCEPTIONS:
+            extended[key] = EXTENDED_EXCEPTIONS[key][0]
+            extended_src[key] = f'{ms_id}, extension'
+        else:
+            extended[key] = default_extended(entry, transp, keyed[key])
+            professional = to_fingered(sounding_tier(entry, 'p'), transp)
+            extended_src[key] = (ms_id if extended[key] == professional
+                                 else f'{ms_id}, widened to keyed')
+    return keyed, extended, {'keyed': keyed_src, 'extended': extended_src}
+
+
+def render_table(name: str, table: dict[str, Range], sources: dict[str, str],
+                 families=None) -> str:
+    """Python source for one baked table, grouped by family, as it appears in
+    intonation/catalog/instruments.py."""
+    if families is None:
+        families = catalogue_families()
+    lines = [f'{name}: dict[str, tuple[int, int]] = {{']
+    for (_fk, _de, family_en, instrs) in families:
+        lines.append(f'    # {family_en}')
+        for (key, _t, _d, _e) in instrs:
+            lo, hi = table[key]
+            lines.append(f"    {repr(key) + ':':25s} ({lo:3d}, {hi:3d}),   # {sources[key]}")
+    lines.append('}')
+    return '\n'.join(lines)
+
+
+def render_tables(families=None) -> tuple[str, str]:
+    """(keyed source, extended source) for the current XML and data."""
+    if families is None:
+        families = catalogue_families()
+    keyed, extended, sources = generate_ranges(families=families)
+    return (render_table('_KEYED_RANGES', keyed, sources['keyed'], families),
+            render_table('_EXTENDED_RANGES', extended, sources['extended'], families))
 
 
 def main() -> int:
     if not XML.exists():
-        print(f'ERROR: {XML} missing — run\n'
+        print(f'ERROR: {XML} missing; run\n'
               '  curl -sSL https://raw.githubusercontent.com/musescore'
-              '/MuseScore/master/share/instruments/instruments.xml '
+              '/MuseScore/main/share/instruments/instruments.xml '
               f'-o {XML}', file=sys.stderr)
         return 1
-
-    instruments = parse_instruments()
-    missing: list[str] = []
-    out_lines: list[str] = []
-    out_lines.append('_RANGES: dict[str, tuple[int, int]] = {')
-
-    # Group output by family for readability (matches the existing layout
-    # so the diff is small).
-    groups = [
-        ('Saxophones', [
-            'eb_sopranino', 'bb_soprano', 'eb_alto', 'bb_tenor',
-            'eb_bari', 'bb_bass', 'eb_contrabass',
-        ]),
-        ('Clarinets', [
-            'clar_eb', 'clar_d', 'clar_c', 'clar_bb', 'clar_a',
-            'clar_basset_f', 'clar_alto_eb', 'clar_bass_bb',
-            'clar_contraalto_eb', 'clar_contrabass_bb',
-        ]),
-        ('Flutes', [
-            'flute_piccolo', 'flute_c', 'flute_alto_g', 'flute_bass_c',
-        ]),
-        ('Trumpets', [
-            'trp_piccolo_bb', 'trp_piccolo_a', 'trp_f', 'trp_e', 'trp_eb',
-            'trp_d', 'trp_c', 'trp_bb', 'trp_a', 'trp_bass_bb',
-            'cornet_bb', 'flugel_bb',
-        ]),
-        ('Horns', [
-            'horn_f', 'horn_bb', 'horn_eb_alto', 'mellophone_f',
-        ]),
-        ('Trombones', [
-            'tbn_alto_eb', 'tbn_tenor', 'tbn_bass', 'tbn_contrabass',
-        ]),
-        ('Low brass', [
-            'euph_bc', 'euph_tc', 'baritone_bc', 'baritone_tc',
-            'tuba_f', 'tuba_eb', 'tuba_cc', 'tuba_bbb', 'sousaphone_bbb',
-        ]),
-        ('Double reeds', [
-            'oboe', 'oboe_damore', 'english_horn', 'bassoon', 'contrabassoon',
-        ]),
-        ('Recorders', [
-            'rec_sopranino_f', 'rec_soprano_c', 'rec_alto_f', 'rec_tenor_c',
-            'rec_bass_f',
-        ]),
-        ('Strings', [
-            'violin', 'viola', 'cello', 'double_bass', 'mandolin',
-        ]),
-        ('Plucked', [
-            'guitar', 'bass_guitar', 'ukulele', 'banjo', 'harp',
-        ]),
-        ('Concert / generic', ['voice', 'c', 'piano']),
-    ]
-
-    for group_name, keys in groups:
-        out_lines.append(f'    # {group_name}')
-        for key in keys:
-            ms_id = MUSESCORE_ID.get(key)
-            if ms_id is None:
-                missing.append(f'{key}: no MuseScore id (manual range kept)')
-                continue
-            ent = instruments.get(ms_id)
-            if not ent:
-                missing.append(f'{key}: MS id {ms_id!r} not found in xml')
-                continue
-            lo, hi = fingered_range_from_ms(ent)
-            ov = OVERRIDES.get(key)
-            if ov:
-                if len(ov) == 2:
-                    lo, hi = ov
-                    src = 'override'
-                elif len(ov) == 1:
-                    lo = ov[0]
-                    src = 'override-lo'
-                else:
-                    src = 'MS'
-            else:
-                src = 'MS'
-            out_lines.append(
-                f"    {repr(key) + ':':25s} ({lo:3d}, {hi:3d}),   # {src} via {ms_id}"
-            )
-    out_lines.append('}')
-    print('\n'.join(out_lines))
-    if missing:
-        print('\n# Notes:', file=sys.stderr)
-        for m in missing:
-            print(f'#   - {m}', file=sys.stderr)
+    keyed_src, extended_src = render_tables()
+    print(keyed_src)
+    print()
+    print(extended_src)
     return 0
 
 
