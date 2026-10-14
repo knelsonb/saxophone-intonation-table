@@ -58,12 +58,13 @@ the list below is the contract the rewrite must keep or update here:
   METRO tab (``_metro_tab``, sax_tab_metro.MetroTab)
     * ``_slider`` ``_ts_btns`` ``_btn_start`` ``controller`` ``bpm``
       ``time_sig`` ``_status`` ``_vol_slider`` ``_btn_tap``.
-  Drone / pitch pipes
-    * SETUP's ``_voice_combo`` (see below) ``_drone_semitone_nudge()`` ``_drone_semitones``
-      ``_btn_drone_on`` ``_drone_ctrl`` ``_drone_status``; ``_btn_pipes``
-      ``_pipes_dlg`` ``_pipe_btns`` ``_pipes_ctrl`` (pads C4..B4);
-      ``sax_drone`` imports ``tinysoundfont`` lazily (hidden to simulate a
-      missing synth).
+  Drone / pitch pipes (``_drone_bar``, sax_drone_bar.DroneBar)
+    * ``nudge_semitones()`` ``semitones`` ``voice_id`` ``controller``
+      ``_btn_on`` ``_status`` ``_vol_slider`` ``_btn_pipes``
+      ``pipes_controller``, ``pipes_window`` (PitchPipesWindow: ``_pads``
+      C4..B4, ``status_label``); the voice is picked in SETUP's
+      ``_voice_combo``; ``sax_drone`` imports ``tinysoundfont`` lazily
+      (hidden to simulate a missing synth).
   DECK tab
     * ``_deck_tab`` (sax_tab_deck.DeckTab): ``_btn_record`` ``_btn_stop``
       ``_btn_play`` ``_btn_export`` ``state()`` ``_state_lbl`` ``_status``.
@@ -834,14 +835,14 @@ class AppDriver:
         want = note_to_midi(note) - 69
         if not -12 <= want <= 12:
             raise HarnessError(f"drone cannot reach {note}: the stepper covers A3..A5")
-        while w._drone_semitones != want:
-            w._drone_semitone_nudge(1 if want > w._drone_semitones else -1)
-        if not w._btn_drone_on.isChecked():
-            w._btn_drone_on.click()
+        while w._drone_bar.semitones != want:
+            w._drone_bar.nudge_semitones(1 if want > w._drone_bar.semitones else -1)
+        if not w._drone_bar._btn_on.isChecked():
+            w._drone_bar._btn_on.click()
 
     def drone_off(self) -> None:
-        if self.win._btn_drone_on.isChecked():
-            self.win._btn_drone_on.click()
+        if self.win._drone_bar._btn_on.isChecked():
+            self.win._drone_bar._btn_on.click()
 
     def drone_synth_unavailable(self) -> None:
         """Hide the SoundFont synth package for the rest of this app's life.
@@ -861,12 +862,12 @@ class AppDriver:
 
     def drone_state(self) -> DroneState:
         w = self.win
-        ctrl = w._drone_ctrl
-        status = w._drone_status.text() if not w._drone_status.isHidden() else None
+        ctrl = w._drone_bar.controller
+        status = w._drone_bar._status.text() if not w._drone_bar._status.isHidden() else None
         return DroneState(
             enabled=bool(ctrl is not None and ctrl.is_enabled()),
-            voice=str(ctrl.voice_id if ctrl is not None else w._drone_voice_id),
-            semitones=int(w._drone_semitones),
+            voice=str(ctrl.voice_id if ctrl is not None else w._drone_bar.voice_id),
+            semitones=int(w._drone_bar.semitones),
             sine_fallback=bool(getattr(ctrl, "synth_fallback", False)),
             status_text=status)
 
@@ -878,31 +879,32 @@ class AppDriver:
         return midi
 
     def pipes_press(self, note: str) -> None:
-        w = self.win
+        bar = self.win._drone_bar
         midi = self._pipe_midi(note)
-        if w._pipes_dlg is None or not w._pipes_dlg.isVisible():
-            w._btn_pipes.click()
-        if not w._pipe_btns[midi].isChecked():
-            w._pipe_btns[midi].click()
+        if bar.pipes_window is None or not bar.pipes_window.isVisible():
+            bar._btn_pipes.click()
+        pad = bar.pipes_window._pads[midi]
+        if not pad.isChecked():
+            pad.click()
 
     def pipes_release(self, note: str) -> None:
-        w = self.win
+        window = self.win._drone_bar.pipes_window
         midi = self._pipe_midi(note)
-        if w._pipes_dlg is not None and w._pipe_btns[midi].isChecked():
-            w._pipe_btns[midi].click()
+        if window is not None and window._pads[midi].isChecked():
+            window._pads[midi].click()
 
     def pipes_active(self) -> list[int]:
-        ctrl = self.win._pipes_ctrl
+        ctrl = self.win._drone_bar.pipes_controller
         return sorted(ctrl.active_midis()) if ctrl is not None else []
 
     def pipes_status(self) -> Optional[str]:
-        w = self.win
-        lbl = getattr(w, "_pipes_status", None)
+        window = self.win._drone_bar.pipes_window
+        lbl = window.status_label if window is not None else None
         return lbl.text() if lbl is not None and not lbl.isHidden() else None
 
     def pipes_close(self) -> None:
-        if self.win._pipes_dlg is not None:
-            self.win._pipes_dlg.close()
+        if self.win._drone_bar.pipes_window is not None:
+            self.win._drone_bar.pipes_window.close()
 
     # ===================================================================== deck
     def deck_record(self) -> None:
@@ -1066,10 +1068,10 @@ class AppDriver:
 
     def drone_set_volume(self, percent: int) -> None:
         # Internal: drone bar ``_drone_vol_slider`` (0..100).
-        self.win._drone_vol_slider.setValue(int(percent))
+        self.win._drone_bar._vol_slider.setValue(int(percent))
 
     def drone_volume(self) -> int:
-        return int(self.win._drone_vol_slider.value())
+        return int(self.win._drone_bar._vol_slider.value())
 
     def enable_history(self) -> None:
         """Turn on history saving after the first launch, from the app's own

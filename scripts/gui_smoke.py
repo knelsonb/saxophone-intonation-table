@@ -347,34 +347,34 @@ def main() -> int:
     win._engine.output_running = False
     win._tabs.setCurrentIndex(win._tab_keys.index("tuner"))
     app.processEvents()
-    check(len(win._drone_preset_btns) == 5,
-          f"expected 5 drone preset buttons, got {len(win._drone_preset_btns)}")
+    check(len(win._drone_bar._preset_btns) == 5,
+          f"expected 5 drone preset buttons, got {len(win._drone_bar._preset_btns)}")
     check(win._setup_tab._voice_combo.count() >= 5,
           "SETUP drone voice combo has no entries")
-    win._btn_drone_on.setChecked(True)
+    win._drone_bar._btn_on.setChecked(True)
     app.processEvents()
-    check(not win._btn_drone_on.isChecked(),
+    check(not win._drone_bar._btn_on.isChecked(),
           "drone on-button stayed checked with no audible output (button lies)")
-    check(win._drone_status.isVisible(),
+    check(win._drone_bar._status.isVisible(),
           "drone 'unavailable' status not shown when it could not sound")
-    win._on_drone_preset("cello")
-    check(win._drone_voice_id == "cello" and win._cfg.drone_voice_id == "cello",
-          f"drone preset did not update voice id: {win._drone_voice_id}")
-    win._drone_semitone_nudge(100)
-    check(win._drone_semitones == 12,
-          f"drone semitone did not clamp high: {win._drone_semitones}")
-    win._drone_semitone_nudge(-100)
-    check(win._drone_semitones == -12,
-          f"drone semitone did not clamp low: {win._drone_semitones}")
-    win._open_pitch_pipes()
+    win._drone_bar.select_voice("cello")
+    check(win._drone_bar.voice_id == "cello" and win._cfg.drone_voice_id == "cello",
+          f"drone preset did not update voice id: {win._drone_bar.voice_id}")
+    win._drone_bar.nudge_semitones(100)
+    check(win._drone_bar.semitones == 12,
+          f"drone semitone did not clamp high: {win._drone_bar.semitones}")
+    win._drone_bar.nudge_semitones(-100)
+    check(win._drone_bar.semitones == -12,
+          f"drone semitone did not clamp low: {win._drone_bar.semitones}")
+    win._drone_bar.open_pitch_pipes()
     app.processEvents()
-    check(len(win._pipe_btns) == 12,
-          f"expected 12 pitch-pipe pads, got {len(win._pipe_btns)}")
-    win._on_pipe_tapped(60)
-    check(win._pipes_status.isVisible(),
+    check(len(win._drone_bar.pipes_window._pads) == 12,
+          f"expected 12 pitch-pipe pads, got {len(win._drone_bar.pipes_window._pads)}")
+    win._drone_bar._on_pad_tapped(60)
+    check(win._drone_bar.pipes_window.status_label.isVisible(),
           "pitch-pipe 'unavailable' status not shown when it could not sound")
-    if win._pipes_dlg is not None:
-        win._pipes_dlg.close()
+    if win._drone_bar.pipes_window is not None:
+        win._drone_bar.pipes_window.close()
     app.processEvents()
 
     # D3 duck-attach (GUI-wiring lock): enabling the drone with output "up" must
@@ -383,19 +383,19 @@ def main() -> int:
     # consumer manually (engine.coordination_step), so ONLY a GUI-path check
     # catches a controller built without engine=. Skip gracefully if the drone
     # controller didn't construct (no sax_drone in this env).
-    if win._drone_ctrl is not None and hasattr(win._engine, "attach_duck_consumer"):
+    if win._drone_bar.controller is not None and hasattr(win._engine, "attach_duck_consumer"):
         attached = []
         _real_attach = win._engine.attach_duck_consumer
         win._engine.attach_duck_consumer = (
             lambda c: (attached.append(c), _real_attach(c))[1])
         win._engine.output_running = True
         win._engine.output_samplerate = 44100
-        win._btn_drone_on.setChecked(True)
+        win._drone_bar._btn_on.setChecked(True)
         app.processEvents()
         check(bool(attached),
               "enabling the drone did NOT attach a duck consumer "
               "(DroneController missing engine= → no duck in the live app)")
-        win._btn_drone_on.setChecked(False)
+        win._drone_bar._btn_on.setChecked(False)
         app.processEvents()
 
     # Pure-sine drone live-wiring lock (precision-reference voice, 2026-05-30):
@@ -404,7 +404,7 @@ def main() -> int:
     # The SF2<->sine source-TYPE rebuild is unit-tested on the controller, but
     # only this combo-path check proves the picker is actually wired to it. Output
     # is "up" so the source builds.
-    if win._drone_ctrl is not None:
+    if win._drone_bar.controller is not None:
         win._engine.output_running = True
         win._engine.output_samplerate = 44100
         combo = win._setup_tab._voice_combo
@@ -413,17 +413,17 @@ def main() -> int:
         check(sine_ix >= 0, "SETUP picker has no 'Pure Sine' entry")
         combo.setCurrentIndex(sine_ix)            # fires _on_drone_voice_changed
         app.processEvents()
-        check(win._drone_voice_id == "sine" and win._cfg.drone_voice_id == "sine",
-              f"picking Pure Sine did not set the voice id: {win._drone_voice_id}")
-        win._btn_drone_on.setChecked(True)
+        check(win._drone_bar.voice_id == "sine" and win._cfg.drone_voice_id == "sine",
+              f"picking Pure Sine did not set the voice id: {win._drone_bar.voice_id}")
+        win._drone_bar._btn_on.setChecked(True)
         app.processEvents()
-        _src = win._drone_ctrl.source
+        _src = win._drone_bar.controller.source
         check(_src is not None and type(_src).__name__ == "SineDroneSource",
               "Pure Sine selection did not build a SineDroneSource "
               f"({type(_src).__name__ if _src else None})")
         check(_src is not None and _src.active_midi is not None,
               "enabled pure-sine drone declares no active_midi (D3 can't exclude it)")
-        win._btn_drone_on.setChecked(False)
+        win._drone_bar._btn_on.setChecked(False)
         app.processEvents()
 
     # DECK tab — built inert here (headless has no input device). This is
@@ -616,7 +616,7 @@ def main() -> int:
         "SETUP range editor": _setup._btn_range,
         "METRO start": win._metro_tab._btn_start,
         "METRO tap": win._metro_tab._btn_tap,
-        "drone on": win._btn_drone_on,
+        "drone on": win._drone_bar._btn_on,
         "DECK record": win._deck_tab._btn_record,
         "DECK stop": win._deck_tab._btn_stop,
         "DECK play": win._deck_tab._btn_play,

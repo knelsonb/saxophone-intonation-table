@@ -109,8 +109,8 @@ def test_first_run_carries_restored_a4_and_nickname(tmp_path):
             out["run_a4"] = run.a4_hz
             out["run_label"] = run.label
         out["engine_a4"] = win._engine.a4
-        out["drone_a4"] = (win._drone_ctrl._a4
-                           if win._drone_ctrl is not None else None)
+        out["drone_a4"] = (win._drone_bar.controller._a4
+                           if win._drone_bar.controller is not None else None)
         out["a4_combo"] = win._a4_combo.currentData()
         out["setup_a4_combo"] = win._setup_tab._a4_combo.currentData()
     ''', config={"last_a4_hz": 442, "last_nickname": "MarkVI"})
@@ -402,10 +402,10 @@ def test_drone_semitones_coercion(store, isolated_config, raw, expected):
 @requires_qt
 def test_window_restores_saved_drone_settings(tmp_path):
     out = _run_gui(tmp_path, '''
-        out["volume"] = win._drone_volume
-        out["slider"] = win._drone_vol_slider.value()
-        out["semitones"] = win._drone_semitones
-        out["voice"] = win._drone_voice_id
+        out["volume"] = win._drone_bar._volume
+        out["slider"] = win._drone_bar._vol_slider.value()
+        out["semitones"] = win._drone_bar.semitones
+        out["voice"] = win._drone_bar.voice_id
         out["setup_voice"] = win._setup_tab._voice_combo.currentData()
     ''', config={"drone_voice_id": "cello", "drone_volume": 0.0,
                  "drone_semitones": -3})
