@@ -350,7 +350,7 @@ class MainWindow(QMainWindow):
         toolbar.export_requested.connect(self._export_file)
         self._setup_tab.drone_voice_picked.connect(self._drone_bar.select_voice)
         self._drone_bar.voice_changed.connect(self._setup_tab.show_drone_voice)
-        self._metro_tab.running_changed.connect(self._metro_dot.setVisible)
+        self._metro_tab.running_changed.connect(self.set_metro_running)
         self._deck_tab.recording_changed.connect(self.set_deck_recording)
         # The engine measures against the session's A4 (the combos, the drone
         # and the pitch pipes follow the same signal).
