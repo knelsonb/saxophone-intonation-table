@@ -161,3 +161,35 @@ def test_render_thread_fade_and_reap_does_not_fire_on_state_changed():
     assert len(fired) == baseline, (
         "on_state_changed fired from the render-thread fade/reap; it must only "
         "fire from the GUI-thread toggle path")
+
+
+def test_silence_drops_every_pad_at_once():
+    """With the output gone nothing renders, so pads are dropped outright:
+    no release tail is left to play when the output comes back."""
+    c = _ctrl()
+    m = c._mixer
+    c.toggle(60)
+    c.toggle(64)
+    c.silence()
+    assert c.active_midis() == frozenset()
+    assert m.active_sources() == 0
+    assert m.sounding_midis() == frozenset()
+
+
+def test_a_held_pad_follows_a4_phase_continuously():
+    """set_a4 retunes a pad that is already sounding, with no phase jump."""
+    c = _ctrl(a4=440.0)
+    m = c._mixer
+    c.toggle(69)
+    block = 512
+    out = np.zeros(block * 2, dtype=np.float32)
+    for i in range(40):                      # past the attack
+        m.render(out[:block], block)
+    m.render(out[:block], block)
+    c.set_a4(442.0)
+    m.render(out[block:], block)
+    pad = c._pads[69]
+    assert pad.freq == pytest.approx(_expected_freq(69, 442.0))
+    # No jump at the seam: the step across it is no bigger than a sine step.
+    steps = np.abs(np.diff(out))
+    assert steps[block - 1] <= steps.max() * 1.01

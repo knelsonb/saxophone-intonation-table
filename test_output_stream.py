@@ -855,3 +855,15 @@ def test_input_unwrap_reuses_scratch_and_is_chronological():
     # Chronological: the newest block sits at the tail, the prior block before it.
     assert np.allclose(snap[-512:], 0.20), "latest block must be at the tail"
     assert np.allclose(snap[-1024:-512], 0.10), "the prior block must precede it"
+
+
+def test_stop_test_tone_without_fade_drops_it_at_once():
+    """With the output gone there is nothing to fade into: fade=False
+    unregisters the tone immediately."""
+    _reset([_SPEAKERS], default_out=0)
+    eng = _new_engine()
+    eng.open_output_device(None)
+    eng.start_test_tone(440.0)
+    eng.stop_test_tone(fade=False)
+    assert eng.mixer.active_sources() == 0
+    assert eng._test_tone_handle is None

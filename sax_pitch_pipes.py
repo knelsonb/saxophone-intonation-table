@@ -268,6 +268,17 @@ class PitchPipesController:
         if changed:
             self._emit()
 
+    def silence(self) -> None:
+        """Drop every pad at once, with no release tail. For when the output
+        is gone: nothing renders, so a fade would only play out (over a pad
+        started afresh) once the output is back."""
+        if not self._pads:
+            return
+        for src in self._pads.values():
+            self._mixer.unregister(src)
+        self._pads.clear()
+        self._emit()
+
     def set_a4(self, a4: float) -> None:
         """Update concert pitch. New pads sound at it, and pads already
         sounding (or fading out) are retuned to it phase-continuously, so the

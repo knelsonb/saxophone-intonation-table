@@ -1456,18 +1456,21 @@ class AudioEngine:
         self._test_tone_handle = self.mixer.register(tone)
         return self._test_tone_handle
 
-    def stop_test_tone(self, handle: Optional[object] = None) -> None:
+    def stop_test_tone(self, handle: Optional[object] = None,
+                       fade: bool = True) -> None:
         """Stop the test tone. With no handle, stops the engine-managed one.
         Silent if nothing is registered.
 
         The enveloped tone is RELEASED (a short fade) rather than hard
         unregistered, so it ends click-free; the Mixer reaps it once the tail
-        reaches zero. A handle that predates the envelope (no release()) falls
-        back to an immediate unregister."""
+        reaches zero. ``fade=False`` drops it at once, for when no output is
+        rendering (a fade would only start when the output comes back). A
+        handle that predates the envelope (no release()) falls back to an
+        immediate unregister."""
         h = handle if handle is not None else self._test_tone_handle
         if h is not None:
             rel = getattr(h, "release", None)
-            if callable(rel):
+            if fade and callable(rel):
                 rel()                     # fade out; Mixer auto-reaps when done
             else:
                 self.mixer.unregister(h)  # type: ignore[arg-type]

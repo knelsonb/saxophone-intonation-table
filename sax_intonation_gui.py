@@ -1130,8 +1130,11 @@ class MainWindow(QMainWindow):
         so no toggle claims to play into nothing, and park it to come back on
         when the output is back."""
         users = self._output_users
+        # Nothing renders now, so sources are dropped at once rather than
+        # faded: a fade would only play when the output is back, over the
+        # source started afresh.
         if self._test_tone_handle is not None:
-            self._stop_test_tone()
+            self._stop_test_tone(fade=False)
             self._show_test_tone_on(False)
             users.park('tone', self._test_tone_on, self._test_tone_failed)
         if self._metro_ctrl.is_running():
@@ -1144,7 +1147,7 @@ class MainWindow(QMainWindow):
             for midi in sorted(self._pipes_ctrl.active_midis()):
                 users.park(f'pipe:{midi}', partial(self._pipe_on, midi),
                            self._pipes_failed)
-            self._pipes_ctrl.release_all()
+            self._pipes_ctrl.silence()
         if self._deck_state() == 'playing':
             self._deck_ctrl.stop()
 
@@ -1267,10 +1270,10 @@ class MainWindow(QMainWindow):
             self._with_reason(self._t('setup_testtone_failed'), status))
         self._test_tone_status.setVisible(True)
 
-    def _stop_test_tone(self) -> None:
+    def _stop_test_tone(self, fade: bool = True) -> None:
         if self._test_tone_handle is not None:
             try:
-                self._engine.stop_test_tone(self._test_tone_handle)
+                self._engine.stop_test_tone(self._test_tone_handle, fade=fade)
             except Exception:
                 pass
         self._test_tone_handle = None
