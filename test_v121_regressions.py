@@ -786,7 +786,7 @@ def test_filter_mode_coercion(store, isolated_config, raw, expected):
 
 
 def test_filter_mode_values_match_engine_presets():
-    from intonation.audio.engine import FILTER_PRESETS
+    from intonation.core.detector import FILTER_PRESETS
     assert config.FILTER_MODE_VALUES == set(FILTER_PRESETS)
 
 

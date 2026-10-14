@@ -1,9 +1,8 @@
-"""Safety net for the two pure-math helpers in intonation.audio.engine:
+"""Safety net for the two pure-math helpers in intonation.core.pitch:
 ``freq_to_midi`` and ``cents_dev``.
 
-No PyQt6, no sounddevice — the module-level try/except in the engine
-means those optional imports fail silently, so these tests run in any
-venv that has numpy and pytest.
+No PyQt6, no sounddevice: the module is plain Python, so these tests run in
+any venv that has pytest.
 """
 from __future__ import annotations
 
@@ -11,7 +10,7 @@ import math
 
 import pytest
 
-from intonation.audio.engine import A4_DEFAULT, cents_dev, freq_to_midi
+from intonation.core.pitch import A4_DEFAULT, cents_dev, freq_to_midi
 
 # ---------------------------------------------------------------------------
 # Helpers

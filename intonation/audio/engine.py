@@ -75,14 +75,13 @@ import numpy as np
 from intonation.audio.control import ControlWorker
 from intonation.audio.mixer import Mixer, TestToneSource
 from intonation.core.coordination import OutputCoordinator
-from intonation.core.detector import (  # noqa: F401  (re-exported)
+from intonation.core.detector import (
     FILTER_MODE_DEFAULT,
     FILTER_PRESETS,
     Detector,
     NoteEvent,
 )
-from intonation.core.pitch import A4_DEFAULT, cents_dev, freq_to_midi  # noqa: F401  (re-exported)
-from intonation.core.yin import MAX_FREQ, MIN_FREQ, YIN_THRESHOLD, yin_pitch  # noqa: F401
+from intonation.core.pitch import A4_DEFAULT
 
 try:
     import sounddevice as sd
@@ -133,13 +132,10 @@ def format_rates(rates) -> str:
         return ''
     return ' / '.join(f'{int(r) / 1000:g}' for r in rates) + ' kHz'
 
-# MIN_FREQ / MAX_FREQ / YIN_THRESHOLD and yin_pitch (intonation.core.yin), and A4_DEFAULT,
-# freq_to_midi and cents_dev (intonation.core.pitch), are re-exported above: callers and
-# tests import them from the engine.
-
-# FILTER_PRESETS (the fast / normal / slow response modes) and
-# FILTER_MODE_DEFAULT live with the state machine they tune, in intonation.core.detector,
-# and are re-exported above.
+# The pitch maths (intonation.core.pitch), YIN and its frequency bounds
+# (intonation.core.yin) and the response modes FILTER_PRESETS /
+# FILTER_MODE_DEFAULT (intonation.core.detector, beside the state machine they
+# tune) are imported from those modules, not from the engine.
 
 # Where pitch detection runs. True: a dedicated analysis thread per open input
 # stream, so the PortAudio callback only copies samples. False: the callback

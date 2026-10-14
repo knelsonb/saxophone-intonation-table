@@ -184,7 +184,7 @@ def peak_near_hz(buf: np.ndarray, target: float, sr: int = DEFAULT_SR,
 
 def yin_hz(buf: np.ndarray, sr: int = DEFAULT_SR) -> tuple[float, float]:
     """(freq_hz, aperiodicity) from the engine's own yin_pitch."""
-    from intonation.audio.engine import yin_pitch
+    from intonation.core.yin import yin_pitch
     return yin_pitch(np.asarray(buf, dtype=np.float32), sr)
 
 

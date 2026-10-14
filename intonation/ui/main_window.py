@@ -39,7 +39,6 @@ from intonation.assets import asset_path
 from intonation.audio.engine import (
     AUDIO_OK,
     DEFAULT_SAMPLE_RATE,
-    FILTER_PRESETS,
     AudioEngine,
     DeviceInfo,
     DeviceSelection,
@@ -48,16 +47,7 @@ from intonation.audio.engine import (
 from intonation.audio.output_users import OutputUsers
 from intonation.catalog import instruments
 from intonation.catalog.instruments import register_custom, transp_map
-from intonation.core.pitch import (  # noqa: F401  (re-exported for older importers)
-    A4_DEFAULT,
-    CHROMA,
-    SAX_MIDI,
-    cents_dev,
-    format_cents,
-    freq_to_midi,
-    midi_note_name,
-    note_name_to_midi,
-)
+from intonation.core.detector import FILTER_PRESETS
 from intonation.core.session import RunTracker, SessionModel
 from intonation.export.controller import ExportController
 from intonation.i18n.translator import Translator
@@ -67,11 +57,8 @@ from intonation.persistence.paths import AppPaths
 from intonation.ui import theme
 from intonation.ui.controls import db_to_linear
 from intonation.ui.device_controller import DeviceController
-from intonation.ui.dialogs import (  # noqa: F401  (AudioPickerDialog, RangeEditorDialog,
-    AudioPickerDialog,  # _promote_vendor_prefix re-exported for older importers)
-    RangeEditorDialog,
+from intonation.ui.dialogs import (
     WelcomeDialog,
-    _promote_vendor_prefix,
     add_lang_toggle,
 )
 from intonation.ui.drone_bar import DroneBar
@@ -82,10 +69,9 @@ from intonation.ui.tabs.metro import MetroTab
 from intonation.ui.tabs.setup import SetupTab
 from intonation.ui.tabs.tuner import TunerTab
 from intonation.ui.toolbar import Toolbar
-from intonation.ui.widgets import (  # noqa: F401  (MatrixCellDelegate re-exported)
+from intonation.ui.widgets import (
     AudioRecoveryBanner,
     InfoBanner,
-    MatrixCellDelegate,
     StatusDot,
 )
 

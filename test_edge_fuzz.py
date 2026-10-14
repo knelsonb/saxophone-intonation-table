@@ -26,10 +26,11 @@ import numpy as np
 import pytest
 
 import sim_harness as H
-from intonation.audio.engine import AudioEngine, freq_to_midi
+from intonation.audio.engine import AudioEngine
 from intonation.audio.mixer import Mixer
 from intonation.audio.sources import deck as deck_module
 from intonation.audio.sources.deck import DeckController, DeckState, write_wav
+from intonation.core.pitch import freq_to_midi
 
 
 # ---------------------------------------------------------------------------

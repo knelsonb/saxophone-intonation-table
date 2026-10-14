@@ -15,7 +15,7 @@ import random
 
 import pytest
 
-from intonation.audio.engine import cents_dev
+from intonation.core.pitch import cents_dev
 from intonation.ui.instrument_controller import (
     A4_MAX_HZ,
     A4_MIN_HZ,

@@ -19,11 +19,8 @@ import math
 import numpy as np
 import pytest
 
-from intonation.audio.engine import (
-    DEFAULT_BLOCK_SIZE,
-    FILTER_PRESETS,
-    AudioEngine,
-)
+from intonation.audio.engine import DEFAULT_BLOCK_SIZE, AudioEngine
+from intonation.core.detector import FILTER_PRESETS
 
 _SR = 44100
 _N = DEFAULT_BLOCK_SIZE

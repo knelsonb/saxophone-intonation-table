@@ -30,13 +30,12 @@ from intonation.audio.engine import (
     AUDIO_OK,
     DEFAULT_BLOCK_SIZE,
     DEFAULT_SAMPLE_RATE,
-    FILTER_PRESETS,
-    MAX_FREQ,
-    MIN_FREQ,
     AudioEngineError,
     AudioEngineState,
 )
+from intonation.core.detector import FILTER_PRESETS
 from intonation.core.pitch import format_cents, midi_note_name
+from intonation.core.yin import MAX_FREQ, MIN_FREQ
 from intonation.ui import theme
 from intonation.ui.theme import IN_TUNE_CENTS, cents_band
 

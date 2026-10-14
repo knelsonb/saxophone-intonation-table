@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from PyQt6.QtWidgets import QComboBox
 
-from intonation.audio.engine import FILTER_MODE_DEFAULT, FILTER_PRESETS
+from intonation.core.detector import FILTER_MODE_DEFAULT, FILTER_PRESETS
 
 if TYPE_CHECKING:
     from intonation.i18n.translator import Translator

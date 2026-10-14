@@ -19,7 +19,7 @@ import numpy as np
 import pytest
 
 import sim_harness as H
-from intonation.audio.engine import FILTER_PRESETS
+from intonation.core.detector import FILTER_PRESETS
 
 # ── INPUT pipeline: detect_tone / feed_engine ──────────────────────────────
 
