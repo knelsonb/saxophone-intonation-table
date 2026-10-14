@@ -49,6 +49,7 @@ from intonation.catalog import instruments
 from intonation.catalog.instruments import register_custom, transp_map
 from intonation.core.detector import FILTER_PRESETS
 from intonation.core.session import RunTracker, SessionModel
+from intonation.core.stray_notes import StrayNotes
 from intonation.export.controller import ExportController
 from intonation.i18n.translator import Translator
 from intonation.persistence import config
@@ -77,12 +78,6 @@ from intonation.ui.widgets import (
 
 TAB_KEYS = ('tuner', 'metro', 'deck', 'setup')
 
-# Wrong-instrument hint: this many DIFFERENT notes, each actually measured and
-# each outside the selected instrument's extended range, suggest the player
-# picked the wrong instrument. Counting distinct notes (not readings) means one
-# long held note, a squeak or an altissimo run can never raise the hint alone.
-WRONG_INSTRUMENT_NOTES = 3
-
 # Hot-plug poll: cached device queries cost ~0 ms; only a re-init is
 # expensive, and the engine re-inits only when the device set changed.
 DEVICE_POLL_MS = 1000
@@ -102,10 +97,11 @@ class MainWindow(QMainWindow):
         # Readings since launch, for the diagnostics panel (the table counts
         # its own from the session's statistics).
         self._notes_count = 0
-        # Wrong-instrument detector: the distinct sounding notes measured
-        # outside the selected instrument's extended range. Picking another
-        # instrument starts over; the hint is shown once per selection.
-        self._oor_notes: set[int] = set()
+        # Wrong-instrument hint: the recent notes measured outside the
+        # selected instrument's extended range (intonation.core.stray_notes
+        # holds the rule). Picking another instrument starts over; the hint is
+        # shown once per selection.
+        self._strays = StrayNotes()
         self._oor_banner_shown = False
 
         # Every file the app keeps is resolved once, here, and handed to the
@@ -403,8 +399,9 @@ class MainWindow(QMainWindow):
             in_range = session.in_range(midi_kl)
         except Exception:
             in_range = True
-        if not in_range:
-            self._note_out_of_range(midi_kl)
+        # Every reading moves the strays' clock, in range or not.
+        if self._strays.add(midi_kl, in_range):
+            self._show_wrong_instrument_hint()
         # "Filter to range" keeps the table bounded to the instrument's range.
         if not self._cfg.allow_out_of_range and not in_range:
             return
@@ -418,13 +415,11 @@ class MainWindow(QMainWindow):
                                   cents=cents, freq_hz=freq)
         self._tuner_tab.show_reading(midi_kl, freq, cents)
 
-    def _note_out_of_range(self, midi_sounding: int) -> None:
-        """Count a measured note outside the range; at the threshold, ask
-        once whether the right instrument is selected and offer the range
-        editor, since a player whose range is simply wider needs that."""
-        self._oor_notes.add(midi_sounding)
-        if (self._oor_banner_shown
-                or len(self._oor_notes) < WRONG_INSTRUMENT_NOTES):
+    def _show_wrong_instrument_hint(self) -> None:
+        """Enough different strays: ask once whether the right instrument is
+        selected and offer the range editor, since a player whose range is
+        simply wider needs that."""
+        if self._oor_banner_shown:
             return
         self._oor_banner_shown = True
         instrument = self._session.instrument
@@ -436,7 +431,7 @@ class MainWindow(QMainWindow):
             action_callback=self._open_range_editor)
 
     def _reset_wrong_instrument_hint(self) -> None:
-        self._oor_notes.clear()
+        self._strays.clear()
         self._oor_banner_shown = False
 
     def _engine_sample_rate(self) -> int:
@@ -486,7 +481,7 @@ class MainWindow(QMainWindow):
         new range. The hint is not shown again for this instrument, but notes
         the new range now covers no longer count towards it."""
         session = self._session
-        self._oor_notes = {m for m in self._oor_notes if not session.in_range(m)}
+        self._strays.forget_where(session.in_range)
         session.seed_expected_notes()
         self._tuner_tab.refresh_table()
 
@@ -531,6 +526,9 @@ class MainWindow(QMainWindow):
             # Reset implies "I might be switching instruments": the next
             # export asks for maker and model again.
             self._export.forget_instrument_info()
+            # Strays from before the reset say nothing about what is played
+            # next. The hint stays shown-once for this selection.
+            self._strays.clear()
             self._tuner_tab.refresh_table()
 
     # ── Output ───────────────────────────────────────────────────────────────

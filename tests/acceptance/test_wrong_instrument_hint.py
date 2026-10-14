@@ -104,3 +104,96 @@ def test_edit_range_on_the_hint_opens_the_editor_for_the_selected_instrument(mak
     assert app.audio.notice is None
     app.play(Tone(note="C2", seconds=1.0))      # fingered A2
     assert app.table.row("C2", by="sounding").n >= 5
+
+
+# Sounding notes an alto reaches (fingered D5, E5, F#5, G#5, A#5, C6).
+ALTO_SCALE = ("F4", "G4", "A4", "B4", "C#5", "D#5")
+
+
+def test_strays_close_together_still_count_across_in_range_playing(make_app):
+    """Two bass notes, ten seconds on the alto, a third bass note: all three
+    came within one stretch of playing, so the hint appears."""
+    app = make_app(config=on("eb_alto"))
+    app.launch()
+    for note in BASS_LINE[:2]:
+        app.play(Tone(note=note, seconds=1.0))
+    app.play(Tone(note="A4", timbre="sax", seconds=10.0))
+    assert app.audio.notice is None
+
+    app.play(Tone(note=BASS_LINE[2], seconds=1.0))
+    assert app.audio.notice is not None
+
+
+def test_squeaks_spread_over_a_long_practice_raise_no_hint(make_app):
+    """A squeak above the alto's altissimo every half minute of scales is a
+    player on the right horn: each squeak is forgotten before the next."""
+    app = make_app(config=on("eb_alto"))
+    app.launch()
+    for squeak in ("A6", "A#6", "B6"):          # fingered F#7, G7, G#7
+        for note in ALTO_SCALE:
+            app.play(Tone(note=note, timbre="sax", seconds=5.0))
+        app.play(Tone(note=squeak, seconds=0.6))
+        assert app.table.row(squeak, by="sounding").n >= 3
+    assert app.audio.notice is None
+
+
+def test_a_blip_too_short_to_be_confirmed_does_not_count(make_app):
+    """In the default response mode the detector confirms a pitch after
+    roughly 0.2 s, so three different 0.1 s blips leave nothing to count. Held
+    for 0.4 s, the same three notes are measured and do count."""
+    app = make_app(config=on("eb_alto"))
+    app.launch()
+    for note in BASS_LINE[:3]:
+        app.play(Tone(note=note, seconds=0.1))
+    assert app.table.rows() == []
+    assert app.audio.notice is None
+
+    for note in BASS_LINE[:3]:
+        app.play(Tone(note=note, seconds=0.4))
+    assert app.audio.notice is not None
+
+
+def test_in_the_fast_response_mode_short_notes_count(make_app):
+    """The fast mode confirms a pitch after roughly 0.1 s, and a confirmed
+    note counts: the player chose speed over caution."""
+    app = make_app(config=on("eb_alto", filter_mode="fast"))
+    app.launch()
+    for note in BASS_LINE[:3]:
+        app.play(Tone(note=note, seconds=0.15))
+    assert app.audio.notice is not None
+
+
+def test_changing_a4_keeps_the_strays_heard_so_far(make_app):
+    """A new concert pitch changes neither the instrument nor its range."""
+    app = make_app(config=on("eb_alto"))
+    app.launch()
+    for note in BASS_LINE[:2]:
+        app.play(Tone(note=note, seconds=1.0))
+    app.set_a4(442)
+    app.play(Tone(note=BASS_LINE[2], seconds=1.0, a4=442.0))
+    assert app.audio.notice is not None
+
+
+def test_reset_forgets_the_strays_heard_so_far(make_app):
+    app = make_app(config=on("eb_alto"))
+    app.launch()
+    for note in BASS_LINE[:2]:
+        app.play(Tone(note=note, seconds=1.0))
+    app.table.reset()
+    app.play(Tone(note=BASS_LINE[2], seconds=1.0))
+    assert app.audio.notice is None
+
+
+def test_widening_the_range_from_setup_forgets_the_strays_it_now_covers(make_app):
+    """Two bass notes, then I lower the alto to fingered A2 in SETUP (before
+    any hint): those two are now in range. Two lower notes after that are
+    only the second and third strays heard, not the third and fourth."""
+    app = make_app(config=on("eb_alto"))
+    app.launch()
+    for note in BASS_LINE[:2]:                  # C2, D2: fingered A2, B2
+        app.play(Tone(note=note, seconds=1.0))
+    assert app.settings.edit_range("A2", "F#6")
+
+    for note in ("A1", "B1"):                   # fingered F#2, G#2
+        app.play(Tone(note=note, seconds=1.0))
+    assert app.audio.notice is None
