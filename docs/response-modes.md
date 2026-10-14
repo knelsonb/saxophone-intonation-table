@@ -107,7 +107,7 @@ The hop is about 46 ms at every sample rate:
 the engine scales the hop size in samples with the negotiated rate, so these
 times hold at 44.1, 48, 96 and 192 kHz alike. The actual numeric constants are
 `window`, `confirm`, `yin_thr`, `rms_floor`, and `edge_hops` in
-`FILTER_PRESETS` (see `sax_audio_engine.py`).
+`FILTER_PRESETS` (see `intonation/audio/engine.py`).
 
 ---
 

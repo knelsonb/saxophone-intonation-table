@@ -1,4 +1,4 @@
-"""Acceptance net for ``sax_mixer`` — the pull-based output mixer.
+"""Acceptance net for ``intonation.audio.mixer`` — the pull-based output mixer.
 
 This is the executable form of the mixer's design contract (sample-exact
 scheduling with zero drift budget) plus the no-allocation bar. The mixer imports only numpy —
@@ -32,9 +32,9 @@ import tracemalloc
 import numpy as np
 import pytest
 
-from sax_metronome import ClickSource
-from sax_mixer import GainGlide, Mixer, TestToneSource
-from sax_pitch_pipes import PitchPipeSource
+from intonation.audio.mixer import GainGlide, Mixer, TestToneSource
+from intonation.audio.sources.metronome import ClickSource
+from intonation.audio.sources.pitch_pipes import PitchPipeSource
 
 
 # ---------------------------------------------------------------------------
@@ -659,7 +659,7 @@ def test_render_has_no_frames_proportional_allocation(make_source):
     internal dtype cast (e.g. ``float64 -> float32 astype`` per block) still
     allocates a real data buffer this gate cannot see. That class of issue is
     caught by code review, not this test — see the note in the channel re:
-    TestToneSource.render's astype at sax_mixer.py ~404. This gate enforces
+    TestToneSource.render's astype at intonation/audio/mixer.py ~404. This gate enforces
     the detectable invariant; it does not certify literal zero malloc.
     """
     small_peak, _ = _measure_render_alloc(make_source(8192), frames=512,
@@ -727,7 +727,7 @@ def test_testtone_steady_state_allocation_is_bounded():
 # Glides an applied gain toward a coarsely-set target SAMPLE-BY-SAMPLE,
 # slew-limited, so a coarse per-hop duck step (1.0 -> 0.30 in ~2 frames) is
 # smoothed to a click-free ramp. Pure numpy — runs on every suite. (Lives in
-# sax_mixer; embedded by the drone source.)
+# intonation.audio.mixer; embedded by the drone source.)
 # ===========================================================================
 def _max_slew_step(samplerate, glide_ms):
     return 1.0 / max(1.0, samplerate * glide_ms / 1000.0)

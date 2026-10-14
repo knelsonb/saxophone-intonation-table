@@ -15,8 +15,8 @@ import random
 
 import pytest
 
-from sax_audio_engine import cents_dev
-from sax_instrument_controller import (
+from intonation.audio.engine import cents_dev
+from intonation.ui.instrument_controller import (
     A4_MAX_HZ,
     A4_MIN_HZ,
     AUTOTUNE_MIN_NOTES,
@@ -24,7 +24,7 @@ from sax_instrument_controller import (
     A4Suggestion,
     suggest_a4,
 )
-from sax_theme import CLOSE_CENTS, IN_TUNE_CENTS, cents_band
+from intonation.ui.theme import CLOSE_CENTS, IN_TUNE_CENTS, cents_band
 
 # ---------------------------------------------------------------------------
 # cents_band

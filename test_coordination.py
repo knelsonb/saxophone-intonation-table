@@ -1,4 +1,4 @@
-"""Acceptance net for the D3 mic-coordination POLICY (``sax_coordination``).
+"""Acceptance net for the D3 mic-coordination POLICY (``intonation.core.coordination``).
 
 The policy is the pure decision logic behind "keep the tuner readout LIVE
 while the drone sounds, suppress the leakage" (D3): vote-exclude the output's
@@ -29,10 +29,10 @@ import dataclasses
 
 import pytest
 
-import sax_coordination
+from intonation.core import coordination
 
-Decision = sax_coordination.Decision
-OutputCoordinator = sax_coordination.OutputCoordinator
+Decision = coordination.Decision
+OutputCoordinator = coordination.OutputCoordinator
 
 
 # ---------------------------------------------------------------------------

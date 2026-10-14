@@ -51,9 +51,8 @@ def main() -> int:
 
     from PyQt6.QtWidgets import QApplication
 
-    import sax_intonation_gui as G
-    import sax_theme as TH
-    from sax_dialogs import AudioPickerDialog, RangeEditorDialog
+    from intonation.ui import main_window as G, theme as TH
+    from intonation.ui.dialogs import AudioPickerDialog, RangeEditorDialog
 
     # The one modal we can't defuse via config (headless no-audio box).
     G.QMessageBox.information = staticmethod(lambda *a, **k: None)
@@ -83,7 +82,7 @@ def main() -> int:
             _grab(win, f"{theme}-{key}")
         # Modal dialogs — constructed (NOT exec'd, which would block) with args
         # derived from the live window, so they're screenshot-verifiable too.
-        import sax_instruments as _si
+        from intonation.catalog import instruments as _si
         key = win._session.instrument
         try:
             cur_lo, cur_hi = _si.fingered_range(key)

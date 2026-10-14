@@ -14,7 +14,8 @@ This file adds the checks that catch the failures a user would actually see:
 
 The call sites are found by parsing the application sources (AST), so a new
 ``_t('...')`` literal is checked without anyone editing this file. Besides
-``_t``, the scan reads the Translator's own entry points (sax_translator):
+``_t``, the scan reads the Translator's own entry points
+(intonation.i18n.translator):
 ``x.t(key)``, ``x.msg(key)``, ``x.bind(setter, key)``,
 ``x.bind_item(combo, index, key)``, ``x.bind_items(combo, [(key, data), ...])``
 and ``x.bind_tab(tabs, index, key, tip_key)``, each with the keyword
@@ -28,15 +29,15 @@ from pathlib import Path
 
 import pytest
 
-import sax_i18n
-import sax_instruments
-import sax_theme
-from sax_drone import DRONE_PRESETS, DRONE_SYNTH_VOICES
-from sax_intonation_log import MeasurementLog
+from intonation.audio.sources.drone import DRONE_PRESETS, DRONE_SYNTH_VOICES
+from intonation.catalog import instruments as catalog
+from intonation.i18n import strings as i18n
+from intonation.persistence.history import MeasurementLog
+from intonation.ui import theme
 
 REPO = Path(__file__).resolve().parents[2]
-DE = sax_i18n.STRINGS['de']
-EN = sax_i18n.STRINGS['en']
+DE = i18n.STRINGS['de']
+EN = i18n.STRINGS['en']
 LANGS = ('de', 'en')
 
 # Dynamic families the code builds with an f-string: (prefix, suffix).
@@ -84,7 +85,9 @@ IDENTICAL_DE_EN = {
 def _source_files() -> list[Path]:
     files = [p for p in REPO.glob('*.py')
              if not p.name.startswith('test_')
-             and p.name not in ('conftest.py', 'sim_harness.py', 'sax_i18n.py')]
+             and p.name not in ('conftest.py', 'sim_harness.py')]
+    files += [p for p in (REPO / 'intonation').rglob('*.py')
+              if p != REPO / 'intonation' / 'i18n' / 'strings.py']
     files += sorted((REPO / 'scripts').glob('*.py'))
     files += sorted((REPO / 'tools').glob('*.py'))
     return sorted(files)
@@ -247,7 +250,7 @@ def _dynamic_keys() -> set[str]:
     tabs = SCAN.tab_keys
     keys |= {f'nav_tab_{k}' for k in tabs} | {f'nav_tab_{k}_tip' for k in tabs}
     keys |= {f'csv_mode_{m}' for m in MeasurementLog.SLICE_MODES}
-    keys |= {f'theme_{t}' for t in sax_theme.THEME_ORDER}
+    keys |= {f'theme_{t}' for t in theme.THEME_ORDER}
     keys |= {k for k in EN if k.startswith('instr_long_')}
     keys |= {f'drone_voice_{vid}' for vid, _n, _p in DRONE_PRESETS + DRONE_SYNTH_VOICES}
     return keys
@@ -269,7 +272,7 @@ def test_placeholders_match_between_languages(key: str) -> None:
 
 @pytest.mark.parametrize('lang', LANGS)
 def test_every_string_is_valid_format_syntax(lang: str) -> None:
-    for key, text in sax_i18n.STRINGS[lang].items():
+    for key, text in i18n.STRINGS[lang].items():
         try:
             list(string.Formatter().parse(text))
         except ValueError as exc:
@@ -296,7 +299,7 @@ def _sample_arguments() -> dict[str, object]:
 @pytest.mark.parametrize('lang', LANGS)
 def test_every_string_formats_with_sample_arguments(lang: str) -> None:
     args = _sample_arguments()
-    for key, text in sax_i18n.STRINGS[lang].items():
+    for key, text in i18n.STRINGS[lang].items():
         fields = _fields(text)
         if not fields:
             continue
@@ -309,7 +312,7 @@ def test_every_string_formats_with_sample_arguments(lang: str) -> None:
 def test_strings_without_placeholders_have_no_doubled_braces(lang: str) -> None:
     """The window only formats a string when arguments are passed, so a doubled
     brace in a field-free string would be shown as typed."""
-    for key, text in sax_i18n.STRINGS[lang].items():
+    for key, text in i18n.STRINGS[lang].items():
         if not _fields(text):
             assert '{{' not in text and '}}' not in text, f'{lang}.{key}'
 
@@ -332,8 +335,8 @@ def test_scan_finds_the_call_sites(scan: SourceScan) -> None:
     the scan the new pattern instead."""
     reached = ({c[2] for c in scan.t_calls} | set(scan.carried) | _dynamic_keys())
     assert sorted(set(EN) - reached) == []
-    assert {'sax_intonation_gui.py', 'sax_export.py', 'sax_crash.py'} <= {
-        c[0] for c in scan.t_calls}
+    assert {'intonation/ui/main_window.py', 'intonation/export/controller.py',
+            'intonation/crash.py'} <= {c[0] for c in scan.t_calls}
     for key in ('deck_status_empty', 'range_mode_note_griff',
                 'data_device', 'welcome_title', 'deck_unavailable',
                 'metro_unavailable'):
@@ -351,7 +354,7 @@ def test_scan_finds_the_call_sites(scan: SourceScan) -> None:
 def test_every_key_the_code_asks_for_exists_in_both_languages(scan: SourceScan) -> None:
     asked = {c[2] for c in scan.t_calls} | set(scan.carried)
     for lang in LANGS:
-        missing = sorted(k for k in asked if k not in sax_i18n.STRINGS[lang])
+        missing = sorted(k for k in asked if k not in i18n.STRINGS[lang])
         assert not missing, f'{lang} lacks keys the code uses: {missing}'
 
 
@@ -385,7 +388,7 @@ def test_no_key_is_unused(scan: SourceScan) -> None:
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize('lang', LANGS)
 def test_nav_tab_family_is_complete(lang: str) -> None:
-    table = sax_i18n.STRINGS[lang]
+    table = i18n.STRINGS[lang]
     for tab in SCAN.tab_keys:
         assert table.get(f'nav_tab_{tab}', '').strip(), tab
         assert table.get(f'nav_tab_{tab}_tip', '').strip(), tab
@@ -397,7 +400,7 @@ def test_nav_tab_family_is_complete(lang: str) -> None:
 
 @pytest.mark.parametrize('lang', LANGS)
 def test_csv_mode_family_is_complete(lang: str) -> None:
-    table = sax_i18n.STRINGS[lang]
+    table = i18n.STRINGS[lang]
     for mode in MeasurementLog.SLICE_MODES:
         assert table.get(f'csv_mode_{mode}', '').strip(), mode
     # csv_mode_label is the combo caption and is excluded from the modes.
@@ -407,18 +410,18 @@ def test_csv_mode_family_is_complete(lang: str) -> None:
 
 @pytest.mark.parametrize('lang', LANGS)
 def test_theme_family_is_complete(lang: str) -> None:
-    table = sax_i18n.STRINGS[lang]
-    for name in sax_theme.THEME_ORDER:
+    table = i18n.STRINGS[lang]
+    for name in theme.THEME_ORDER:
         assert table.get(f'theme_{name}', '').strip(), name
     declared = {k for k in table if k.startswith('theme_')}
-    assert declared == {f'theme_{n}' for n in sax_theme.THEME_ORDER}
+    assert declared == {f'theme_{n}' for n in theme.THEME_ORDER}
 
 
 @pytest.mark.parametrize('lang', LANGS)
 def test_drone_voice_family_is_complete(lang: str) -> None:
     """Every drone preset and synth voice has a name; the full GM voices keep
     their standard General MIDI names and have none."""
-    table = sax_i18n.STRINGS[lang]
+    table = i18n.STRINGS[lang]
     named = {vid for vid, _n, _p in DRONE_PRESETS + DRONE_SYNTH_VOICES}
     for vid in named:
         assert table.get(f'drone_voice_{vid}', '').strip(), vid
@@ -431,14 +434,14 @@ def test_long_instrument_names_exist_for_catalog_keys(lang: str) -> None:
     """``instr_long_*`` is optional per instrument (the window falls back to the
     catalog name), so completeness here means: every entry names a real catalog
     instrument and carries real text with no placeholders."""
-    catalog = {k for (_fk, _de, _en, instruments) in sax_instruments._FAMILIES
-               for (k, _t, _d, _e) in instruments}
-    table = sax_i18n.STRINGS[lang]
+    known = {k for (_fk, _de, _en, instruments) in catalog._FAMILIES
+             for (k, _t, _d, _e) in instruments}
+    table = i18n.STRINGS[lang]
     long_keys = [k for k in table if k.startswith('instr_long_')]
     assert long_keys
     for key in long_keys:
         instrument = key[len('instr_long_'):]
-        assert instrument in catalog, f'{key} names no catalog instrument'
+        assert instrument in known, f'{key} names no catalog instrument'
         assert table[key].strip()
         assert not _fields(table[key])
     assert ({k for k in DE if k.startswith('instr_long_')}

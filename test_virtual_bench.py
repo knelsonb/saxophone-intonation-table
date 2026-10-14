@@ -16,10 +16,10 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import sax_pitch_pipes as pp
 import sim_harness as H
-from sax_metronome import MetronomeController, beat_onset_sample, beats_per_bar
-from sax_mixer import Mixer, TestToneSource
+from intonation.audio.mixer import Mixer, TestToneSource
+from intonation.audio.sources import pitch_pipes as pp
+from intonation.audio.sources.metronome import MetronomeController, beat_onset_sample, beats_per_bar
 
 PitchPipeSource = pp.PitchPipeSource
 
@@ -150,7 +150,7 @@ def test_input_detection_latency_bounded(f):
 @pytest.mark.parametrize("voice", ["organ", "cello", "tenorsax"])
 def test_drone_rendered_pitch_matches_reference(voice):
     pytest.importorskip("tinysoundfont", reason="drone synth is venv/CI only")
-    import sax_drone as D
+    from intonation.audio.sources import drone as D
     mixer = Mixer(max_block=2048)
     c = D.DroneController(mixer, SR, voice_id=voice, volume=0.7)
     c.set_enabled(True)                                    # one SF2 load per voice
@@ -171,7 +171,7 @@ def test_drone_rendered_pitch_matches_reference(voice):
 #    in test_deck.py::test_playback_resample_preserves_pitch.)
 # ---------------------------------------------------------------------------
 def test_deck_playback_duration_and_pitch():
-    from sax_deck import DeckPlaybackSource
+    from intonation.audio.sources.deck import DeckPlaybackSource
     n, f = 24000, 440.0                                    # 0.5 s take @ A4
     take = (np.sin(2 * np.pi * f * np.arange(n) / SR) * 0.5).astype(np.float32)
     src = DeckPlaybackSource(take, SR, SR, 2048)
@@ -233,7 +233,7 @@ def test_drone_organ_is_a_steady_reference():
     For sub-cent precision across the full range, the pure-sine test-tone /
     pitch-pipe are the references; the drone is a musical reference.)"""
     pytest.importorskip("tinysoundfont", reason="drone synth is venv/CI only")
-    import sax_drone as D
+    from intonation.audio.sources import drone as D
     mixer = Mixer(max_block=2048)
     c = D.DroneController(mixer, SR, voice_id="organ", volume=0.7)  # ref 69 = A4
     c.set_enabled(True)
@@ -421,7 +421,7 @@ def test_metronome_click_bleed_does_not_false_trigger_detection():
     # so "clicks don't emit" tests rejection, not just too-short a signal.
     total = H.DEFAULT_N * 24
     clicks = H.render_mixer(mixer, total, block=mb).astype(np.float32)
-    from sax_audio_engine import AudioEngine
+    from intonation.audio.engine import AudioEngine
     eng = AudioEngine()
     eng.set_filter_mode('normal')
     eng.set_a4(440.0)
@@ -444,7 +444,7 @@ def test_metronome_click_bleed_does_not_corrupt_player_pitch():
     player = H.sax_like(440.0, sr, total, 0.4)
     m = min(len(player), len(clicks))
     mix = (player[:m] + 0.4 * clicks[:m]).astype(np.float32)
-    from sax_audio_engine import AudioEngine
+    from intonation.audio.engine import AudioEngine
     eng = AudioEngine()
     eng.set_filter_mode('normal')
     eng.set_a4(440.0)
@@ -563,7 +563,7 @@ def test_pitch_pipe_output_honors_concert_pitch(a4):
 # ---------------------------------------------------------------------------
 # 16. The PURE-SINE drone — the drone's sub-cent PRECISION reference. The SF2
 #     voices (§6/§9) carry musical vibrato/chorus (organ steadiest, ~3c spread);
-#     this synthesised voice (sax_drone.SineDroneSource — pure numpy) is
+#     this synthesised voice (intonation.audio.sources.drone.SineDroneSource — pure numpy) is
 #     vibrato-free and exact, a tuning reference you can hold a note against.
 #     Unlike §6/§9 it needs NO SoundFont, so it is an ALWAYS-ON gate (system-
 #     python, no tsf importorskip) — the drone path's only always-runnable pitch
@@ -573,7 +573,7 @@ def test_pure_sine_drone_is_a_sub_cent_stability_reference():
     """The pure-sine drone holds A4 with no vibrato — spread far under the organ's
     <6c (§9) and centred sub-cent: the precision reference the sampled voices
     can't be."""
-    import sax_drone as D
+    from intonation.audio.sources import drone as D
     mixer = Mixer(max_block=2048)
     c = D.DroneController(mixer, SR, voice_id=D.SINE_VOICE_ID, volume=0.7)
     c.set_enabled(True)
@@ -592,7 +592,7 @@ def test_pure_sine_drone_pitch_is_exact_across_the_range(midi, name):
     exact (inc = 2*pi*f/sr); the residual is FFT bin resolution, widest at the
     lowest note (~46c/bin at 110 Hz, recovered to ~1c by parabolic interp), so the
     band is <2c — still 6x tighter than the rich-timbre SF2 gate (§6, <12c)."""
-    import sax_drone as D
+    from intonation.audio.sources import drone as D
     mixer = Mixer(max_block=2048)
     c = D.DroneController(mixer, SR, voice_id=D.SINE_VOICE_ID, volume=0.7)
     c.set_reference_midi(midi)
@@ -609,7 +609,7 @@ def test_pure_sine_drone_reference_follows_concert_pitch(a4):
     """A tuning reference must track the concert pitch: A4 on the pure-sine drone
     sounds at exactly the set a4 (baroque 415 / orchestral 442 / 443), not a
     hardcoded 440 (the SineDroneSource concert-pitch twin of §15)."""
-    import sax_drone as D
+    from intonation.audio.sources import drone as D
     mixer = Mixer(max_block=2048)
     c = D.DroneController(mixer, SR, voice_id=D.SINE_VOICE_ID, volume=0.7, a4=a4)
     c.set_enabled(True)                                  # ref midi 69 = A4

@@ -36,8 +36,8 @@ import tempfile
 def _isolate_config() -> str:
     """Point HOME at a fresh dir holding a welcome_shown=True config, so
     MainWindow never enters the first-launch dialog branch. Must run BEFORE
-    importing sax_config / sax_intonation_gui — CONFIG_DIR is resolved from
-    Path.home() at module import."""
+    importing intonation.persistence.config / intonation.ui.main_window —
+    CONFIG_DIR is resolved from Path.home() at module import."""
     home = tempfile.mkdtemp(prefix="sax-gui-smoke-")
     os.environ["HOME"] = home
     os.environ["USERPROFILE"] = home  # Windows runners
@@ -58,8 +58,8 @@ def main() -> int:
 
     from PyQt6.QtWidgets import QApplication
 
-    import sax_audio_engine as E
-    import sax_intonation_gui as G
+    from intonation.audio import engine as E
+    from intonation.ui import main_window as G
 
     # Device commands run inline, so every check below sees the outcome of
     # the click it made at once (no audio-control thread to wait for).
@@ -314,7 +314,7 @@ def main() -> int:
     app.processEvents()
     start_bpm = win._metro_tab.bpm
     win._metro_tab.nudge(5)
-    import sax_tab_metro as _metro
+    from intonation.ui.tabs import metro as _metro
     _mt = win._metro_tab
     check(_mt.bpm == start_bpm + 5 and _mt._slider.value() == _mt.bpm,
           f"BPM nudge/slider out of sync: {_mt.bpm} / {_mt._slider.value()}")
@@ -384,7 +384,7 @@ def main() -> int:
     # never ducks on mic bleed in the live app. The unit/e2e tests attach the
     # consumer manually (engine.coordination_step), so ONLY a GUI-path check
     # catches a controller built without engine=. Skip gracefully if the drone
-    # controller didn't construct (no sax_drone in this env).
+    # controller didn't construct (no intonation.audio.sources.drone in this env).
     if win._drone_bar.controller is not None and hasattr(win._engine, "attach_duck_consumer"):
         attached = []
         _real_attach = win._engine.attach_duck_consumer
@@ -459,18 +459,18 @@ def main() -> int:
     check(not win._deck_pulse_timer.isActive(),
           "deck pulse timer running despite no armed take (false recording)")
 
-    # DECK live-wiring lock: with sax_deck present, prove the GUI
+    # DECK live-wiring lock: with intonation.audio.sources.deck present, prove the GUI
     # transport actually DRIVES the controller and the pulsing-red dot follows
     # controller state — the deck analog of the drone duck-attach lock (a wiring
     # bug a pure unit test can't see, because the unit tests call the controller
     # directly and bypass the button → handler → controller path). We build a
     # controller on a FAKE input engine + the REAL mixer, swap it in, and drive
     # the real buttons. Faking the engine's input methods keeps this independent
-    # of real audio hardware. Skips if sax_deck absent.
+    # of real audio hardware. Skips if intonation.audio.sources.deck absent.
     if win._deck_tab._ctrl is not None:
         import numpy as _np
 
-        import sax_deck as _sd
+        from intonation.audio.sources import deck as _sd
 
         class _FakeInputEngine:
             """Minimal engine the DeckController needs: an armable mic input and
@@ -542,7 +542,7 @@ def main() -> int:
     # The SETUP picker exists and _apply_theme switches the palette + re-renders
     # the global stylesheet live without raising. Drives the real handler path
     # (mirrors the drone duck-attach lock), not a stub.
-    import sax_theme as _TH
+    from intonation.ui import theme as _TH
     check(hasattr(win._setup_tab, "_theme_combo"),
           "SETUP theme picker (_theme_combo) missing")
     check(win._setup_tab._theme_combo.count() == len(_TH.THEME_ORDER),

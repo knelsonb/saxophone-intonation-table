@@ -19,7 +19,7 @@ import numpy as np
 import pytest
 
 import sim_harness as H
-from sax_audio_engine import FILTER_PRESETS
+from intonation.audio.engine import FILTER_PRESETS
 
 # ── INPUT pipeline: detect_tone / feed_engine ──────────────────────────────
 
@@ -51,7 +51,7 @@ def test_detection_honours_a4_reference():
 
 
 def test_silence_emits_nothing():
-    from sax_audio_engine import AudioEngine
+    from intonation.audio.engine import AudioEngine
     eng = AudioEngine()
     res = H.feed_engine(eng, H.silence(H.DEFAULT_N * 12))
     assert not res.emitted
@@ -97,7 +97,7 @@ def test_feed_engine_result_surface():
 # ── OUTPUT path: render_mixer ──────────────────────────────────────────────
 
 def test_render_mixer_test_tone_pitch():
-    from sax_mixer import Mixer, TestToneSource
+    from intonation.audio.mixer import Mixer, TestToneSource
     sr, block = H.DEFAULT_SR, 2048
     mix = Mixer(max_block=block)
     mix.register(TestToneSource(440.0, sr, block, gain=0.3))
@@ -107,7 +107,7 @@ def test_render_mixer_test_tone_pitch():
 
 
 def test_render_mixer_empty_is_silence():
-    from sax_mixer import Mixer
+    from intonation.audio.mixer import Mixer
     mix = Mixer(max_block=1024)
     out = H.render_mixer(mix, total=4096, block=1024)
     assert out.size == 4096
@@ -116,7 +116,7 @@ def test_render_mixer_empty_is_silence():
 
 def test_render_mixer_sums_two_sources():
     # Two tones mixed → both spectral peaks present (real summing path).
-    from sax_mixer import Mixer, TestToneSource
+    from intonation.audio.mixer import Mixer, TestToneSource
     sr, block = H.DEFAULT_SR, 2048
     mix = Mixer(max_block=block)
     mix.register(TestToneSource(440.0, sr, block, gain=0.25))

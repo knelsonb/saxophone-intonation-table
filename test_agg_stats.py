@@ -1,5 +1,5 @@
 """
-Safety-net tests for ``_agg_stats`` in ``sax_intonation_log``.
+Safety-net tests for ``_agg_stats`` in ``intonation.persistence.history``.
 
 ``_agg_stats`` is the single aggregation primitive called by every CSV export
 slice mode (per_run_note, per_instrument_note, per_nickname_note,
@@ -33,7 +33,7 @@ import math
 
 import pytest
 
-from sax_intonation_log import _agg_stats
+from intonation.persistence.history import _agg_stats
 
 # ---------------------------------------------------------------------------
 # Helpers

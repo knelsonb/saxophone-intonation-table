@@ -1,4 +1,4 @@
-"""Acceptance net for ``sax_metronome`` — the metronome.
+"""Acceptance net for ``intonation.audio.sources.metronome`` — the metronome.
 
 Covers the acceptance items against the four pure test seams:
   * beat-index -> sample-offset math, incl. the integer-round-ONCE drift proof
@@ -16,7 +16,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from sax_metronome import (
+from intonation.audio.mixer import Mixer
+from intonation.audio.sources.metronome import (
     BPM_MAX,
     BPM_MIN,
     ClickSource,
@@ -27,7 +28,6 @@ from sax_metronome import (
     clamp_bpm,
     clamp_volume,
 )
-from sax_mixer import Mixer
 
 
 # ===========================================================================

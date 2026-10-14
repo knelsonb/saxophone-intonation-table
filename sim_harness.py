@@ -184,7 +184,7 @@ def peak_near_hz(buf: np.ndarray, target: float, sr: int = DEFAULT_SR,
 
 def yin_hz(buf: np.ndarray, sr: int = DEFAULT_SR) -> tuple[float, float]:
     """(freq_hz, aperiodicity) from the engine's own yin_pitch."""
-    from sax_audio_engine import yin_pitch
+    from intonation.audio.engine import yin_pitch
     return yin_pitch(np.asarray(buf, dtype=np.float32), sr)
 
 
@@ -421,7 +421,7 @@ def detect_tone(freq, *, kind='sax', mode='normal', a4=440.0, mic_gain=1.0,
            twice the fundamental), or 'noisy' (sine + noise at snr_db).
     mode : engine response preset ('fast' / 'normal' / 'slow').
     """
-    from sax_audio_engine import AudioEngine
+    from intonation.audio.engine import AudioEngine
     eng = AudioEngine()
     eng.samplerate = int(sr)        # the detection hop reads self.samplerate; the
                                     # tone is generated at `sr`, so the engine MUST
@@ -452,7 +452,7 @@ def detection_latency_hops(freq: float, *, kind: str = 'sax', sr: int = DEFAULT_
     note for a steady `freq` tone (or None within `max_hops`). The input-timing
     twin of onset_samples() for outputs: the confirm/lock machinery is
     deliberately not instant, so this bounds how PROMPT detection is."""
-    from sax_audio_engine import AudioEngine
+    from intonation.audio.engine import AudioEngine
     eng = AudioEngine()
     eng.samplerate = int(sr)        # detect at the same rate the tone is made at
     eng.set_filter_mode(mode)
@@ -482,8 +482,8 @@ def detect_with_sounding_output(mic_freq, sounding_midis, *, kind='sax',
     has to make ``mixer.sounding_midis()`` report the note — no soundfont / tsf
     needed. Pass ``sounding_midis=()`` for the negative control (nothing
     sounding -> normal lock). Returns a DetectionResult (target_hz = mic_freq)."""
-    from sax_audio_engine import AudioEngine
-    from sax_mixer import TestToneSource
+    from intonation.audio.engine import AudioEngine
+    from intonation.audio.mixer import TestToneSource
     eng = AudioEngine()
     eng.set_filter_mode('normal')
     eng.set_a4(a4)
@@ -499,7 +499,7 @@ def detect_with_sounding_output(mic_freq, sounding_midis, *, kind='sax',
 
 
 if __name__ == '__main__':  # quick self-check / demo
-    import sax_audio_engine as eng  # noqa
+    from intonation.audio import engine as eng  # noqa
     print("— bare yin_pitch (single window) —")
     for f in (110.0, 440.0, 880.0, 1760.0):
         buf = sax_like(f)

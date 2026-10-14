@@ -3,7 +3,7 @@
 The packaging RISK is whether a PyInstaller onefile bundles, and at runtime
 loads, BOTH the compiled tinysoundfont extension AND the 32 MB SoundFont, and
 finds the SF2 via the sys._MEIPASS-aware path. This script exercises exactly
-that chain — import tinysoundfont, resolve the SF2 with sax_assets.asset_path,
+that chain — import tinysoundfont, resolve the SF2 with intonation.assets.asset_path,
 load it, select a GM program, synthesize a note, assert non-silent — and exits
 0 on success / 1 on failure. Built as a tiny console onefile with the SAME
 bundling the real spec uses (collect tinysoundfont binaries + SF2 datas), it is
@@ -16,7 +16,7 @@ import sys
 def main() -> int:
     import numpy as np
 
-    from sax_assets import asset_path, base_dir
+    from intonation.assets import asset_path, base_dir
     frozen = getattr(sys, 'frozen', False)
     print(f"frozen={frozen} base_dir={base_dir()}")
     try:

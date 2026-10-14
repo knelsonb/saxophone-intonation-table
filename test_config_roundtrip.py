@@ -1,9 +1,9 @@
-"""Round-trip + tolerant-coercion tests for ``sax_config``.
+"""Round-trip + tolerant-coercion tests for ``intonation.persistence.config``.
 
 This file exercises ``ConfigStore.save`` → ``ConfigStore.load`` and the
 ``_as_*`` coercers directly, because every field is read back from
 a user-editable ``~/.intonation_analyzer/config.json`` that can be stale,
-partial, or corrupt.  The governing contract (sax_config.py module
+partial, or corrupt.  The governing contract (intonation/persistence/config.py module
 docstring) is *a corrupt or missing field falls back to its default,
 never crashes the GUI on startup* — these tests lock exactly that.
 
@@ -22,9 +22,9 @@ from dataclasses import asdict
 
 import pytest
 
-import sax_config
-from sax_config import AppConfig
-from sax_paths import AppPaths
+from intonation.persistence import config
+from intonation.persistence.config import AppConfig
+from intonation.persistence.paths import AppPaths
 
 
 # ---------------------------------------------------------------------------
@@ -33,7 +33,7 @@ from sax_paths import AppPaths
 # ---------------------------------------------------------------------------
 @pytest.fixture()
 def store(tmp_path):
-    return sax_config.ConfigStore(AppPaths(tmp_path / ".intonation_analyzer"))
+    return config.ConfigStore(AppPaths(tmp_path / ".intonation_analyzer"))
 
 
 @pytest.fixture()
@@ -268,8 +268,8 @@ def test_last_active_tab_coercion(store, isolated_config, raw, expected):
 def test_last_active_tab_values_match_allowlist():
     """The coercer's allowlist must equal the exported TAB_VALUES set so
     the nav shell and the coercer can never drift apart."""
-    for tab in sax_config.TAB_VALUES:
-        assert sax_config._as_active_tab(tab) == tab, (
+    for tab in config.TAB_VALUES:
+        assert config._as_active_tab(tab) == tab, (
             f"TAB_VALUES member {tab!r} not accepted by _as_active_tab")
 
 
@@ -332,7 +332,7 @@ def test_mic_gain_db_clamped_to_range(store, isolated_config, raw, expected):
 
 
 # ---------------------------------------------------------------------------
-# v0.11.0 theme field -- coerced via sax_theme.coerce_theme_name.
+# v0.11.0 theme field -- coerced via intonation.ui.theme.coerce_theme_name.
 # ---------------------------------------------------------------------------
 def test_theme_roundtrip(store):
     for name in ("dark", "night", "light"):
@@ -406,16 +406,16 @@ def test_click_volume_rejects_non_finite():
     the audio path as a non-finite gain. JSON can't encode inf/nan natively,
     so feed them via the coercer directly (the path a hand-edited or
     programmatically-built dict could take)."""
-    assert sax_config._as_float(float("nan"), 1.0) == 1.0
-    assert sax_config._as_float(float("inf"), 1.0) == 1.0
-    assert sax_config._as_float(float("-inf"), 1.0) == 1.0
+    assert config._as_float(float("nan"), 1.0) == 1.0
+    assert config._as_float(float("inf"), 1.0) == 1.0
+    assert config._as_float(float("-inf"), 1.0) == 1.0
 
 
 def test_time_sig_values_match_allowlist():
     """The coercer must accept every exported TIME_SIG_VALUES member, so the
     GUI selector and the coercer can't drift apart."""
-    for sig in sax_config.TIME_SIG_VALUES:
-        assert sax_config._as_time_sig(sig) == sig, (
+    for sig in config.TIME_SIG_VALUES:
+        assert config._as_time_sig(sig) == sig, (
             f"TIME_SIG_VALUES member {sig!r} not accepted by _as_time_sig")
 
 
@@ -492,13 +492,13 @@ def test_deck_path_fields_coerce_to_str(store, isolated_config, field_name, raw,
 def test_as_int_degrades_on_non_finite(bad):
     # int(float('inf')) raises OverflowError; int(nan) raises ValueError. Both
     # must be caught and fall back to the default, not propagate up the load.
-    assert sax_config._as_int(bad, 7) == 7
+    assert config._as_int(bad, 7) == 7
 
 
 @pytest.mark.parametrize("bad", [float("inf"), float("-inf"), float("nan")],
                          ids=["inf", "-inf", "nan"])
 def test_as_int_list_degrades_on_non_finite(bad):
-    assert sax_config._as_int_list([10, bad, 30]) == []
+    assert config._as_int_list([10, bad, 30]) == []
 
 
 def test_load_config_with_infinity_tokens_returns_defaults(store, isolated_config):
@@ -518,14 +518,14 @@ def test_load_config_with_infinity_tokens_returns_defaults(store, isolated_confi
 def test_atomic_write_rejects_non_finite_payload(tmp_path):
     """allow_nan=False: a non-finite slipping into a payload fails the write
     safely (returns False, leaves no file) rather than persisting garbage."""
-    from sax_atomic import atomic_write_json
+    from intonation.persistence.atomic import atomic_write_json
     path = tmp_path / "x.json"
     assert atomic_write_json(path, {"v": float("inf")}) is False
     assert not path.exists(), "no garbage file may be left behind"
 
 
 def test_atomic_write_accepts_finite_payload(tmp_path):
-    from sax_atomic import atomic_write_json
+    from intonation.persistence.atomic import atomic_write_json
     path = tmp_path / "x.json"
     assert atomic_write_json(path, {"v": 1.5, "n": 3}) is True
     assert path.exists()

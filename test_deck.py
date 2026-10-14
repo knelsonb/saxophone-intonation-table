@@ -1,7 +1,7 @@
-"""Acceptance net for ``sax_deck`` (the tape deck).
+"""Acceptance net for ``intonation.audio.sources.deck`` (the tape deck).
 
-Tiers (all run on system-python — sax_deck is numpy + stdlib ``wave``
-+ sax_mixer, no PyQt6 / sounddevice / tinysoundfont):
+Tiers (all run on system-python — intonation.audio.sources.deck is numpy + stdlib ``wave``
++ intonation.audio.mixer, no PyQt6 / sounddevice / tinysoundfont):
 
   * WAV tier — the pure module-level ``write_wav`` / ``read_wav`` (stdlib wave,
     float32<->int16): header correctness + roundtrip within int16 quantization
@@ -23,10 +23,10 @@ import wave
 import numpy as np
 import pytest
 
-import sax_deck
-from sax_mixer import Mixer
+from intonation.audio.mixer import Mixer
+from intonation.audio.sources import deck
 
-# int16 PCM scale sax_deck encodes/decodes with (symmetric: +1.0<->+32767).
+# int16 PCM scale intonation.audio.sources.deck encodes/decodes with (symmetric: +1.0<->+32767).
 # One LSB is 1/32767; round-trip error is bounded by half an LSB.
 _PCM_LSB = 1.0 / 32767.0
 
@@ -40,7 +40,7 @@ def test_write_wav_header_is_mono_16bit_pcm(tmp_path):
     sr = 44100
     samples = (np.sin(2 * np.pi * 440 * np.arange(sr) / sr) * 0.5).astype(np.float32)
     p = tmp_path / "take.wav"
-    sax_deck.write_wav(str(p), samples, sr)
+    deck.write_wav(str(p), samples, sr)
     assert p.exists(), "write_wav must create the file"
     with wave.open(str(p), "rb") as w:
         assert w.getnchannels() == 1, "mic take is mono"
@@ -56,8 +56,8 @@ def test_wav_roundtrip_within_int16_quantization(tmp_path):
     sr = 48000
     samples = (np.sin(2 * np.pi * 220 * np.arange(2400) / sr) * 0.8).astype(np.float32)
     p = tmp_path / "rt.wav"
-    sax_deck.write_wav(str(p), samples, sr)
-    back, got_sr = sax_deck.read_wav(str(p))
+    deck.write_wav(str(p), samples, sr)
+    back, got_sr = deck.read_wav(str(p))
     assert got_sr == sr, "read_wav must report the stored samplerate"
     assert back.dtype == np.float32, "read_wav returns float32"
     assert len(back) == len(samples), "no samples lost in the roundtrip"
@@ -71,8 +71,8 @@ def test_wav_clips_out_of_range_samples(tmp_path):
     sr = 44100
     samples = np.array([2.0, -2.0, 1.5, 0.0, -1.0], dtype=np.float32)
     p = tmp_path / "clip.wav"
-    sax_deck.write_wav(str(p), samples, sr)
-    back, _ = sax_deck.read_wav(str(p))
+    deck.write_wav(str(p), samples, sr)
+    back, _ = deck.read_wav(str(p))
     # Clipping must be SIGN-PRESERVING (never wrap a loud peak to the opposite
     # rail). int16 is asymmetric ([-32768, 32767]); read_wav scales by 32767,
     # so a clipped -1.0 full-scale decodes to -32768/32767 ≈ -1.00003 — allow
@@ -93,8 +93,8 @@ def test_read_wav_recovers_written_samplerate(tmp_path):
     for sr in (44100, 48000, 96000):
         samples = (np.cos(np.arange(500) / 7.0) * 0.3).astype(np.float32)
         p = tmp_path / f"sr_{sr}.wav"
-        sax_deck.write_wav(str(p), samples, sr)
-        _, got = sax_deck.read_wav(str(p))
+        deck.write_wav(str(p), samples, sr)
+        _, got = deck.read_wav(str(p))
         assert got == sr, f"samplerate {sr} must round-trip, got {got}"
 
 
@@ -135,14 +135,14 @@ class _FakeEngine:
 
 
 def _deck(engine, **kw):
-    return sax_deck.DeckController(Mixer(max_block=2048), 48000, engine=engine, **kw)
+    return deck.DeckController(Mixer(max_block=2048), 48000, engine=engine, **kw)
 
 
 def _deck_and_mixer(engine, **kw):
     """Like _deck but also hand back the Mixer, so playback tests can render
     and inspect what the registered DeckPlaybackSource actually produces."""
     m = Mixer(max_block=2048)
-    return sax_deck.DeckController(m, 48000, engine=engine, **kw), m
+    return deck.DeckController(m, 48000, engine=engine, **kw), m
 
 
 def test_starts_idle():
@@ -274,7 +274,7 @@ def test_playback_source_active_midi_is_none():
     """Recorded audio is not a tuned pitch — active_midi MUST be None so the
     deck stays invisible to Mixer.sounding_midis()/the D3 coordinator (never
     vote-excluded, never ducked)."""
-    src = sax_deck.DeckPlaybackSource(
+    src = deck.DeckPlaybackSource(
         np.ones(100, dtype=np.float32) * 0.5, 48000, 48000, 2048)
     assert src.active_midi is None
 
@@ -289,10 +289,10 @@ def test_playback_source_direct_path_body_is_faithful_with_edge_fades():
     # cos so the edges are NON-zero (cos(0)=1): proves the fade actually
     # attenuates them, not that the signal was already ~0 there.
     take = (np.cos(2 * np.pi * np.arange(n) / 64.0) * 0.7).astype(np.float32)
-    src = sax_deck.DeckPlaybackSource(take, sr, sr, 8192)
+    src = deck.DeckPlaybackSource(take, sr, sr, 8192)
     out = np.zeros(n, dtype=np.float32)
     src.render(out, n, 0)
-    fade = int(round(sax_deck.EDGE_FADE_MS / 1000.0 * sr))  # 240 samples
+    fade = int(round(deck.EDGE_FADE_MS / 1000.0 * sr))  # 240 samples
     # Body (between the two ramps) is a bit-faithful copy.
     assert np.allclose(out[fade:n - fade], take[fade:n - fade], atol=1e-6), \
         "playback body is a faithful copy"
@@ -305,7 +305,7 @@ def test_playback_source_direct_path_body_is_faithful_with_edge_fades():
 
 def test_playback_source_renders_audio_then_finishes():
     take = (np.sin(np.arange(500) / 5.0) * 0.4).astype(np.float32)
-    src = sax_deck.DeckPlaybackSource(take, 48000, 48000, 2048)
+    src = deck.DeckPlaybackSource(take, 48000, 48000, 2048)
     assert src.finished is False
     out = np.zeros(2048, dtype=np.float32)
     src.render(out, 2048, 0)
@@ -314,7 +314,7 @@ def test_playback_source_renders_audio_then_finishes():
 
 
 def test_playback_source_empty_take_is_immediately_finished():
-    src = sax_deck.DeckPlaybackSource(np.zeros(0, dtype=np.float32), 48000, 48000, 2048)
+    src = deck.DeckPlaybackSource(np.zeros(0, dtype=np.float32), 48000, 48000, 2048)
     assert src.finished is True, "a zero-length take has nothing to play"
 
 
@@ -325,7 +325,7 @@ def test_playback_source_resamples_when_rates_differ():
     an exact sample count, so the interpolation implementation stays free to change."""
     n = 1000
     take = (np.sin(2 * np.pi * np.arange(n) / 50.0) * 0.5).astype(np.float32)
-    src = sax_deck.DeckPlaybackSource(take, 48000, 24000, 4096)
+    src = deck.DeckPlaybackSource(take, 48000, 24000, 4096)
     out = np.zeros(4096, dtype=np.float32)
     src.render(out, 4096, 0)
     assert np.max(np.abs(out)) > 1e-3, "downsampled playback is still audible"
@@ -346,7 +346,7 @@ def test_playback_resample_preserves_pitch(cap, out_sr):
     import sim_harness as H
     F = 440.0
     take = H.sine(F, cap, cap, amp=0.6)                       # 1 s of 440 Hz @ cap
-    src = sax_deck.DeckPlaybackSource(take, cap, out_sr, 2048, gain=1.0)
+    src = deck.DeckPlaybackSource(take, cap, out_sr, 2048, gain=1.0)
     buf = H.render_stream(src, out_sr // 2, block=2048, warmup=2)  # 0.5 s, within take
     err = H.cents(H.fft_peak_hz(buf, out_sr), F)
     assert abs(err) < 5.0, (
@@ -362,7 +362,7 @@ def test_playback_source_render_is_non_scaling_alloc():
     n = 400_000
     take = (np.sin(np.arange(n) / 11.0) * 0.3).astype(np.float32)
     # Rate mismatch -> exercise the allocation-prone resample path.
-    src = sax_deck.DeckPlaybackSource(take, 48000, 44100, 4096)
+    src = deck.DeckPlaybackSource(take, 48000, 44100, 4096)
     out = np.zeros(4096, dtype=np.float32)
     src.render(out, 1024, 0)  # warm up (lazy view-boxing on first call)
     tracemalloc.start()
@@ -521,7 +521,7 @@ def test_export_writes_valid_loadable_wav(tmp_path):
     # Opens with stdlib wave (i.e. externally) + round-trips within int16 quant.
     with wave.open(str(p), "rb") as w:
         assert w.getnchannels() == 1 and w.getsampwidth() == 2 and w.getframerate() == 48000
-    back, sr = sax_deck.read_wav(str(p))
+    back, sr = deck.read_wav(str(p))
     assert sr == 48000
     assert len(back) == len(take)
     assert np.max(np.abs(back - take)) <= _PCM_LSB + 1e-6, (
@@ -540,7 +540,7 @@ def test_load_take_restores_have_take(tmp_path):
     recovered within int16 quant."""
     take = (np.cos(np.arange(800) / 9.0) * 0.5).astype(np.float32)
     p = tmp_path / "saved.wav"
-    sax_deck.write_wav(str(p), take, 44100)
+    deck.write_wav(str(p), take, 44100)
     d = _deck(_FakeEngine(input_open=True))
     assert d.load_take(str(p)) is True
     assert d.state == "have-take"
@@ -570,7 +570,7 @@ def test_resample_last_sample_boundary_uses_take_end_not_penultimate():
     take = np.array([0.1, 0.2, 0.3, 0.4], dtype=np.float32)
     # 50 Hz capture -> 100 Hz output: ratio 0.5, positions hit 3.0 (=_n-1) exactly;
     # 5 ms * 50 = 0.25 samples -> round -> 0 -> no edge fade.
-    src = sax_deck.DeckPlaybackSource(take, 50, 100, 64)
+    src = deck.DeckPlaybackSource(take, 50, 100, 64)
     assert src._fade == 0, "test needs the edge fade disabled to observe the boundary"
     out = np.zeros(64, dtype=np.float32)
     src.render(out, 64, 0)

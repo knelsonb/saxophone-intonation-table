@@ -6,29 +6,35 @@ back. This module turns that vocabulary into the app's real user paths today:
 clicking its buttons, picking from its combo boxes, answering its dialogs.
 
 When the app is restructured (tabs split out of the main window, the audio engine
-split into input / output / service modules, ``sax_*`` moved into a package) this
-is the one file that changes. Each method says which internals it relies on, so
-the list below is the contract the rewrite must keep or update here:
+split into input / output / service modules, modules moved within the
+``intonation`` package) this is the one file that changes. Each method says
+which internals it relies on, so the list below is the contract the rewrite
+must keep or update here:
 
   Entry point / process
-    * module ``sax_intonation_gui`` with class ``MainWindow()`` (no arguments);
-      importing a fresh copy of every ``sax_*`` module per app (see ``_load``);
+    * module ``intonation.ui.main_window`` with class ``MainWindow()`` (no
+      arguments); a fresh copy of the ``intonation`` package and every module
+      in it is imported per app (see ``_load_modules``), and the pre-2.0
+      ``sax_*`` names (``legacy_names.LEGACY_MODULES``) are pointed at
+      that copy while the app runs;
     * the app imports ``sounddevice`` as ``sd`` inside the audio engine; the
       fake module is installed in ``sys.modules`` before that import;
-    * ``sax_audio_engine.HOST_API_OPEN_TIMEOUT_S`` (the open timeout, patched
-      to FakeAudioHost.OPEN_TIMEOUT_S so a hung device costs a quarter second);
-    * ``sax_audio_engine.ANALYSIS_IN_THREAD`` (patched to False: pitch
+    * ``intonation.audio.engine.HOST_API_OPEN_TIMEOUT_S`` (the open timeout,
+      patched to FakeAudioHost.OPEN_TIMEOUT_S so a hung device costs a quarter
+      second);
+    * ``intonation.audio.engine.ANALYSIS_IN_THREAD`` (patched to False: pitch
       detection runs inline in the input callback the fake host pumps, so
       every reading reaches the window before ``pump_input`` returns, in the
       order played; with the real analysis thread, readings would arrive
       whenever that thread and the Qt event loop got to them);
-    * ``sax_audio_engine.CONTROL_IN_THREAD`` (patched to False: device
+    * ``intonation.audio.engine.CONTROL_IN_THREAD`` (patched to False: device
       commands — open, close, retry, the hot-plug poll — run inline where the
       window requests them, so a click that opens a device has opened it, and
       the window has handled the outcome, when the click returns; the real
       audio-control thread is covered by tests/contracts/test_audio_control.py);
     * data directory ``~/.intonation_analyzer`` (resolved from HOME when the
-      window is built, ``sax_paths.AppPaths.from_environment``) holding
+      window is built, ``intonation.persistence.paths.AppPaths
+      .from_environment``) holding
       ``config.json``, ``custom_instruments.json``, ``instrument_ranges.json``,
       ``log.jsonl`` (this month's history; earlier months beside it as
       ``log-YYYY-MM.jsonl``); ``MeasurementLog.path`` is the live history file.
@@ -37,41 +43,43 @@ the list below is the contract the rewrite must keep or update here:
       TUNER tab's ``_refresh_timer``, the DECK tab's ``_pump_timer`` and the
       tuner widget's are virtualised: ticked from the harness clock instead
       of real time.
-  Toolbar (``_toolbar``, sax_toolbar.Toolbar)
+  Toolbar (``_toolbar``, intonation.ui.toolbar.Toolbar)
     * ``_family_combo`` / ``_instr_combo`` (instrument), ``_disp_combo``
       (fingered / sounding), ``_a4_combo`` (430..450), ``_lang_combo``,
       ``_filter_combo``, ``_nick_edit``, ``_audio_chip`` (``_name``),
       buttons ``_btn_autotune`` ``_btn_reset`` ``_btn_txt`` ``_btn_pdf``
       ``_btn_csv`` ``_btn_chart`` ``_btn_import`` ``_btn_custom``;
-  TUNER tab (``_tuner_tab``, sax_tab_tuner.TunerTab)
+  TUNER tab (``_tuner_tab``, intonation.ui.tabs.tuner.TunerTab)
     * tuner: ``_tuner`` (``note`` ``cents`` ``freq`` ``active``) and
       ``_status_lbl``; table: ``_table`` (a QTableView over
-      sax_table.IntonationTableModel; single layout: DisplayRole columns
-      fingered/sounding/mean/std/N/bar, mean cell ForegroundRole brush = band
-      colour; matrix layout: cell UserRole payload dicts), ``_caption``,
+      intonation.ui.table.IntonationTableModel; single layout: DisplayRole
+      columns fingered/sounding/mean/std/N/bar, mean cell ForegroundRole
+      brush = band colour; matrix layout: cell UserRole payload dicts),
+      ``_caption``,
       ``layout_mode``, ``refresh_table()``, signal
       ``_table.customContextMenuRequested``; ``_min_n_spin``, ``_cb_oor``;
-    * state: ``_session`` (sax_session.SessionModel: ``instrument``
-      ``display`` ``a4`` ``stats``), ``lang``, ``_cfg``, ``_log``,
+    * state: ``_session`` (intonation.core.session.SessionModel:
+      ``instrument`` ``display`` ``a4`` ``stats``), ``lang``, ``_cfg``, ``_log``,
       ``_engine`` (``state`` ``last_error`` ``output_running`` ``samplerate``
       ``output_samplerate`` ``active_device`` ``active_output_device`` ``a4``).
   Banners
     * ``_audio_banner`` (``_msg``, ``_btn_retry``),
       ``_info_banner`` (``_msg``, ``_btn_action``); ``_engine.mixer.active_sources()``.
-  METRO tab (``_metro_tab``, sax_tab_metro.MetroTab)
+  METRO tab (``_metro_tab``, intonation.ui.tabs.metro.MetroTab)
     * ``_slider`` ``_ts_btns`` ``_btn_start`` ``controller`` ``bpm``
       ``time_sig`` ``_status`` ``_vol_slider`` ``_btn_tap``.
-  Drone / pitch pipes (``_drone_bar``, sax_drone_bar.DroneBar)
+  Drone / pitch pipes (``_drone_bar``, intonation.ui.drone_bar.DroneBar)
     * ``nudge_semitones()`` ``semitones`` ``voice_id`` ``controller``
       ``_btn_on`` ``_status`` ``_vol_slider`` ``_btn_pipes``
       ``pipes_controller``, ``pipes_window`` (PitchPipesWindow: ``_pads``
       C4..B4, ``status_label``); the voice is picked in SETUP's
-      ``_voice_combo``; ``sax_drone`` imports ``tinysoundfont`` lazily
-      (hidden to simulate a missing synth).
+      ``_voice_combo``; ``intonation.audio.sources.drone`` imports
+      ``tinysoundfont`` lazily (hidden to simulate a missing synth).
   DECK tab
-    * ``_deck_tab`` (sax_tab_deck.DeckTab): ``_btn_record`` ``_btn_stop``
-      ``_btn_play`` ``_btn_export`` ``state()`` ``_state_lbl`` ``_status``.
-  SETUP tab (``_setup_tab``, sax_tab_setup.SetupTab)
+    * ``_deck_tab`` (intonation.ui.tabs.deck.DeckTab): ``_btn_record``
+      ``_btn_stop`` ``_btn_play`` ``_btn_export`` ``state()`` ``_state_lbl``
+      ``_status``.
+  SETUP tab (``_setup_tab``, intonation.ui.tabs.setup.SetupTab)
     * ``_output_combo`` ``_btn_test_tone`` ``_test_tone_status``
       ``_theme_combo`` ``_mic_gain_combo`` ``_btn_range`` ``_voice_combo``.
   Dialogs (recognised in ``_classify``; filled in the ``_fill_*`` methods)
@@ -79,18 +87,20 @@ the list below is the contract the rewrite must keep or update here:
       instrument (property ``_lang_title_key``), ``RangeEditorDialog``
       (``_lo_spin`` ``_hi_spin`` ``_btn_save`` ``_btn_cancel`` ``_btn_restore``
       ``_error_lbl``), ``AudioPickerDialog`` (recognised, not scriptable);
-      the classes live in ``sax_dialogs`` and are recognised by class name.
+      the classes live in ``intonation.ui.dialogs`` and are recognised by
+      class name.
   Export capture
     * ``reportlab.platypus.SimpleDocTemplate.build`` (PDF story),
-      ``sax_report.render_intonation_chart`` (chart arguments: the pure
-      chart renderer ``sax_report.render_chart`` hands its drawing to it),
+      ``intonation.export.report.render_intonation_chart`` (chart arguments:
+      the pure chart renderer ``intonation.export.report.render_chart`` hands
+      its drawing to it),
       ``MeasurementLog.import_raw_csv`` / ``.export_csv`` (results).
     * the save dialog is the static ``QFileDialog.getSaveFileName``; the app
       completes a name typed without an extension itself and asks with
       ``QMessageBox.question`` before replacing a file the dialog did not
       confirm.
   i18n
-    * ``sax_i18n.STRINGS`` = ``{lang: {key: format_string}}``.
+    * ``intonation.i18n.strings.STRINGS`` = ``{lang: {key: format_string}}``.
 """
 from __future__ import annotations
 
@@ -131,7 +141,8 @@ DATA_FILES = {
     "history": "log.jsonl",
 }
 
-# Table band colours (sax_table, the mean column's ForegroundRole) -> harness band names.
+# Table band colours (intonation.ui.table, the mean column's ForegroundRole)
+# -> harness band names.
 _BAND_BY_COLOUR = {"#3a9e5f": "green", "#c8a020": "amber", "#c03030": "red"}
 
 # `_lang_title_key` property of the app's own form dialogs -> harness kind.
@@ -156,7 +167,7 @@ def data_file(home: Path, logical: str) -> Path:
 
 def i18n_catalog() -> dict:
     """``{lang: {key: [placeholder, ...]}}`` for every UI string. Needs no app."""
-    from sax_i18n import STRINGS
+    from intonation.i18n.strings import STRINGS
     fmt = string.Formatter()
     out: dict = {}
     for lang, table in STRINGS.items():
@@ -165,6 +176,13 @@ def i18n_catalog() -> dict:
             for key, text in table.items()
         }
     return out
+
+
+def _is_app_module(name: str) -> bool:
+    """The modules each launch imports afresh: the package, its pre-2.0
+    ``sax_*`` aliases, and ``sounddevice`` (replaced by the fake host)."""
+    return (name == "intonation" or name.startswith("intonation.")
+            or name.startswith("sax_") or name == "sounddevice")
 
 
 def _parse_cents(text: str) -> Optional[int]:
@@ -225,7 +243,7 @@ class AppDriver:
         # Deterministic UI language on a first launch (no saved last_lang).
         p.setattr(QLocale, "system",
                   staticmethod(lambda code={"de": "de_DE"}.get(self.lang, "en_US"): QLocale(code)))
-        engine = sys.modules["sax_audio_engine"]
+        engine = sys.modules["intonation.audio.engine"]
         p.setattr(engine, "HOST_API_OPEN_TIMEOUT_S", self.host.OPEN_TIMEOUT_S)
         p.setattr(engine, "ANALYSIS_IN_THREAD", False)
         p.setattr(engine, "CONTROL_IN_THREAD", False)
@@ -242,7 +260,7 @@ class AppDriver:
         self.dialogs.install(p)
         self._install_capture_hooks()
 
-        G = sys.modules["sax_intonation_gui"]
+        G = sys.modules["intonation.ui.main_window"]
         self.win = G.MainWindow()          # the first-launch welcome dialog runs here
         self.win.show()
         self.qapp.processEvents()
@@ -263,18 +281,27 @@ class AppDriver:
         ``sounddevice``. A fresh
         import per app makes each launch a true process start: nothing leaks in
         from another test, and nothing leaks out.
+
+        The whole package goes, parents included: ``from intonation.ui import
+        main_window`` reads the attribute on the parent package before it looks
+        in ``sys.modules``, so a kept parent would hand out the old submodule.
+        The pre-2.0 ``sax_*`` names are aliases of package modules; they are
+        pointed at this copy so code using an old name sees the running app.
         """
-        for name in [n for n in sys.modules if n.startswith("sax_") or n == "sounddevice"]:
+        for name in [n for n in sys.modules if _is_app_module(n)]:
             self._saved_modules[name] = sys.modules.pop(name)
         self._modules_swapped = True
         sys.modules["sounddevice"] = self.host.sounddevice_module()
-        importlib.import_module("sax_intonation_gui")
+        importlib.import_module("intonation.ui.main_window")
+        from legacy_names import LEGACY_MODULES
+        for old, new in LEGACY_MODULES.items():
+            sys.modules[old] = importlib.import_module(new)
 
     def _restore_modules(self) -> None:
         if not self._modules_swapped:
             return
         self._modules_swapped = False
-        for name in [n for n in sys.modules if n.startswith("sax_") or n == "sounddevice"]:
+        for name in [n for n in sys.modules if _is_app_module(n)]:
             del sys.modules[name]
         sys.modules.update(self._saved_modules)
         self._saved_modules = {}
@@ -379,7 +406,7 @@ class AppDriver:
             return orig_build(doc, flowables, *a, **k)
         p.setattr(SimpleDocTemplate, "build", build)
 
-        export_mod = sys.modules["sax_report"]
+        export_mod = sys.modules["intonation.export.report"]
         orig_chart = export_mod.render_intonation_chart
 
         def render_chart(**kw):
@@ -396,7 +423,7 @@ class AppDriver:
             return orig_chart(**kw)
         p.setattr(export_mod, "render_intonation_chart", render_chart)
 
-        log_cls = sys.modules["sax_intonation_log"].MeasurementLog
+        log_cls = sys.modules["intonation.persistence.history"].MeasurementLog
         orig_import = log_cls.import_raw_csv
         orig_export = log_cls.export_csv
 
@@ -558,7 +585,7 @@ class AppDriver:
 
     def pick_instrument(self, key: str) -> None:
         w = self.win
-        family = sys.modules["sax_instruments"].family_of(key)
+        family = sys.modules["intonation.catalog.instruments"].family_of(key)
         if family is None:
             raise HarnessError(f"unknown instrument key {key!r}")
         self._combo_select(w._toolbar._family_combo, family, "instrument family")
@@ -620,7 +647,7 @@ class AppDriver:
                 rows.append(Row(fingered, sounding, _parse_cents(cells[2]),
                                 _parse_cents(cells[3]), n, band))
         else:
-            theme = sys.modules["sax_theme"]
+            theme = sys.modules["intonation.ui.theme"]
             for r in range(m.rowCount()):
                 for c in range(m.columnCount()):
                     pay = m.index(r, c).data(Qt.ItemDataRole.UserRole)
@@ -848,9 +875,10 @@ class AppDriver:
 
     def drone_synth_unavailable(self) -> None:
         """Hide the SoundFont synth package for the rest of this app's life.
-        Relies on ``sax_drone`` importing ``tinysoundfont`` lazily when it first
-        builds a SoundFont voice: a ``None`` entry in ``sys.modules`` makes that
-        import raise ImportError, as on an install without the package."""
+        Relies on ``intonation.audio.sources.drone`` importing
+        ``tinysoundfont`` lazily when it first builds a SoundFont voice: a
+        ``None`` entry in ``sys.modules`` makes that import raise ImportError,
+        as on an install without the package."""
         saved = sys.modules.get("tinysoundfont")
         had = "tinysoundfont" in sys.modules
 
@@ -1194,5 +1222,5 @@ class AppDriver:
 
 def i18n_texts() -> dict:
     """``{lang: {key: format_string}}``: the app's UI wording. Needs no app."""
-    from sax_i18n import STRINGS
+    from intonation.i18n.strings import STRINGS
     return {lang: dict(table) for lang, table in STRINGS.items()}

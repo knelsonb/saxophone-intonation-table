@@ -6,7 +6,7 @@ fake-sounddevice definition and its mutable state.  The engine decides at
 import time whether audio is available (AUDIO_OK), so the fake has to be in
 sys.modules['sounddevice'] while the engine module executes.  The ``_engine``
 fixture below does that per test, on a private copy of the engine module, and
-removes it afterwards; the real ``sax_audio_engine`` is left untouched for the
+removes it afterwards; the real ``intonation.audio.engine`` is left untouched for the
 other test files.
 
 Safe to run under pytest; no GUI or real audio hardware required.

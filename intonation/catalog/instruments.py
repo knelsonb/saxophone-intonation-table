@@ -1,0 +1,516 @@
+"""
+Instrument catalog: families, sub-instruments, transposition values, and
+display names in DE + EN.
+
+Transposition convention: `transp = sounding_midi - fingered_midi`, including
+the octave, so the sounding name reads in the right register (Eb alto -9,
+Bb tenor -14, Eb baritone -21; double bass and bass guitar -12; recorders +12).
+Values follow MuseScore's `transposeChromatic` for each instrument.
+
+v0.4.2 corrected the saxophone values (alto +3 -> -9, tenor -2 -> -14,
+baritone -9 -> -21). Logs and CSVs written before that carry `midi_fingered`
+values an octave off from current ones; the sounding pitch is unaffected.
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Mapping
+from pathlib import Path
+from types import MappingProxyType
+
+from intonation.persistence.atomic import atomic_write_json
+from intonation.persistence.paths import AppPaths
+
+# (family_key, family_name_de, family_name_en,
+#   [(instrument_key, transp, name_de, name_en), ...])
+_FAMILIES = [
+    ('saxophone', 'Saxophon', 'Saxophone', [
+        # Real acoustic transpositions — sounding pitch is not octave-
+        # collapsed. Tenor sax really sounds M9 below written (octave +
+        # major 2nd); baritone an octave + M6 below; bass two octaves +
+        # M2 below; contrabass two octaves + M6 below.
+        ('eb_sopranino',    +3, 'Eb-Sax · Sopranino', 'Eb Sax · Sopranino'),
+        ('bb_soprano',      -2, 'Bb-Sax · Sopran',    'Bb Sax · Soprano'),
+        ('eb_alto',         -9, 'Eb-Sax · Alt',       'Eb Sax · Alto'),
+        ('bb_tenor',       -14, 'Bb-Sax · Tenor',     'Bb Sax · Tenor'),
+        ('eb_bari',        -21, 'Eb-Sax · Bariton',   'Eb Sax · Baritone'),
+        ('bb_bass',        -26, 'Bb-Sax · Bass',      'Bb Sax · Bass'),
+        ('eb_contrabass',  -33, 'Eb-Sax · Kontrabass', 'Eb Sax · Contrabass'),
+    ]),
+    ('clarinet', 'Klarinette', 'Clarinet', [
+        ('clar_eb',           +3, 'Eb-Klarinette',          'Eb Clarinet'),
+        ('clar_d',            +2, 'D-Klarinette',           'D Clarinet'),
+        ('clar_c',             0, 'C-Klarinette',           'C Clarinet'),
+        ('clar_bb',           -2, 'Bb-Klarinette',          'Bb Clarinet'),
+        ('clar_a',            -3, 'A-Klarinette',           'A Clarinet'),
+        ('clar_basset_f',     -7, 'Bassetthorn (F)',        'Basset Horn (F)'),
+        ('clar_alto_eb',      -9, 'Eb-Altklarinette',       'Eb Alto Clarinet'),
+        ('clar_bass_bb',     -14, 'Bb-Bassklarinette',      'Bb Bass Clarinet'),
+        ('clar_contraalto_eb', -21,
+         'Eb-Kontra-Altklarinette', 'Eb Contra-Alto Clarinet'),
+        ('clar_contrabass_bb', -26,
+         'Bb-Kontrabassklarinette', 'Bb Contrabass Clarinet'),
+    ]),
+    ('flute', 'Flöte', 'Flute', [
+        ('flute_piccolo',   +12, 'Piccolo (C)',         'Piccolo (C)'),
+        ('flute_c',           0, 'Querflöte (C)',       'Concert Flute (C)'),
+        ('flute_alto_g',     -5, 'Altflöte (G)',        'Alto Flute (G)'),
+        ('flute_bass_c',    -12, 'Bassflöte (C)',       'Bass Flute (C)'),
+    ]),
+    ('trumpet', 'Trompete', 'Trumpet', [
+        ('trp_piccolo_bb',  +10, 'Piccolo-Trompete Bb', 'Piccolo Trumpet Bb'),
+        ('trp_piccolo_a',    +9, 'Piccolo-Trompete A',  'Piccolo Trumpet A'),
+        ('trp_f',            +5, 'F-Trompete',          'F Trumpet'),
+        ('trp_e',            +4, 'E-Trompete',          'E Trumpet'),
+        ('trp_eb',           +3, 'Eb-Trompete',         'Eb Trumpet'),
+        ('trp_d',            +2, 'D-Trompete',          'D Trumpet'),
+        ('trp_c',             0, 'C-Trompete',          'C Trumpet'),
+        ('trp_bb',           -2, 'Bb-Trompete',         'Bb Trumpet'),
+        ('trp_a',            -3, 'A-Trompete',          'A Trumpet'),
+        ('trp_bass_bb',     -14, 'Bb-Basstrompete',     'Bb Bass Trumpet'),
+        ('cornet_bb',        -2, 'Bb-Kornett',          'Bb Cornet'),
+        ('flugel_bb',        -2, 'Bb-Flügelhorn',       'Bb Flugelhorn'),
+    ]),
+    ('horn', 'Horn', 'Horn', [
+        ('horn_f',           -7, 'F-Horn',              'F Horn'),
+        ('horn_bb',          -2, 'Bb-Horn',             'Bb Horn'),
+        ('horn_eb_alto',     -9, 'Eb-Althorn',          'Eb Alto Horn'),
+        ('mellophone_f',     -7, 'Mellophon F',         'Mellophone F'),
+    ]),
+    ('trombone', 'Posaune', 'Trombone', [
+        ('tbn_alto_eb',       0, 'Altposaune Eb',       'Alto Trombone Eb'),
+        ('tbn_tenor',         0, 'Tenorposaune',        'Tenor Trombone'),
+        ('tbn_bass',          0, 'Bassposaune',         'Bass Trombone'),
+        ('tbn_contrabass',    0, 'Kontrabassposaune',   'Contrabass Trombone'),
+    ]),
+    ('low_brass', 'Tiefes Blech', 'Low Brass', [
+        ('euph_bc',           0, 'Euphonium (Bassschl.)',  'Euphonium (Bass Clef)'),
+        ('euph_tc',         -14, 'Euphonium (Violinschl.)', 'Euphonium (Treble Clef)'),
+        ('baritone_bc',       0, 'Baritonhorn (Bassschl.)', 'Baritone Horn (BC)'),
+        ('baritone_tc',     -14, 'Baritonhorn (Violinschl.)', 'Baritone Horn (TC)'),
+        ('tuba_f',            0, 'F-Tuba',              'F Tuba'),
+        ('tuba_eb',           0, 'Eb-Tuba',             'Eb Tuba'),
+        ('tuba_cc',           0, 'CC-Tuba',             'CC Tuba'),
+        ('tuba_bbb',          0, 'BBb-Tuba',            'BBb Tuba'),
+        ('sousaphone_bbb',    0, 'Sousaphon BBb',       'Sousaphone BBb'),
+    ]),
+    ('double_reed', 'Doppelrohrblatt', 'Double Reed', [
+        ('oboe',              0, 'Oboe',                'Oboe'),
+        ('oboe_damore',      -3, 'Oboe d’amore',        'Oboe d’amore'),
+        ('english_horn',     -7, 'Englischhorn (F)',    'English Horn (F)'),
+        ('bassoon',           0, 'Fagott',              'Bassoon'),
+        ('contrabassoon',   -12, 'Kontrafagott',        'Contrabassoon'),
+    ]),
+    ('recorder', 'Blockflöte', 'Recorder', [
+        ('rec_sopranino_f', +12, 'Sopranino-Blockflöte (F)', 'Sopranino Recorder (F)'),
+        ('rec_soprano_c',   +12, 'Sopran-Blockflöte (C)',    'Soprano Recorder (C)'),
+        ('rec_alto_f',        0, 'Alt-Blockflöte (F)',       'Alto Recorder (F)'),
+        ('rec_tenor_c',       0, 'Tenor-Blockflöte (C)',     'Tenor Recorder (C)'),
+        ('rec_bass_f',        0, 'Bass-Blockflöte (F)',      'Bass Recorder (F)'),
+    ]),
+    ('strings', 'Streicher', 'Strings', [
+        ('violin',            0, 'Violine',             'Violin'),
+        ('viola',             0, 'Viola',               'Viola'),
+        ('cello',             0, 'Violoncello',         'Cello'),
+        ('double_bass',     -12, 'Kontrabass',          'Double Bass'),
+        ('mandolin',          0, 'Mandoline',           'Mandolin'),
+    ]),
+    ('plucked', 'Zupfinstrumente', 'Plucked', [
+        ('guitar',            0, 'Gitarre',             'Guitar'),
+        ('bass_guitar',     -12, 'Bassgitarre',         'Bass Guitar'),
+        ('ukulele',           0, 'Ukulele',             'Ukulele'),
+        ('banjo',             0, 'Banjo',               'Banjo'),
+        ('harp',              0, 'Harfe',               'Harp'),
+    ]),
+    ('voice_other', 'Stimme / Konzertstimmung', 'Voice / Concert', [
+        ('voice',             0, 'Stimme',              'Voice'),
+        ('c',                 0, 'C-Instrument',        'C Instrument'),
+        ('piano',             0, 'Klavier',             'Piano'),
+    ]),
+]
+
+
+# Runtime-registered user instruments. Loaded once at startup from
+# the ConfigStore's custom instruments file and refreshed when the user adds a Custom… entry.
+_CUSTOMS: list[tuple[str, int, str, str]] = []   # (key, transp, name_de, name_en)
+
+
+def register_custom(key: str, transp: int,
+                    name_de: str, name_en: str) -> None:
+    """Register or update a custom instrument. Duplicate keys replace."""
+    global _CUSTOMS
+    _CUSTOMS = [c for c in _CUSTOMS if c[0] != key]
+    _CUSTOMS.append((key, transp, name_de, name_en))
+
+
+_CUSTOM_FAMILY_KEY = 'custom'
+
+
+def families() -> list[tuple[str, str, str]]:
+    """Return [(family_key, name_de, name_en)] in display order.
+
+    A 'custom' family is appended automatically when any user instrument
+    is registered."""
+    out = [(k, de, en) for (k, de, en, _) in _FAMILIES]
+    if _CUSTOMS:
+        out.append((_CUSTOM_FAMILY_KEY, 'Eigene', 'Custom'))
+    return out
+
+
+def instruments_in(family_key: str) -> list[tuple[str, str, str]]:
+    """Return [(instrument_key, name_de, name_en)] for the given family."""
+    if family_key == _CUSTOM_FAMILY_KEY:
+        return [(k, de, en) for (k, _t, de, en) in _CUSTOMS]
+    for (k, _de, _en, instrs) in _FAMILIES:
+        if k == family_key:
+            return [(ik, de, en) for (ik, _t, de, en) in instrs]
+    return []
+
+
+# transp_map() is read on every detected note, so it is built once per
+# custom-instrument list. register_custom rebinds _CUSTOMS to a new list, which
+# makes the identity of that list the cache key: registering (or a test
+# swapping the list) invalidates the cache with no separate bookkeeping.
+_transp_cache: tuple[list, Mapping[str, int]] | None = None
+
+
+def transp_map() -> Mapping[str, int]:
+    """Read-only {instrument_key: transp_semitones}, including customs.
+
+    Always reflects the instruments registered so far; callers read it at use
+    time rather than keeping a copy, so a custom instrument added mid-session
+    is seen everywhere."""
+    global _transp_cache
+    cached = _transp_cache
+    if cached is not None and cached[0] is _CUSTOMS:
+        return cached[1]
+    m: dict[str, int] = {}
+    for (_, _de, _en, instrs) in _FAMILIES:
+        for (key, transp, _d, _e) in instrs:
+            m[key] = transp
+    for (key, transp, _d, _e) in _CUSTOMS:
+        m[key] = transp
+    view = MappingProxyType(m)
+    _transp_cache = (_CUSTOMS, view)
+    return view
+
+
+def display_name(instrument_key: str, lang: str = 'en') -> str:
+    """Localised display name. Falls back to the instrument key if unknown."""
+    for (key, _transp, de, en) in _CUSTOMS:
+        if key == instrument_key:
+            return de if lang == 'de' else en
+    for (_fk, _fde, _fen, instrs) in _FAMILIES:
+        for (key, _transp, de, en) in instrs:
+            if key == instrument_key:
+                return de if lang == 'de' else en
+    return instrument_key
+
+
+# Typical fingered MIDI range per instrument: (lo, hi) inclusive. Used to
+# pre-seed the intonation table with blank rows when the user selects an
+# instrument, so they immediately see what's "expected" for that horn. Notes
+# played outside this range (overtones, altissimo, extensions) still pop in
+# automatically through the normal _on_note path.
+# Ranges sourced from MuseScore's instruments.xml (their `aPitchRange`
+# — amateur range — converted from sounding to FINGERED via
+# `transposeChromatic`). MuseScore is an open-source notation app with
+# ~10M users; the ranges are vetted by orchestrators and notation
+# experts and are about as close to a single source of truth as we can
+# get programmatically. Real-player overrides (saxes at low A, contras
+# at low C) layered on top — see tools/musescore/sync_ranges.py for
+# the reproducible regeneration script.
+_RANGES: dict[str, tuple[int, int]] = {
+    # Saxophones — fingered low A (57) to altissimo C7 (96). Generous on
+    # the top end so altissimo work isn't clipped; the filter-to-range
+    # toggle is off by default, so this is mostly a display guide for the
+    # grid layout. When players disagree, we include more.
+    'eb_sopranino':           ( 57,  96),
+    'bb_soprano':             ( 57,  96),
+    'eb_alto':                ( 57,  96),
+    'bb_tenor':               ( 57,  96),
+    'eb_bari':                ( 57,  96),
+    'bb_bass':                ( 57,  96),
+    'eb_contrabass':          ( 57,  96),
+    # Clarinets — top widened to cover altissimo where players disagree.
+    'clar_eb':                ( 52,  96),   # MS via eb-clarinet + altissimo
+    'clar_d':                 ( 52,  96),   # MS via d-clarinet + altissimo
+    'clar_c':                 ( 52,  96),   # MS via c-clarinet + altissimo
+    'clar_bb':                ( 52,  96),   # MS via bb-clarinet + altissimo
+    'clar_a':                 ( 52,  96),   # MS via a-clarinet + altissimo
+    'clar_basset_f':          ( 48,  96),   # MS via basset-horn + altissimo
+    'clar_alto_eb':           ( 52,  91),   # MS via alto-clarinet
+    'clar_bass_bb':           ( 48,  96),   # low-C extension; altissimo widened
+    'clar_contraalto_eb':     ( 48,  91),   # override-lo + altissimo
+    'clar_contrabass_bb':     ( 48,  91),   # override-lo + altissimo
+    # Flutes
+    'flute_piccolo':          ( 62,  93),   # MS via piccolo
+    'flute_c':                ( 60,  93),   # MS via flute
+    'flute_alto_g':           ( 60,  93),   # MS via alto-flute
+    'flute_bass_c':           ( 60,  89),   # MS via bass-flute
+    # Trumpets
+    'trp_piccolo_bb':         ( 49,  76),   # MS via bb-piccolo-trumpet
+    'trp_piccolo_a':          ( 49,  76),   # MS via a-piccolo-trumpet
+    'trp_f':                  ( 60,  77),   # MS via f-trumpet
+    'trp_e':                  ( 54,  81),   # MS via e-trumpet
+    'trp_eb':                 ( 54,  81),   # MS via eb-trumpet
+    'trp_d':                  ( 54,  81),   # MS via d-trumpet
+    'trp_c':                  ( 54,  82),   # MS via c-trumpet
+    'trp_bb':                 ( 54,  82),   # MS via bb-trumpet
+    'trp_a':                  ( 54,  82),   # MS via a-trumpet
+    'trp_bass_bb':            ( 54,  81),   # MS via bb-bass-trumpet
+    'cornet_bb':              ( 54,  81),   # MS via bb-cornet
+    'flugel_bb':              ( 54,  81),   # MS via flugelhorn
+    # Horns
+    'horn_f':                 ( 48,  76),   # MS via horn
+    'horn_bb':                ( 46,  79),   # MS via bb-horn-alto
+    'horn_eb_alto':           ( 54,  81),   # MS via eb-alto-horn
+    'mellophone_f':           ( 54,  79),   # manual (no MuseScore entry)
+    # Trombones
+    'tbn_alto_eb':            ( 45,  74),   # MS via alto-trombone
+    'tbn_tenor':              ( 40,  71),   # MS via trombone
+    'tbn_bass':               ( 32,  65),   # MS via bass-trombone
+    'tbn_contrabass':         ( 28,  62),   # MS via contrabass-trombone
+    # Low brass
+    'euph_bc':                ( 40,  70),   # MS via euphonium
+    'euph_tc':                ( 54,  84),   # MS via euphonium-treble
+    'baritone_bc':            ( 43,  64),   # MS via baritone
+    'baritone_tc':            ( 54,  81),   # MS via baritone-horn-treble
+    'tuba_f':                 ( 26,  64),   # MS via f-tuba
+    'tuba_eb':                ( 26,  64),   # MS via eb-tuba
+    'tuba_cc':                ( 26,  60),   # MS via c-tuba
+    'tuba_bbb':               ( 28,  58),   # MS via bb-tuba
+    'sousaphone_bbb':         ( 30,  60),   # MS via bb-sousaphone
+    # Double reeds
+    'oboe':                   ( 58,  87),   # MS via oboe
+    'oboe_damore':            ( 59,  87),   # MS via oboe-d'amore
+    'english_horn':           ( 59,  88),   # MS via english-horn
+    'bassoon':                ( 34,  69),   # MS via bassoon
+    'contrabassoon':          ( 34,  69),   # MS via contrabassoon
+    # Recorders
+    'rec_sopranino_f':        ( 65,  88),   # MS via sopranino-recorder
+    'rec_soprano_c':          ( 60,  81),   # MS via soprano-recorder
+    'rec_alto_f':             ( 65,  88),   # MS via alto-recorder
+    'rec_tenor_c':            ( 60,  81),   # MS via tenor-recorder
+    'rec_bass_f':             ( 53,  74),   # MS via bass-recorder
+    # Strings
+    'violin':                 ( 55,  88),   # MS via violin
+    'viola':                  ( 48,  79),   # MS via viola
+    'cello':                  ( 36,  67),   # MS via violoncello
+    'double_bass':            ( 40,  74),   # MS via contrabass
+    'mandolin':               ( 55,  85),   # MS via mandolin
+    # Plucked
+    'guitar':                 ( 40,  83),   # MS via guitar-steel
+    'bass_guitar':            ( 40,  77),   # MS via bass-guitar
+    'ukulele':                ( 60,  81),   # MS via ukulele
+    'banjo':                  ( 48,  87),   # MS via banjo
+    'harp':                   ( 23, 104),   # MS via harp
+    # Concert / generic
+    'voice':                  ( 41,  79),   # MS via voice
+    'c':                      ( 48,  79),   # manual (generic concert-pitch fallback)
+    'piano':                  ( 21, 108),   # MS via piano
+}
+
+
+def fingered_range(instrument_key: str) -> tuple[int, int]:
+    """Return (lo, hi) inclusive fingered-MIDI range for this instrument.
+
+    Consults the user override DB first, then the baked MuseScore-sourced
+    map, then a generic 2.5-octave middle range fallback for keys without
+    an explicit entry (mainly user-defined custom instruments)."""
+    ov = range_overrides().get(instrument_key)
+    if ov is not None:
+        return ov
+    return _RANGES.get(instrument_key, (48, 79))
+
+
+def baked_fingered_range(instrument_key: str) -> tuple[int, int]:
+    """Return the baked (non-overridden) range for the instrument. Used by
+    the range editor's Restore Default button."""
+    return _RANGES.get(instrument_key, (48, 79))
+
+
+def has_baked_range(instrument_key: str) -> bool:
+    """Whether the instrument has a baked range from the MuseScore source.
+    Custom instruments without a baked entry get the generic fallback;
+    the editor uses this to label the Restore button accordingly."""
+    return instrument_key in _RANGES
+
+
+# ---------------------------------------------------------------------------
+# Per-user range overrides
+# ---------------------------------------------------------------------------
+# Stored in instrument_ranges.json in the data directory. Read on first use
+# (never at import, so importing the catalog touches no file) and refreshed
+# in-process whenever save/clear is called, so the next fingered_range()
+# consult reflects the change without restart.
+_RANGES_SCHEMA_VERSION = 1
+
+
+def _coerce_range_entry(v) -> tuple[int, int] | None:
+    """Validate a (lo, hi) entry. Rejects anything not parseable, out of
+    0..127, or with lo > hi. Returns None on any defect so the caller can
+    skip silently."""
+    if not isinstance(v, (list, tuple)) or len(v) != 2:
+        return None
+    try:
+        lo = int(v[0])
+        hi = int(v[1])
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not (0 <= lo <= 127 and 0 <= hi <= 127 and lo <= hi):
+        return None
+    return (lo, hi)
+
+
+class RangeOverridesUnreadable(Exception):
+    """instrument_ranges.json exists but could not be read or understood.
+    Raised by the strict load so a caller never rewrites the file from an
+    empty result and wipes every other instrument's override."""
+
+
+class RangeOverrides:
+    """The user's per-instrument range overrides in one JSON file."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self._cache: dict[str, tuple[int, int]] | None = None
+
+    def get(self, key: str) -> tuple[int, int] | None:
+        if self._cache is None:
+            self.load()
+        return self._cache.get(key)
+
+    def load(self, strict: bool = False) -> dict[str, tuple[int, int]]:
+        """Read the file into a fresh dict and refresh the cache.
+
+        Tolerant by default: missing file, malformed JSON, wrong shape and
+        bad entries all degrade to {} or skip the offending key, because the
+        first read happens while the window is being built and must never
+        stop the app from starting.
+
+        ``strict=True`` is for read-modify-write callers. A file that exists
+        but cannot be read (OSError) or parsed (ValueError, wrong shape)
+        raises RangeOverridesUnreadable and leaves the cache alone.
+        Individual bad entries are still skipped; they carry nothing worth
+        keeping."""
+        out: dict[str, tuple[int, int]] = {}
+        if not self.path.exists():
+            self._cache = out
+            return {}
+        try:
+            with self.path.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError) as exc:
+            # ValueError covers JSONDecodeError and undecodable bytes.
+            if strict:
+                raise RangeOverridesUnreadable(str(exc)) from exc
+            self._cache = out
+            return {}
+        ranges = data.get("ranges", {}) if isinstance(data, dict) else None
+        if not isinstance(ranges, dict):
+            if strict:
+                raise RangeOverridesUnreadable(
+                    f"{self.path} does not hold a ranges object")
+            self._cache = out
+            return {}
+        for key, val in ranges.items():
+            if not isinstance(key, str):
+                continue
+            coerced = _coerce_range_entry(val)
+            if coerced is None:
+                continue
+            out[key] = coerced
+        self._cache = out
+        # A copy: read-modify-write callers edit it before the write, and
+        # the cache must keep matching the file if that write fails.
+        return dict(out)
+
+    def _write(self, current: dict[str, tuple[int, int]]) -> None:
+        """Write the full override table atomically (temp file + rename, so
+        a crashed write never leaves a half-baked file) and make it the
+        cache. Raises OSError when the write fails; the old file is left
+        intact."""
+        payload = {
+            "version": _RANGES_SCHEMA_VERSION,
+            "ranges": {k: list(v) for k, v in current.items()},
+        }
+        if not atomic_write_json(
+                self.path, payload, tmp_prefix=".instrument_ranges."):
+            raise OSError(f"could not write {self.path}")
+        self._cache = dict(current)
+
+    def save(self, key: str, lo: int, hi: int) -> None:
+        """Persist one override entry, preserving every other key in the
+        file.
+
+        Raises ValueError for a range outside 0..127 or with lo > hi,
+        RangeOverridesUnreadable when the existing file cannot be read (it
+        is left untouched), and OSError when the write fails. On success the
+        cache matches the file."""
+        coerced = _coerce_range_entry((lo, hi))
+        if coerced is None:
+            raise ValueError(f"invalid range {lo}..{hi} for {key}")
+        # Re-read from disk so a parallel process's edits are kept.
+        current = self.load(strict=True)
+        current[key] = coerced
+        self._write(current)
+
+    def clear(self, key: str) -> None:
+        """Remove one override entry, if present. Same error contract as
+        save()."""
+        current = self.load(strict=True)
+        if key not in current:
+            return
+        del current[key]
+        self._write(current)
+
+
+# The session's overrides. The window installs one for its data directory at
+# start-up; until then the first use resolves the current HOME.
+_active_overrides: RangeOverrides | None = None
+
+
+def range_overrides() -> RangeOverrides:
+    global _active_overrides
+    if _active_overrides is None:
+        _active_overrides = RangeOverrides(AppPaths.from_environment().ranges)
+    return _active_overrides
+
+
+def use_range_overrides(store: RangeOverrides | None) -> None:
+    global _active_overrides
+    _active_overrides = store
+
+
+def load_range_overrides(strict: bool = False) -> dict[str, tuple[int, int]]:
+    return range_overrides().load(strict)
+
+
+def save_range_override(key: str, lo: int, hi: int) -> None:
+    range_overrides().save(key, lo, hi)
+
+
+def clear_range_override(key: str) -> None:
+    range_overrides().clear(key)
+
+
+def __getattr__(name: str):
+    # The overrides file used to be a module constant resolved at import;
+    # it now follows the active store.
+    if name == "_RANGES_FILE":
+        return range_overrides().path
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def family_of(instrument_key: str) -> str | None:
+    """Which family contains this instrument key, or None if unknown."""
+    for (key, _t, _d, _e) in _CUSTOMS:
+        if key == instrument_key:
+            return _CUSTOM_FAMILY_KEY
+    for (fk, _de, _en, instrs) in _FAMILIES:
+        for (key, _t, _d, _e) in instrs:
+            if key == instrument_key:
+                return fk
+    return None

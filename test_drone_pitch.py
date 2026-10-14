@@ -18,8 +18,8 @@ from __future__ import annotations
 import pytest
 
 pytest.importorskip("tinysoundfont")
-import sax_drone as D  # noqa: E402
 import sim_harness as H  # noqa: E402
+from intonation.audio.sources import drone as D  # noqa: E402
 
 
 class _FakeMixer:

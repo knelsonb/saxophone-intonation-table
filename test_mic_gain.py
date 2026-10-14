@@ -19,7 +19,7 @@ import math
 import numpy as np
 import pytest
 
-from sax_audio_engine import (
+from intonation.audio.engine import (
     DEFAULT_BLOCK_SIZE,
     FILTER_PRESETS,
     AudioEngine,

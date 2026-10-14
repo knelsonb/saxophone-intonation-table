@@ -1,4 +1,4 @@
-"""Acceptance net for ``sax_pitch_pipes``.
+"""Acceptance net for ``intonation.audio.sources.pitch_pipes``.
 
 Pitch pipes are pure-numpy sine pads over the chromatic reference octave
 (C4..B4 = MIDI 60..71), tuned at the current A4. No TSF, no Qt — pure math +
@@ -9,8 +9,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import sax_pitch_pipes as pp
-from sax_mixer import Mixer
+from intonation.audio.mixer import Mixer
+from intonation.audio.sources import pitch_pipes as pp
 
 
 def _expected_freq(midi, a4):

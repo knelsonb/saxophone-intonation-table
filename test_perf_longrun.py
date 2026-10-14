@@ -4,7 +4,7 @@ O(active), not O(history).
 
 The risk this guards: the metronome fires + reschedules a beat on a one-beat
 rolling horizon (~2000 beats in 10 sim-minutes here). If render() failed to reap
-a fired event (sax_mixer.py:296 pops it), or a source were re-registered instead
+a fired event (intonation/audio/mixer.py:296 pops it), or a source were re-registered instead
 of reused, the scheduler queue / source list — and memory — would grow with
 elapsed time. We render 10 minutes of sim-time (cheap: numpy blocks in a loop,
 no wall-clock wait, no audio device) and assert the queue depth, source count,
@@ -17,8 +17,8 @@ import tracemalloc
 
 import numpy as np
 
-from sax_metronome import MetronomeController
-from sax_mixer import Mixer, TestToneSource
+from intonation.audio.mixer import Mixer, TestToneSource
+from intonation.audio.sources.metronome import MetronomeController
 
 SR = 48000
 MB = 1024

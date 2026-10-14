@@ -1,8 +1,8 @@
-"""Acceptance net for ``sax_drone``.
+"""Acceptance net for ``intonation.audio.sources.drone``.
 
 Two tiers:
   * PURE tier (always runs) — the GM preset catalog, voice resolution +
-    fallback, and the midi->freq / drone_freq math incl. non-440 A4. sax_drone
+    fallback, and the midi->freq / drone_freq math incl. non-440 A4. intonation.audio.sources.drone
     guard-imports tinysoundfont, so these import + test on system-python.
   * SYNTH tier (importorskip tinysoundfont) — the TSF-backed DroneSource +
     DroneController: it actually sounds, reports the audible-tail-aware
@@ -14,8 +14,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import sax_drone as D
-from sax_mixer import Mixer
+from intonation.audio.mixer import Mixer
+from intonation.audio.sources import drone as D
 
 
 def _expected_freq(midi, a4):

@@ -1,4 +1,4 @@
-"""Safety net for ``_coerce_range_entry`` in ``sax_instruments``.
+"""Safety net for ``_coerce_range_entry`` in ``intonation.catalog.instruments``.
 
 ``_coerce_range_entry`` is the sole validation gate for every entry that
 ``load_range_overrides`` reads from the user-edited
@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import pytest
 
-from sax_instruments import _coerce_range_entry
+from intonation.catalog.instruments import _coerce_range_entry
 
 # ---------------------------------------------------------------------------
 # 1. Main parametrize table — ``None``-or-tuple cases

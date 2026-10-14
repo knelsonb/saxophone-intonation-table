@@ -3,7 +3,7 @@
 Intonation Analyzer is a fork of
 [EarlJay1/saxophone-intonation-table](https://github.com/EarlJay1/saxophone-intonation-table),
 a single-file Python intonation analyzer published in May 2026. The fork splits
-the application into the `sax_*` modules found here and still contains
+the application into the modules of the `intonation` package and still contains
 upstream code and text, including the YIN pitch detector's original form, the
 concert-pitch autotune calculation, the German and English interface strings
 and the TXT and PDF export layouts.

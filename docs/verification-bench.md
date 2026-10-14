@@ -154,7 +154,7 @@ hold (`format_cents`; locked by `test_format_cents.py`).
   (`Mixer.set_format`); the pending beat keeps its distance in time, so the next
   click comes one beat after the last one heard, and the beat *index*/accent
   continues. The silent gap of the switch itself is not counted: the beat is
-  kept in stream time (§11; `sax_metronome`).
+  kept in stream time (§11; `intonation.audio.sources.metronome`).
 - **`detect_tone(sr=…)` configures the whole pipeline.** Building §14 surfaced (and
   fixed) a latent harness incoherence: the `sr` kwarg set tone-generation but not
   the engine's detection rate, so it only behaved at the 44.1 k default. It now
@@ -165,7 +165,7 @@ hold (`format_cents`; locked by `test_format_cents.py`).
   against it. The metronome's only on-screen surface is a *running-state dot*
   (green = running), updated through `on_state_changed`, which always fires on the
   **GUI thread** via the existing repaint/poll tick — never from the render-thread
-  beat closure (`sax_deck.py`: "so the GUI never needs a `QTimer.singleShot`
+  beat closure (`intonation/audio/sources/deck.py`: "so the GUI never needs a `QTimer.singleShot`
   marshal"). The tuner needle/visualizer pull the engine's real `_buf`/detections
   at ~30 fps, so their only audio→visual offset is *bounded detection latency*
   (§5; in the live app about 0.2–0.65 s depending on the response mode) plus one refresh tick — lag, not accumulating drift. There is

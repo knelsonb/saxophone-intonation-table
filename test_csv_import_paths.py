@@ -5,7 +5,7 @@ UTF-8 BOM Excel prepends, conflict handling, caps and malformed rows.
 NOTE: import_raw_csv is a method on MeasurementLog, not a module-level
 function.  RAW_CSV_HEADER_LEGACY is a class attribute on MeasurementLog, not a
 module-level constant.  The task brief asked for
-    from sax_intonation_log import MeasurementLog, import_raw_csv, RAW_CSV_HEADER_LEGACY
+    from intonation.persistence.history import MeasurementLog, import_raw_csv, RAW_CSV_HEADER_LEGACY
 but that import form would raise ImportError because neither name exists at
 module scope.  Tests here use MeasurementLog.import_raw_csv and
 MeasurementLog.RAW_CSV_HEADER_LEGACY instead.
@@ -25,7 +25,7 @@ import csv
 
 import pytest
 
-from sax_intonation_log import MeasurementLog
+from intonation.persistence.history import MeasurementLog
 
 # Convenient aliases so test bodies read cleanly.
 HEADER = MeasurementLog.RAW_CSV_HEADER
@@ -294,7 +294,7 @@ def test_duplicate_run_id_against_existing_log_is_skipped(tmp_path):
     # Pre-populate log with one run and one measurement for "run1".
     log = _fresh_log()
     log._runs["run1"] = __import__(
-        "sax_intonation_log", fromlist=["RunMeta"]
+        "intonation.persistence.history", fromlist=["RunMeta"]
     ).RunMeta(
         run_id="run1",
         started_at="2025-01-01T09:00:00",
@@ -302,7 +302,7 @@ def test_duplicate_run_id_against_existing_log_is_skipped(tmp_path):
         a4_hz=440.0,
     )
     # Add a measurement directly so we can verify it is untouched.
-    from sax_intonation_log import Measurement
+    from intonation.persistence.history import Measurement
     existing_m = Measurement(
         run_id="run1",
         timestamp="2025-01-01T09:00:01",

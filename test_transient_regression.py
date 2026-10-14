@@ -27,10 +27,10 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import sax_pitch_pipes as pp
 import sim_harness as H
-from sax_metronome import ClickSource
-from sax_mixer import TestToneSource
+from intonation.audio.mixer import TestToneSource
+from intonation.audio.sources import pitch_pipes as pp
+from intonation.audio.sources.metronome import ClickSource
 
 PitchPipeSource = pp.PitchPipeSource
 

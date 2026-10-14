@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from sax_audio_engine import AudioEngineError, OutputState, OutputStatus
-from sax_output_users import OutputUsers
+from intonation.audio.engine import AudioEngineError, OutputState, OutputStatus
+from intonation.audio.output_users import OutputUsers
 
 
 class _Rig:

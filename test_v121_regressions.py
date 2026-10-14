@@ -17,9 +17,9 @@ from pathlib import Path
 
 import pytest
 
-import sax_config
-from sax_intonation_log import MeasurementLog
-from sax_paths import AppPaths
+from intonation.persistence import config
+from intonation.persistence.history import MeasurementLog
+from intonation.persistence.paths import AppPaths
 
 _REPO = Path(__file__).resolve().parent
 _HAS_QT = importlib.util.find_spec("PyQt6") is not None
@@ -35,10 +35,10 @@ home, repo = sys.argv[1], sys.argv[2]
 os.environ["HOME"] = home
 os.environ["USERPROFILE"] = home
 sys.path.insert(0, repo)
-import sax_intonation_gui as G
+from intonation.ui import main_window as G
 from PyQt6.QtWidgets import QApplication
-from sax_dialogs import AudioPickerDialog, RangeEditorDialog
-from sax_stats import NoteStats
+from intonation.ui.dialogs import AudioPickerDialog, RangeEditorDialog
+from intonation.core.stats import NoteStats
 G.QMessageBox.information = staticmethod(lambda *a, **k: None)
 app = QApplication.instance() or QApplication([])
 win = G.MainWindow()
@@ -192,14 +192,14 @@ def test_matrix_span_follows_display_and_played_notes(tmp_path):
         # Right-click a played cell: the menu must name that note.
         captured = []
 
-        import sax_tab_tuner
+        from intonation.ui.tabs import tuner
 
-        class _Menu(sax_tab_tuner.QMenu):
+        class _Menu(tuner.QMenu):
             def exec(self, *a, **k):
                 captured.append(self.actions()[0].data())
                 return None
 
-        sax_tab_tuner.QMenu = _Menu
+        tuner.QMenu = _Menu
         midi = 50   # D3 sounding, inside the tenor's sounding range
         st2 = NoteStats()
         for _ in range(6):
@@ -229,10 +229,10 @@ def test_matrix_span_follows_display_and_played_notes(tmp_path):
 # ---------------------------------------------------------------------------
 @pytest.fixture()
 def ranges_file(tmp_path, monkeypatch):
-    import sax_instruments
+    from intonation.catalog import instruments
     path = tmp_path / "instrument_ranges.json"
-    monkeypatch.setattr(sax_instruments, "_active_overrides",
-                        sax_instruments.RangeOverrides(path))
+    monkeypatch.setattr(instruments, "_active_overrides",
+                        instruments.RangeOverrides(path))
     return path
 
 
@@ -244,18 +244,18 @@ def _two_overrides(path: Path) -> str:
 
 
 def test_save_override_keeps_other_keys(ranges_file):
-    import sax_instruments
+    from intonation.catalog import instruments
     _two_overrides(ranges_file)
-    sax_instruments.save_range_override("eb_bari", 45, 77)
+    instruments.save_range_override("eb_bari", 45, 77)
     data = json.loads(ranges_file.read_text(encoding="utf-8"))["ranges"]
     assert data == {"eb_alto": [50, 80], "bb_tenor": [46, 78],
                     "eb_bari": [45, 77]}
-    assert sax_instruments.fingered_range("eb_bari") == (45, 77)
+    assert instruments.fingered_range("eb_bari") == (45, 77)
 
 
 def test_save_override_never_rewrites_after_failed_read(ranges_file,
                                                         monkeypatch):
-    import sax_instruments
+    from intonation.catalog import instruments
     original = _two_overrides(ranges_file)
     real_open = Path.open
 
@@ -266,34 +266,34 @@ def test_save_override_never_rewrites_after_failed_read(ranges_file,
 
     with monkeypatch.context() as mp:
         mp.setattr(Path, "open", locked)
-        with pytest.raises(sax_instruments.RangeOverridesUnreadable):
-            sax_instruments.save_range_override("eb_bari", 45, 77)
-        with pytest.raises(sax_instruments.RangeOverridesUnreadable):
-            sax_instruments.clear_range_override("eb_alto")
+        with pytest.raises(instruments.RangeOverridesUnreadable):
+            instruments.save_range_override("eb_bari", 45, 77)
+        with pytest.raises(instruments.RangeOverridesUnreadable):
+            instruments.clear_range_override("eb_alto")
     assert ranges_file.read_text(encoding="utf-8") == original
 
 
 def test_save_override_never_rewrites_corrupt_file(ranges_file):
-    import sax_instruments
+    from intonation.catalog import instruments
     ranges_file.write_text("{not json", encoding="utf-8")
-    with pytest.raises(sax_instruments.RangeOverridesUnreadable):
-        sax_instruments.save_range_override("eb_bari", 45, 77)
+    with pytest.raises(instruments.RangeOverridesUnreadable):
+        instruments.save_range_override("eb_bari", 45, 77)
     assert ranges_file.read_text(encoding="utf-8") == "{not json"
 
 
 def test_save_override_reports_write_failure(ranges_file, monkeypatch):
-    import sax_instruments
+    from intonation.catalog import instruments
     _two_overrides(ranges_file)
-    monkeypatch.setattr(sax_instruments, "atomic_write_json",
+    monkeypatch.setattr(instruments, "atomic_write_json",
                         lambda *a, **k: False)
     with pytest.raises(OSError):
-        sax_instruments.save_range_override("eb_bari", 45, 77)
+        instruments.save_range_override("eb_bari", 45, 77)
 
 
 def test_save_override_rejects_out_of_midi_range(ranges_file):
-    import sax_instruments
+    from intonation.catalog import instruments
     with pytest.raises(ValueError):
-        sax_instruments.save_range_override("eb_bari", 40, 148)
+        instruments.save_range_override("eb_bari", 40, 148)
     assert not ranges_file.exists()
 
 
@@ -303,20 +303,20 @@ def test_save_override_rejects_out_of_midi_range(ranges_file):
     ("B3", 59), ("C-1", 0), ("G9", 127), ("F#/Gb4", 66),
 ])
 def test_note_name_parser_accepts_display_forms(text, midi):
-    from sax_pitch import note_name_to_midi
+    from intonation.core.pitch import note_name_to_midi
     assert note_name_to_midi(text) == midi
 
 
 @requires_qt
 @pytest.mark.parametrize("text", ["A#/Cb3", "X3", "Bb", "3", "G#10", ""])
 def test_note_name_parser_rejects_garbage(text):
-    from sax_pitch import note_name_to_midi
+    from intonation.core.pitch import note_name_to_midi
     assert note_name_to_midi(text) is None
 
 
 @requires_qt
 def test_note_name_parser_round_trips_every_displayed_name():
-    from sax_pitch import midi_note_name, note_name_to_midi
+    from intonation.core.pitch import midi_note_name, note_name_to_midi
     bad = [m for m in range(128) if note_name_to_midi(midi_note_name(m)) != m]
     assert not bad, f"names the editor shows but cannot read back: {bad}"
 
@@ -324,7 +324,7 @@ def test_note_name_parser_round_trips_every_displayed_name():
 @requires_qt
 def test_range_editor_stays_open_when_nothing_was_saved(tmp_path):
     out = _run_gui(tmp_path, '''
-        import sax_instruments
+        from intonation.catalog import instruments
         def make():
             return RangeEditorDialog(
                 win, win._t, "eb_bari", "Bari", 45, 77, 45, 77, True,
@@ -341,7 +341,7 @@ def test_range_editor_stays_open_when_nothing_was_saved(tmp_path):
         dlg._on_save()
         out["fail_result"] = dlg.result()
         out["fail_error"] = dlg._error_lbl.isVisibleTo(dlg)
-        out["file"] = sax_instruments._RANGES_FILE.read_text(encoding="utf-8")
+        out["file"] = instruments._RANGES_FILE.read_text(encoding="utf-8")
     ''', files={"instrument_ranges.json": "{not json"})
     assert out["oor_result"] == 0 and out["oor_error"]
     assert out["fail_result"] == 0 and out["fail_error"]
@@ -355,7 +355,7 @@ def test_range_editor_stays_open_when_nothing_was_saved(tmp_path):
 def store(tmp_path):
     cfg_dir = tmp_path / ".intonation_analyzer"
     cfg_dir.mkdir(parents=True)
-    return sax_config.ConfigStore(AppPaths(cfg_dir))
+    return config.ConfigStore(AppPaths(cfg_dir))
 
 
 @pytest.fixture()
@@ -364,7 +364,7 @@ def isolated_config(store):
 
 
 def test_drone_settings_round_trip(store):
-    store.save(sax_config.AppConfig(
+    store.save(config.AppConfig(
         drone_voice_id="cello", drone_volume=0.0, drone_semitones=-5))
     cfg = store.load()
     assert (cfg.drone_voice_id, cfg.drone_volume, cfg.drone_semitones) == (
@@ -467,7 +467,7 @@ def test_aggregate_exports_neutralise_text_cells(tmp_path, mode, column):
     "=1+1", "+1", "-1", "@x", "\t=1", "\r=1", "'=1", "''=1",
 ])
 def test_csv_safe_round_trips(value):
-    from sax_intonation_log import _csv_import_text, _csv_safe
+    from intonation.persistence.history import _csv_import_text, _csv_safe
     escaped = _csv_safe(value)
     assert escaped.startswith("'")
     # Import strips control characters, so compare against that form.
@@ -475,7 +475,7 @@ def test_csv_safe_round_trips(value):
 
 
 def test_csv_safe_leaves_plain_text_alone():
-    from sax_intonation_log import _csv_import_text, _csv_safe
+    from intonation.persistence.history import _csv_import_text, _csv_safe
     for value in ("MarkVI", "'quoted", "2026-10-13T10:00:00", ""):
         assert _csv_safe(value) == value
         assert _csv_import_text(value) == value
@@ -522,14 +522,14 @@ def test_import_strips_control_characters(tmp_path):
     (15.0, "off"), (-40.0, "off"), (float("nan"), "off"), (None, "off"),
 ])
 def test_cents_band(cents, band):
-    from sax_theme import cents_band
+    from intonation.ui.theme import cents_band
     assert cents_band(cents) == band
 
 
 @requires_qt
 def test_cents_band_agrees_with_printed_value():
-    from sax_pitch import format_cents
-    from sax_theme import cents_band
+    from intonation.core.pitch import format_cents
+    from intonation.ui.theme import cents_band
     for tenth in range(-300, 301):
         value = tenth / 10.0
         printed = int(format_cents(value, 440.0, 48000))
@@ -543,7 +543,7 @@ def test_bar_delegate_and_table_use_shared_thresholds(tmp_path):
         from PyQt6.QtGui import QImage, QPainter, QStandardItemModel, QStandardItem
         from PyQt6.QtWidgets import QStyleOptionViewItem
 
-        import sax_widgets as W
+        from intonation.ui import widgets as W
         roles = []
         real_themed = W._themed
 
@@ -594,10 +594,10 @@ def test_bar_delegate_and_table_use_shared_thresholds(tmp_path):
 # 1.8  Unhandled exceptions are logged and reported instead of aborting
 # ---------------------------------------------------------------------------
 def test_crash_log_is_capped_at_line_boundary(tmp_path):
-    import sax_crash
+    from intonation import crash
     log = tmp_path / "crash.log"
     for i in range(200):
-        sax_crash.append_crash_log(f"Traceback {i}\n  line\nError: {i}",
+        crash.append_crash_log(f"Traceback {i}\n  line\nError: {i}",
                                    path=log, max_bytes=2048)
     data = log.read_bytes()
     assert len(data) <= 2048
@@ -610,10 +610,10 @@ def test_crash_log_is_capped_at_line_boundary(tmp_path):
 
 
 def test_excepthook_logs_and_reports(tmp_path, monkeypatch):
-    import sax_crash
-    monkeypatch.setattr(sax_crash, "_log_path", tmp_path / "cfg" / "crash.log")
+    from intonation import crash
+    monkeypatch.setattr(crash, "_log_path", tmp_path / "cfg" / "crash.log")
     shown = []
-    hook = sax_crash.make_excepthook(lambda path, details: shown.append(
+    hook = crash.make_excepthook(lambda path, details: shown.append(
         (path, details)))
     try:
         raise ValueError("boom-in-slot")
@@ -625,12 +625,12 @@ def test_excepthook_logs_and_reports(tmp_path, monkeypatch):
 
 
 def test_excepthook_survives_unwritable_log(tmp_path, monkeypatch):
-    import sax_crash
+    from intonation import crash
     blocker = tmp_path / "not-a-dir"
     blocker.write_text("x", encoding="utf-8")
-    monkeypatch.setattr(sax_crash, "_log_path", blocker / "crash.log")
+    monkeypatch.setattr(crash, "_log_path", blocker / "crash.log")
     shown = []
-    hook = sax_crash.make_excepthook(lambda path, details: shown.append(path))
+    hook = crash.make_excepthook(lambda path, details: shown.append(path))
     try:
         raise ValueError("boom")
     except ValueError:
@@ -656,8 +656,8 @@ def _run_script(tmp_path: Path, body: str) -> subprocess.CompletedProcess:
 
 def test_excepthook_before_qapplication_logs(tmp_path):
     proc = _run_script(tmp_path, '''
-        import sax_crash
-        sax_crash.install()
+        from intonation import crash
+        crash.install()
         raise RuntimeError("boom-before-qt")
     ''')
     log = tmp_path / "home" / ".intonation_analyzer" / "crash.log"
@@ -667,8 +667,9 @@ def test_excepthook_before_qapplication_logs(tmp_path):
 
 def test_thread_exceptions_are_logged(tmp_path):
     proc = _run_script(tmp_path, '''
-        import threading, sax_crash
-        sax_crash.install()
+        import threading
+        from intonation import crash
+        crash.install()
         t = threading.Thread(target=lambda: 1 / 0, name="worker-x")
         t.start(); t.join()
     ''')
@@ -681,9 +682,9 @@ def test_thread_exceptions_are_logged(tmp_path):
 @requires_qt
 def test_exception_in_slot_shows_dialog_instead_of_aborting(tmp_path):
     proc = _run_script(tmp_path, '''
-        import sax_crash
-        sax_crash.install()
-        sax_crash.set_lang_source(lambda: "de")
+        from intonation import crash
+        crash.install()
+        crash.set_lang_source(lambda: "de")
         from PyQt6.QtCore import QTimer
         from PyQt6.QtWidgets import QApplication, QMessageBox
         shown = []
@@ -721,7 +722,7 @@ class _AcceptAll:
 
 
 def _probe_engine(monkeypatch, pref):
-    import sax_audio_engine as E
+    from intonation.audio import engine as E
     monkeypatch.setattr(E, "sd", _AcceptAll, raising=False)
     eng = E.AudioEngine()
     eng.set_samplerate_pref(pref)
@@ -785,14 +786,14 @@ def test_filter_mode_coercion(store, isolated_config, raw, expected):
 
 
 def test_filter_mode_values_match_engine_presets():
-    from sax_audio_engine import FILTER_PRESETS
-    assert sax_config.FILTER_MODE_VALUES == set(FILTER_PRESETS)
+    from intonation.audio.engine import FILTER_PRESETS
+    assert config.FILTER_MODE_VALUES == set(FILTER_PRESETS)
 
 
 @requires_qt
 def test_response_combo_shows_the_engine_mode(tmp_path):
     out = _run_gui(tmp_path, '''
-        from sax_controls import response_combo
+        from intonation.ui.controls import response_combo
         out["engine"] = win._engine.filter_mode
         out["toolbar"] = win._toolbar._filter_combo.currentData()
         out["setup"] = win._setup_tab._response_combo.currentData()
@@ -826,7 +827,7 @@ def test_picker_restores_wait_cursor_when_closed_mid_reopen(tmp_path):
     out = _run_gui(tmp_path, '''
         import threading
         from PyQt6.QtGui import QGuiApplication
-        from sax_audio_engine import DeviceInfo
+        from intonation.audio.engine import DeviceInfo
         release = threading.Event()
         dev = DeviceInfo(index=0, name="Mic", host_api="ALSA",
                          max_input_channels=1, default_samplerate=48000.0)

@@ -128,7 +128,7 @@ def test_a_new_stream_brings_its_own_ring_at_its_own_rate(threaded_engine):
 
 # ---------------------------------------------------------------- the ring
 def _ring(block=8, hop=2):
-    from sax_audio_engine import _InputRing
+    from intonation.audio.engine import _InputRing
     return _InputRing(block, hop, 48000, inline=False)
 
 
@@ -176,7 +176,7 @@ def test_ring_keeps_only_the_newest_samples_of_an_oversized_block():
 
 # ------------------------------------------------- A4 generation on readings
 def _engine_with_sink():
-    from sax_audio_engine import AudioEngine
+    from intonation.audio.engine import AudioEngine
     eng = AudioEngine()
     sink = _Sink()
     eng.signals = sink
@@ -216,8 +216,8 @@ def test_the_window_drops_a_reading_graded_against_a_replaced_a4():
     the old generation; the window must not record it."""
     from types import SimpleNamespace
 
-    import sax_intonation_gui as gui
-    from sax_detector import NoteEvent
+    from intonation.core.detector import NoteEvent
+    from intonation.ui import main_window as gui
 
     recorded = []
     window = SimpleNamespace(_engine=SimpleNamespace(a4_generation=3),
@@ -238,7 +238,7 @@ def _hold(detector, tone_window, hops, coordinate=None, sr=44100):
 def test_an_excluded_hop_skips_its_vote_and_keeps_the_players_note():
     """One hop of drone bleed in the middle of the player's note must not end
     the note: no lock reset, no waiting reading discarded, no new attack edge."""
-    from sax_detector import Detector
+    from intonation.core.detector import Detector
 
     window = sim.sax_like(523.25, 44100, 16384, 0.5)       # the player's C5
     plain = Detector('normal')

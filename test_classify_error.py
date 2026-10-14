@@ -46,7 +46,7 @@ from __future__ import annotations
 
 import pytest
 
-from sax_audio_engine import AudioEngine, AudioEngineError
+from intonation.audio.engine import AudioEngine, AudioEngineError
 
 # ---------------------------------------------------------------------------
 # Fake exception — avoids any dependency on sounddevice.PortAudioError

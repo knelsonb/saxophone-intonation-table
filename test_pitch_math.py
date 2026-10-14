@@ -1,4 +1,4 @@
-"""Safety net for the two pure-math helpers in sax_audio_engine:
+"""Safety net for the two pure-math helpers in intonation.audio.engine:
 ``freq_to_midi`` and ``cents_dev``.
 
 No PyQt6, no sounddevice — the module-level try/except in the engine
@@ -11,7 +11,7 @@ import math
 
 import pytest
 
-from sax_audio_engine import A4_DEFAULT, cents_dev, freq_to_midi
+from intonation.audio.engine import A4_DEFAULT, cents_dev, freq_to_midi
 
 # ---------------------------------------------------------------------------
 # Helpers

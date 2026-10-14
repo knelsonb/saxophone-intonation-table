@@ -18,10 +18,10 @@ from pathlib import Path
 
 import pytest
 
-import sax_intonation_log as hist
-from sax_config import AppConfig, ConfigStore
-from sax_intonation_log import Measurement, MeasurementLog, RunMeta
-from sax_paths import AppPaths
+from intonation.persistence import history as hist
+from intonation.persistence.config import AppConfig, ConfigStore
+from intonation.persistence.history import Measurement, MeasurementLog, RunMeta
+from intonation.persistence.paths import AppPaths
 
 _REPO = Path(__file__).resolve().parent
 
@@ -125,10 +125,11 @@ def test_importing_the_persistence_modules_touches_no_file(monkeypatch):
             touched.append((_name, str(self)))
             return _real(self, *args, **kwargs)
         monkeypatch.setattr(Path, name, spy)
-    for module in ("sax_paths", "sax_config", "sax_instruments",
-                   "sax_intonation_log", "sax_crash"):
+    for module in ("intonation.persistence.paths", "intonation.persistence.config",
+                   "intonation.catalog.instruments", "intonation.persistence.history",
+                   "intonation.crash"):
         spec = importlib.util.spec_from_file_location(
-            f"_fresh_{module}", _REPO / f"{module}.py")
+            f"_fresh_{module.replace('.', '_')}", _REPO / f"{module.replace('.', '/')}.py")
         fresh = importlib.util.module_from_spec(spec)
         monkeypatch.setitem(sys.modules, spec.name, fresh)   # dataclasses look it up
         spec.loader.exec_module(fresh)

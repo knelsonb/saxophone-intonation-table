@@ -14,7 +14,7 @@ Gaps closed HERE:
     read_wav in try/except and is documented "never raises" — locked now against a
     battery of malformed files.
   * Engine non-finite sample gating: feed_input_frames computes an rms and bails a
-    frame whose rms is non-finite (sax_audio_engine.py:2000). Locked now: NaN/inf
+    frame whose rms is non-finite (intonation/audio/engine.py:2000). Locked now: NaN/inf
     input emits nothing and does not raise, a clean tone after garbage still
     detects (no poisoning), and degenerate block sizes are tolerated.
 """
@@ -25,11 +25,11 @@ import wave
 import numpy as np
 import pytest
 
-import sax_deck
 import sim_harness as H
-from sax_audio_engine import AudioEngine, freq_to_midi
-from sax_deck import DeckController, DeckState, write_wav
-from sax_mixer import Mixer
+from intonation.audio.engine import AudioEngine, freq_to_midi
+from intonation.audio.mixer import Mixer
+from intonation.audio.sources import deck as deck_module
+from intonation.audio.sources.deck import DeckController, DeckState, write_wav
 
 
 # ---------------------------------------------------------------------------
@@ -85,7 +85,7 @@ def test_load_take_rejects_zero_samplerate(monkeypatch):
     DeckPlaybackSource ratio 0 -> _render_resampled divides by zero on play.
     load_take must reject sr<=0 at the boundary. (wave can't WRITE framerate 0,
     so inject it via read_wav — ADVERSARIAL-SWEEP wave 5.)"""
-    monkeypatch.setattr(sax_deck, "read_wav",
+    monkeypatch.setattr(deck_module, "read_wav",
                         lambda p: (np.ones(100, dtype=np.float32), 0))
     deck = DeckController(Mixer(max_block=1024), 48000)
     assert deck.load_take("anything.wav") is False
@@ -165,9 +165,8 @@ def test_controller_set_a4_rejects_bad_input():
     drone's _a4_to_tuning_semitones does log2(a4/440) (domain error at a4<=0) and
     the pitch pipe would render NaN into its sine. GUI/config clamp a4 to
     [430,450], but the public setters must be robust like the engine's set_a4."""
-    import sax_drone
-    import sax_pitch_pipes as pp
-    dctrl = sax_drone.DroneController(Mixer(max_block=1024), 48000, a4=440.0)
+    from intonation.audio.sources import drone, pitch_pipes as pp
+    dctrl = drone.DroneController(Mixer(max_block=1024), 48000, a4=440.0)
     pctrl = pp.PitchPipesController(Mixer(max_block=1024), 48000, a4=440.0)
     for bad in (0.0, -5.0, float("inf"), float("nan")):
         dctrl.set_a4(bad)

@@ -1,6 +1,6 @@
 """Safety net for the cents readout — INTEGER-CENTS contract.
 
-* sax_pitch.format_cents(value_cents, freq_hz, sample_rate) is the one
+* intonation.core.pitch.format_cents(value_cents, freq_hz, sample_rate) is the one
   formatter; the live readout (tuner, table, matrix) and the exported chart
   both call it.
 
@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import pytest
 
-from sax_pitch import format_cents
+from intonation.core.pitch import format_cents
 
 SENTINEL = '–'   # U+2013 EN DASH
 
@@ -100,8 +100,8 @@ def test_return_type_str(fn, value, freq, sr):
 #    cell and its chart label can never disagree.
 def test_chart_uses_the_shared_formatter():
     pytest.importorskip('PyQt6', reason='the chart module paints with Qt')
-    import sax_intonation_chart
-    assert sax_intonation_chart.format_cents is format_cents
+    from intonation.export import chart
+    assert chart.format_cents is format_cents
 
 
 # 9. Sentinel glyph identity — U+2013 EN DASH (paint path compares to the literal).

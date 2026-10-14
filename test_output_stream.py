@@ -1,6 +1,6 @@
 """Acceptance net for the v0.6.3 engine OUTPUT mirror.
 
-The output path in ``sax_audio_engine`` mirrors the long-hardened input path:
+The output path in ``intonation.audio.engine`` mirrors the long-hardened input path:
 worker-thread open with a join timeout + cancelled-flag orphan disposal,
 sample-rate negotiation, device-vanished -> DEVICE_DISCONNECTED, hot-plug
 auto-recover, and SEPARATE output status fields so output lifecycle can never
@@ -10,7 +10,7 @@ with a fake ``sounddevice`` so no PortAudio / audio hardware is required.
 The fake ``sounddevice`` is defined here and put into sys.modules by the
 ``_engine`` fixture for one test at a time, so the engine sees AUDIO_OK as
 True at import; the engine copy it loads is private to the test and the real
-``sax_audio_engine`` is left alone (same pattern as test_hotplug_recovery.py).
+``intonation.audio.engine`` is left alone (same pattern as test_hotplug_recovery.py).
 The orphan-disposal tests drive ``_try_open_output`` / ``_try_open`` directly
 with a stream whose constructor blocks until the test releases it.
 """

@@ -22,7 +22,7 @@ MuseScore where they conflict — saxophones at low A, contras at low C.
 The override list is explicit in OVERRIDES.
 
 Output: a freshly generated `_RANGES` dict that we paste into
-sax_instruments.py (the script prints it; the caller chooses what to
+intonation/catalog/instruments.py (the script prints it; the caller chooses what to
 merge).
 """
 

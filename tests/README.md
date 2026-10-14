@@ -12,8 +12,8 @@
 Scenario tests talk to the app only through `tests.harness`
 (`HeadlessApp` and the objects hanging off it: `table`, `tuner`, `export`,
 `metronome`, `drone`, `pipes`, `deck`, `settings`, `audio`, `welcome`,
-`autotune`, `dialogs`, `host`). They never import a `sax_*` module and never
-touch a widget.
+`autotune`, `dialogs`, `host`). They never import an app module (`intonation.*`)
+and never touch a widget.
 
 `tests/harness/driver.py` is the one module that knows how the app is built. Its
 docstring lists every internal it relies on. When the app is restructured, that

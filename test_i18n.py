@@ -1,4 +1,4 @@
-"""i18n key-coverage / de-en parity net for sax_i18n.STRINGS.
+"""i18n key-coverage / de-en parity net for intonation.i18n.strings.STRINGS.
 
 Every translation key must exist in BOTH languages with a non-empty value, so
 no control ships English-only. This locks that invariant: any later string
@@ -7,7 +7,7 @@ silently shipping a half-translated control. Pure Python; runs under system pyth
 """
 from __future__ import annotations
 
-import sax_i18n as i18n
+from intonation.i18n import strings as i18n
 
 
 def test_languages_present():

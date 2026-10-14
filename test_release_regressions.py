@@ -12,21 +12,21 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import sax_config
-import sax_pitch_pipes as pp
 import sim_harness as H
-from sax_drone import _DEFAULT_PROGRAM, resolve_drone_voice
-from sax_intonation_log import Measurement, MeasurementLog, RunMeta, _read_csv_text
-from sax_metronome import MetronomeController
-from sax_mixer import Mixer
-from sax_paths import AppPaths
+from intonation.audio.mixer import Mixer
+from intonation.audio.sources import pitch_pipes as pp
+from intonation.audio.sources.drone import _DEFAULT_PROGRAM, resolve_drone_voice
+from intonation.audio.sources.metronome import MetronomeController
+from intonation.persistence import config
+from intonation.persistence.history import Measurement, MeasurementLog, RunMeta, _read_csv_text
+from intonation.persistence.paths import AppPaths
 
 
 @pytest.fixture()
 def store(tmp_path):
     cfg_dir = tmp_path / ".intonation_analyzer"
     cfg_dir.mkdir(parents=True)
-    return sax_config.ConfigStore(AppPaths(cfg_dir))
+    return config.ConfigStore(AppPaths(cfg_dir))
 
 
 def _fail_reads_of(mp, target: Path) -> None:
@@ -44,7 +44,7 @@ def _fail_reads_of(mp, target: Path) -> None:
 # --- configuration -----------------------------------------------------------
 def test_config_with_non_utf8_bytes_loads_defaults(store):
     store.paths.config.write_bytes(b'{"log_path": "C:\\\\M\xe4rz"}')
-    assert store.load() == sax_config.AppConfig()
+    assert store.load() == config.AppConfig()
 
 
 def test_unreadable_config_is_not_overwritten_on_save(store, monkeypatch):
@@ -226,16 +226,16 @@ def test_metronome_quick_restart_keeps_one_beat_chain():
 
 # --- drone without the SoundFont synth ------------------------------------------
 def test_drone_falls_back_to_sine_when_synth_cannot_load(monkeypatch):
-    import sax_drone
+    from intonation.audio.sources import drone
 
     def no_synth(*_a, **_k):
         raise ImportError("No module named 'tinysoundfont'")
 
-    monkeypatch.setattr(sax_drone, "DroneSource", no_synth)
-    ctrl = sax_drone.DroneController(Mixer(max_block=1024), 48000, voice_id="organ")
+    monkeypatch.setattr(drone, "DroneSource", no_synth)
+    ctrl = drone.DroneController(Mixer(max_block=1024), 48000, voice_id="organ")
     ctrl.set_enabled(True)
     assert ctrl.enabled and ctrl.synth_fallback
-    assert ctrl.voice_id == sax_drone.SINE_VOICE_ID
+    assert ctrl.voice_id == drone.SINE_VOICE_ID
 
 
 # --- catalog -------------------------------------------------------------------
@@ -245,20 +245,20 @@ def test_drone_falls_back_to_sine_when_synth_cannot_load(monkeypatch):
     ("double_bass", -12), ("bass_guitar", -12),
 ])
 def test_catalog_transpositions(key, transp):
-    import sax_instruments
-    assert sax_instruments.transp_map()[key] == transp
+    from intonation.catalog import instruments
+    assert instruments.transp_map()[key] == transp
 
 
 def test_transp_map_sees_a_custom_registered_after_first_use(monkeypatch):
     # The window, table and exports all read transp_map() at use time; a
     # custom instrument added mid-session must reach every one of them.
-    import sax_instruments
-    monkeypatch.setattr(sax_instruments, "_CUSTOMS", [])
-    assert "custom_mezzo" not in sax_instruments.transp_map()
-    sax_instruments.register_custom("custom_mezzo", -7, "Mezzo", "Mezzo")
-    assert sax_instruments.transp_map()["custom_mezzo"] == -7
+    from intonation.catalog import instruments
+    monkeypatch.setattr(instruments, "_CUSTOMS", [])
+    assert "custom_mezzo" not in instruments.transp_map()
+    instruments.register_custom("custom_mezzo", -7, "Mezzo", "Mezzo")
+    assert instruments.transp_map()["custom_mezzo"] == -7
     with pytest.raises(TypeError):
-        sax_instruments.transp_map()["eb_alto"] = 0     # read-only: shared cache
+        instruments.transp_map()["eb_alto"] = 0     # read-only: shared cache
 
 
 @pytest.mark.parametrize("key, lowest_sounding", [
@@ -268,22 +268,22 @@ def test_transp_map_sees_a_custom_registered_after_first_use(monkeypatch):
     ("rec_sopranino_f", 77),   # F5
 ])
 def test_catalog_range_covers_lowest_note(key, lowest_sounding):
-    import sax_instruments
-    lo, _hi = sax_instruments.fingered_range(key)
-    assert lo + sax_instruments.transp_map()[key] <= lowest_sounding
+    from intonation.catalog import instruments
+    lo, _hi = instruments.fingered_range(key)
+    assert lo + instruments.transp_map()[key] <= lowest_sounding
 
 
 # --- interface text -------------------------------------------------------------
 @pytest.mark.parametrize("lang", ["de", "en"])
 def test_transposition_line_has_single_sign(lang):
-    from sax_i18n import STRINGS
+    from intonation.i18n.strings import STRINGS
     text = STRINGS[lang]["pdf_transp"].format(note="A#/Bb", n=-14)
     assert "-14" in text and "+-" not in text
 
 
 # --- table frequencies behind a concert-pitch change ----------------------------
 def test_notestats_keeps_frequencies_for_a4_rederive():
-    from sax_stats import NoteStats
+    from intonation.core.stats import NoteStats
     st = NoteStats()
     st.add(3.0, 440.76)
     st.add(-1.0)

@@ -11,7 +11,7 @@ from dataclasses import fields
 
 import pytest
 
-import sax_theme as th
+from intonation.ui import theme as th
 
 _HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 

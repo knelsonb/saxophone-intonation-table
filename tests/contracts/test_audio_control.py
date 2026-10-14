@@ -14,7 +14,7 @@ import time
 
 import pytest
 
-from sax_audio_control import ControlWorker
+from intonation.audio.control import ControlWorker
 from tests.harness.fake_audio import FakeAudioHost
 
 _WAIT_S = 5.0

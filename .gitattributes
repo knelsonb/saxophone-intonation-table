@@ -1,8 +1,7 @@
 # Normalize all text files to LF in the repo. Working-tree EOLs follow
 # core.autocrlf on Windows checkouts (which converts back to CRLF) and stay
-# LF everywhere else. Without this, four files (sax_instruments,
-# sax_intonation_chart, sax_intonation_gui, sax_intonation_log) carry CRLF
-# and the rest carry LF, generating spurious diffs across platforms.
+# LF everywhere else. Without this, four source files once carried CRLF
+# and the rest LF, generating spurious diffs across platforms.
 
 * text=auto eol=lf
 

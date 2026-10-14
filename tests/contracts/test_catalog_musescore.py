@@ -1,6 +1,6 @@
 """Instrument catalog versus its source of truth, MuseScore's instruments.xml.
 
-The catalog (sax_instruments) stores a transposition and a baked FINGERED range
+The catalog (intonation.catalog.instruments) stores a transposition and a baked FINGERED range
 per instrument; both were derived from tools/musescore/instruments.xml (see
 tools/musescore/sync_ranges.py). In that file ``transposeChromatic`` is
 ``sounding - written`` and ``aPitchRange`` is a SOUNDING range. So for every key
@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-import sax_instruments as si
+from intonation.catalog import instruments as si
 
 _SYNC_PATH = (Path(__file__).resolve().parents[2]
               / 'tools' / 'musescore' / 'sync_ranges.py')

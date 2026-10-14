@@ -15,8 +15,8 @@ import pytest
 
 # ---------------------------------------------------------------------------
 # Ensure the repo root is on sys.path so test files can import production
-# modules (sax_audio_engine, sax_intonation_log, …) without installing the
-# package or setting PYTHONPATH manually.
+# modules (intonation.audio.engine, intonation.persistence.history, …) without
+# installing the package or setting PYTHONPATH manually.
 # ---------------------------------------------------------------------------
 _REPO_ROOT = Path(__file__).parent
 if str(_REPO_ROOT) not in sys.path:
@@ -47,29 +47,35 @@ def _fresh_persistence_stores(monkeypatch):
     again on first use, from the HOME the test runs with. (Settings need no
     reset: every ConfigStore is created by whoever uses it.)
     """
-    import sax_crash
-    import sax_instruments
-    monkeypatch.setattr(sax_instruments, "_active_overrides", None)
-    monkeypatch.setattr(sax_crash, "_log_path", None)
+    from intonation import crash
+    from intonation.catalog import instruments
+    monkeypatch.setattr(instruments, "_active_overrides", None)
+    monkeypatch.setattr(crash, "_log_path", None)
 
 
 @pytest.fixture()
 def load_engine_with_sounddevice(monkeypatch):
-    """Return ``load(fake_sd)``: a private copy of ``sax_audio_engine`` executed
-    against a fake ``sounddevice`` module.
+    """Return ``load(fake_sd)``: a private copy of ``intonation.audio.engine``
+    executed against a fake ``sounddevice`` module.
 
     The engine decides at import time whether audio is available, so a fake
     device layer has to be in ``sys.modules`` while the module body runs. The
     copy is installed through monkeypatch and removed again after the test; the
-    real ``sax_audio_engine`` that every other test imported is never reloaded,
-    so its classes and enums keep a single identity across the session.
+    real ``intonation.audio.engine`` that every other test imported is never
+    reloaded, so its classes and enums keep a single identity across the session.
+    The copy also replaces the ``engine`` attribute of ``intonation.audio``:
+    ``from intonation.audio import engine`` reads that attribute, not
+    ``sys.modules``.
     """
+    import intonation.audio
+
     def load(fake_sd):
         monkeypatch.setitem(sys.modules, "sounddevice", fake_sd)
         spec = importlib.util.spec_from_file_location(
-            "sax_audio_engine", _REPO_ROOT / "sax_audio_engine.py")
+            "intonation.audio.engine", _REPO_ROOT / "intonation" / "audio" / "engine.py")
         module = importlib.util.module_from_spec(spec)
-        monkeypatch.setitem(sys.modules, "sax_audio_engine", module)
+        monkeypatch.setitem(sys.modules, "intonation.audio.engine", module)
+        monkeypatch.setattr(intonation.audio, "engine", module, raising=False)
         spec.loader.exec_module(module)
         return module
 

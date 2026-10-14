@@ -19,7 +19,7 @@ import math
 import numpy as np
 import pytest
 
-from sax_audio_engine import DEFAULT_BLOCK_SIZE, yin_pitch
+from intonation.audio.engine import DEFAULT_BLOCK_SIZE, yin_pitch
 
 
 def _cents(detected: float, true: float) -> float:
@@ -112,7 +112,7 @@ def test_no_systematic_sharp_bias() -> None:
 # at A4 >= ~441 (or a sharp-played C8) the freq gate rejected it.
 # ---------------------------------------------------------------------------
 def test_max_freq_covers_top_note_at_max_a4() -> None:
-    from sax_audio_engine import MAX_FREQ
+    from intonation.audio.engine import MAX_FREQ
     # C8 + 50 cents (the C8/C#8 rounding boundary) at the top of the allowed
     # A4 range (450 Hz). The freq gate must clear this so it never pre-rejects
     # a note the MIDI-range gate (midi_max=108) would accept.
@@ -125,7 +125,7 @@ def test_max_freq_covers_top_note_at_max_a4() -> None:
 def test_c8_detected_and_passes_freq_gate(a4: float) -> None:
     """C8 (MIDI 108) is detected across the whole allowed A4 range AND the
     detected pitch is below MAX_FREQ (so the engine's freq gate accepts it)."""
-    from sax_audio_engine import MAX_FREQ
+    from intonation.audio.engine import MAX_FREQ
     c8 = a4 * 2.0 ** ((108 - 69) / 12.0)
     det, _ap = yin_pitch(_sine(c8, 44100, DEFAULT_BLOCK_SIZE), 44100)
     assert det > 0, f'C8 at A4={a4} not detected'
@@ -199,7 +199,7 @@ def test_heavy_noise_is_rejected_by_the_aperiodicity_gate() -> None:
     """A 440 Hz tone buried at 0 dB SNR can read any pitch (YIN falls to a
     sub-harmonic lag), so what protects the table is that its aperiodicity
     stays above every filter preset's ceiling and the frame is dropped."""
-    from sax_audio_engine import FILTER_PRESETS
+    from intonation.audio.engine import FILTER_PRESETS
     from sim_harness import noisy
     _freq, ap = yin_pitch(noisy(440.0, 44100, 4096, snr_db=0.0, seed=42), 44100)
     assert ap > max(p['yin_thr'] for p in FILTER_PRESETS.values())

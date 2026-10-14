@@ -35,15 +35,21 @@ sd_hidden = collect_submodules('sounddevice')
 
 # tinysoundfont (the drone synth) ships its synth as a compiled extension
 # (_tinysoundfont.*.so/.pyd) inside the wheel. It is imported LAZILY (guarded
-# try/except) by sax_drone, so PyInstaller's static analysis can miss it —
+# try/except) by intonation.audio.sources.drone, so PyInstaller's static
+# analysis can miss it —
 # collect the binary + submodules + hiddenimport it explicitly. The SoundFont
 # itself (assets/GeneralUser-GS.sf2) rides along in the assets/ datas below; the
-# app resolves it at runtime via sax_assets.asset_path (sys._MEIPASS-aware).
+# app resolves it at runtime via intonation.assets.asset_path
+# (sys._MEIPASS-aware).
 tsf_binaries = collect_dynamic_libs('tinysoundfont')
 tsf_hidden = collect_submodules('tinysoundfont')
 
+# The entry is the package's own __main__ (what `python -m intonation` runs).
+# Every app import is absolute (`from intonation.x import ...`), so the script
+# runs unchanged as the frozen binary's top-level module; pathex puts the repo
+# root, which holds the package, on the analysis path.
 a = Analysis(
-    [str(HERE / 'main.py')],
+    [str(HERE / 'intonation' / '__main__.py')],
     pathex=[str(HERE)],
     binaries=sd_binaries + tsf_binaries,
     datas=[
@@ -56,28 +62,28 @@ a = Analysis(
         *sd_datas,
     ],
     hiddenimports=[
-        # main.py imports the window module inside main(), after the crash
-        # handler is installed; declare it rather than rely on the analysis
-        # following a function-level import.
-        'sax_intonation_gui',
-        'sax_intonation_log',
-        'sax_intonation_chart',
-        'sax_instruments',
-        'sax_config',
-        'sax_flow_layout',
-        'sax_audio_engine',
-        'sax_yin',
-        'sax_detector',
+        # intonation/__main__.py imports the window module inside main(),
+        # after the crash handler is installed; declare it rather than rely on
+        # the analysis following a function-level import.
+        'intonation.ui.main_window',
+        'intonation.persistence.history',
+        'intonation.export.chart',
+        'intonation.catalog.instruments',
+        'intonation.persistence.config',
+        'intonation.ui.flow_layout',
+        'intonation.audio.engine',
+        'intonation.core.yin',
+        'intonation.core.detector',
         # Audio output modules, listed explicitly so a later change that loads
         # one lazily cannot drop it from the binary (test_packaging checks that
         # every app module is either reached at import time or listed here).
-        'sax_mixer',
-        'sax_coordination',
-        'sax_metronome',
-        'sax_drone',
-        'sax_pitch_pipes',
-        'sax_deck',
-        'sax_assets',
+        'intonation.audio.mixer',
+        'intonation.core.coordination',
+        'intonation.audio.sources.metronome',
+        'intonation.audio.sources.drone',
+        'intonation.audio.sources.pitch_pipes',
+        'intonation.audio.sources.deck',
+        'intonation.assets',
         'tinysoundfont',
         '_sounddevice',
         *sd_hidden,

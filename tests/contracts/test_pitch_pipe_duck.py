@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import numpy as np
 
-import sax_pitch_pipes as pp
-from sax_mixer import Mixer
+from intonation.audio.mixer import Mixer
+from intonation.audio.sources import pitch_pipes as pp
 from tests.harness import Tone
 
 
