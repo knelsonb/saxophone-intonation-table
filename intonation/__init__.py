@@ -18,4 +18,4 @@ theme names from ``ui.theme``.
 """
 
 APP_NAME = 'Intonation Analyzer'
-APP_VERSION = '1.4.0'
+APP_VERSION = '2.0.0'
