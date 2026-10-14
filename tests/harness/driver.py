@@ -85,8 +85,10 @@ must keep or update here:
   Dialogs (recognised in ``_classify``; filled in the ``_fill_*`` methods)
     * welcome (objectName ``welcomeDlg``), maker/model, CSV slice, custom
       instrument (property ``_lang_title_key``), ``RangeEditorDialog``
-      (``_lo_spin`` ``_hi_spin`` ``_btn_save`` ``_btn_cancel`` ``_btn_restore``
-      ``_error_lbl``), ``AudioPickerDialog`` (recognised, not scriptable);
+      (``_lo_spin`` ``_hi_spin`` ``_lo_name`` ``_hi_name`` ``_btn_save``
+      ``_btn_cancel`` ``_btn_restore`` ``_error_lbl``; typing into the name
+      fields shows the dialog so Enter reaches its default button),
+      ``AudioPickerDialog`` (recognised, not scriptable);
       the classes live in ``intonation.ui.dialogs`` and are recognised by
       class name.
   Export capture
@@ -558,6 +560,8 @@ class AppDriver:
     def _fill_range_editor(self, dlg, answer: str, fields: dict) -> bool:
         from PyQt6.QtWidgets import QDialog
         self.last_form_note = None
+        if "type_lo" in fields or "type_hi" in fields:
+            return self._type_into_range_editor(dlg, fields)
         if fields.get("restore"):
             dlg._btn_restore.click()
         for key, spin in (("lo", dlg._lo_spin), ("hi", dlg._hi_spin)):
@@ -572,6 +576,33 @@ class AppDriver:
         if answer == "accept" and not accepted:
             # Save is disabled while lo > hi; close the dialog so nothing hangs.
             self.last_form_note = dlg._error_lbl.text() or "range editor refused to save"
+            dlg._btn_cancel.click()
+        self._form_accepted = accepted
+        return accepted
+
+    def _type_into_range_editor(self, dlg, fields: dict) -> bool:
+        """Type note names into the editor's name fields (``_lo_name``,
+        ``_hi_name``) and press Enter in the last one, as a person does. The
+        dialog is shown for this: Qt picks the button Enter presses only for
+        a visible dialog. Whatever Enter did, the dialog is closed afterwards
+        (with Cancel if it is still open) so nothing hangs."""
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtTest import QTest
+        from PyQt6.QtWidgets import QDialog
+        dlg.show()
+        self.qapp.processEvents()
+        edit = None
+        for key, name_edit in (("type_lo", dlg._lo_name), ("type_hi", dlg._hi_name)):
+            if key in fields:
+                edit = name_edit
+                edit.setFocus()
+                edit.selectAll()
+                QTest.keyClicks(edit, str(fields[key]))
+        QTest.keyClick(edit, Qt.Key.Key_Return)
+        self.qapp.processEvents()
+        accepted = int(dlg.result()) == int(QDialog.DialogCode.Accepted)
+        if dlg.isVisible():
+            self.last_form_note = dlg._error_lbl.text() or "Enter did not close the range editor"
             dlg._btn_cancel.click()
         self._form_accepted = accepted
         return accepted
@@ -1023,6 +1054,23 @@ class AppDriver:
         self._form_accepted = False
         with self.dialogs.scope():
             self.dialogs.expect("range_editor", "accept" if accept else "reject", **fields)
+            self.win._setup_tab._btn_range.click()
+        return self._form_accepted
+
+    def type_range(self, lo, hi) -> bool:
+        """Open the range editor from SETUP, type ``lo`` and/or ``hi`` as note
+        names and press Enter. Returns whether the editor saved."""
+        fields = {}
+        if lo is not None:
+            fields["type_lo"] = lo
+        if hi is not None:
+            fields["type_hi"] = hi
+        if not fields:
+            raise HarnessError("type_range needs lo or hi")
+        self.last_form_note = None
+        self._form_accepted = False
+        with self.dialogs.scope():
+            self.dialogs.expect("range_editor", "accept", **fields)
             self.win._setup_tab._btn_range.click()
         return self._form_accepted
 

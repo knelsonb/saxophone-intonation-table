@@ -846,6 +846,11 @@ class RangeEditorDialog(QDialog):
         self._btn_save.clicked.connect(self._on_save)
         for _b in (self._btn_restore, self._btn_cancel, self._btn_save):
             _b.setObjectName('chrome')   # themed via QPushButton#chrome (+disabled)
+        # Enter after typing a note must save. Without this Qt gives Enter to
+        # the first button created, Restore, which silently undid the typing.
+        self._btn_restore.setAutoDefault(False)
+        self._btn_cancel.setAutoDefault(False)
+        self._btn_save.setDefault(True)
         btn_row.addWidget(self._btn_restore)
         btn_row.addStretch()
         btn_row.addWidget(self._btn_cancel)
@@ -939,6 +944,14 @@ class RangeEditorDialog(QDialog):
         self._hi_spin.setValue(hi + self._transp)
 
     def _on_save(self) -> None:
+        # A typed name that does not parse leaves its spin box on the old
+        # value; saving then would store a range the player did not ask for.
+        # Keep the dialog open with the error shown instead.
+        for edit in (self._lo_name, self._hi_name):
+            if note_name_to_midi(edit.text()) is None:
+                self._set_invalid(edit, True)
+                self._show_error(self._t('range_note_name_invalid'))
+                return
         # Spinbox values are in the current display mode. Convert back
         # to fingered (canonical) before persisting so the file format
         # is stable across users with different display preferences.

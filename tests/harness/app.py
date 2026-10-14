@@ -386,6 +386,11 @@ class Settings(_Part):
         Returns whether the editor accepted; ``app.range_error`` says why not."""
         return self._done(self._d.edit_range(lo, hi, restore, accept))
 
+    def type_range(self, lo=None, hi=None) -> bool:
+        """Open the range editor, type the note name(s) into the low and/or
+        high field and press Enter. Returns whether the editor saved."""
+        return self._done(self._d.type_range(lo, hi))
+
     def add_custom_instrument(self, name: str, transpose: int = 0, accept: bool = True):
         """Add a custom instrument; returns its key (None if not added)."""
         return self._done(self._d.add_custom_instrument(name, transpose, accept))
