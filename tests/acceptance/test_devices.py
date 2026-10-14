@@ -59,8 +59,6 @@ def visible_audio_text(app) -> str:
 
 
 # =================================================================== output
-@pytest.mark.xfail(strict=True, reason="Frodo-4: an unplugged output is never noticed; "
-                                       "the test tone keeps claiming to play")
 def test_unplugging_the_speaker_stops_the_test_tone_and_says_so(app):
     """Pull the headphones while the test tone plays: the app notices and the
     button stops claiming to play."""
@@ -74,8 +72,6 @@ def test_unplugging_the_speaker_stops_the_test_tone_and_says_so(app):
     assert not app.settings.test_tone_playing
 
 
-@pytest.mark.xfail(strict=True, reason="Frodo-4: no output polling; a replugged speaker "
-                                       "stays silent until restart")
 def test_the_test_tone_sounds_again_after_the_speaker_is_plugged_back_in(app):
     """Unplug and replug the speaker, press the test tone again: it is heard."""
     app.settings.test_tone(True)
@@ -91,8 +87,6 @@ def test_the_test_tone_sounds_again_after_the_speaker_is_plugged_back_in(app):
     assert heard_440(app)
 
 
-@pytest.mark.xfail(strict=True, reason="Frodo-4: the metronome stays silent after the "
-                                       "speaker is replugged")
 def test_the_metronome_keeps_clicking_after_the_speaker_is_plugged_back_in(app):
     """A running metronome survives a headphone unplug and replug."""
     app.metronome.start(bpm=120, time_sig="4/4")
@@ -107,8 +101,6 @@ def test_the_metronome_keeps_clicking_after_the_speaker_is_plugged_back_in(app):
     assert len(app.capture_output(2.0).onsets()) >= 3
 
 
-@pytest.mark.xfail(strict=True, reason="Frodo-4: the SETUP output list is filled once; "
-                                       "new outputs never appear until restart")
 def test_headphones_plugged_in_after_launch_appear_in_setup(app):
     """Headphones plugged in mid-session show up in the output list."""
     assert DEFAULT_OUTPUT in app.settings.output_devices
@@ -158,8 +150,6 @@ def test_a_speaker_that_refuses_every_rate_says_what_to_do_and_recovers(app):
     assert len(app.capture_output(2.0).onsets()) >= 3
 
 
-@pytest.mark.xfail(strict=True, reason="New-6-2: the output failure text names neither "
-                                       "the device nor the refused rate")
 def test_a_refused_speaker_is_named_in_the_message(app):
     """The test-tone error says WHICH output failed, so the player knows what
     to fix."""
@@ -195,8 +185,6 @@ def test_an_unplugged_mic_is_named_and_listening_resumes_on_replug(app):
     assert is_listening(app, "C5")
 
 
-@pytest.mark.xfail(strict=True, reason="New-6-3: Retry with the interface still unplugged "
-                                       "says 'No audio input found' and drops its name")
 def test_retry_with_the_interface_still_unplugged_keeps_naming_it(make_app, host):
     """Clicking Retry before plugging the interface back in must not claim
     there is no input at all while the laptop mic is right there."""
@@ -251,8 +239,6 @@ def test_a_busy_mic_says_what_to_do_and_retry_returns_to_listening(make_app, hos
     assert is_listening(app)
 
 
-@pytest.mark.xfail(strict=True, reason='New-6-1: the busy banner reads \'"?" is busy\'; '
-                                       "the device that failed to open is unnamed")
 def test_the_busy_banner_names_the_busy_mic(make_app, host):
     """'"?" is busy' tells the player nothing; the banner names the device."""
     host.set_fail(DEFAULT_INPUT, "busy")
@@ -308,8 +294,6 @@ def _launch_without_the_saved_interface(make_app, host):
     return app
 
 
-@pytest.mark.xfail(strict=True, reason="Frodo-5: falling back to another mic shows no "
-                                       "notice naming the missing interface")
 def test_starting_without_the_saved_interface_says_so(make_app, host):
     """Launching with the interface unplugged tells the player the app is on
     another mic and which one it was looking for."""
@@ -319,8 +303,6 @@ def test_starting_without_the_saved_interface_says_so(make_app, host):
     assert INTERFACE in shown and DEFAULT_INPUT in shown
 
 
-@pytest.mark.xfail(strict=True, reason="Frodo-5: the fallback mic overwrites the saved "
-                                       "interface, so it is never used again")
 def test_the_saved_interface_is_used_again_after_a_session_on_the_fallback(make_app, host):
     """One session on the laptop mic must not make the app forget the
     interface: with it plugged in again, the next launch uses it."""
@@ -400,8 +382,6 @@ def test_a_hung_mic_freezes_the_window_no_longer_than_the_open_timeout(app):
     assert frozen < FakeAudioHost.OPEN_TIMEOUT_S + 1.0
 
 
-@pytest.mark.xfail(strict=True, reason="Legolas-10: the open timeout is paid again for "
-                                       "every candidate rate on the UI thread")
 def test_a_hung_mic_with_many_rates_freezes_no_longer_than_one_timeout(make_app, host):
     """A hung interface that lists three rates must not freeze the window three
     times as long."""

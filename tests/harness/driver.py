@@ -22,6 +22,11 @@ the list below is the contract the rewrite must keep or update here:
       every reading reaches the window before ``pump_input`` returns, in the
       order played; with the real analysis thread, readings would arrive
       whenever that thread and the Qt event loop got to them);
+    * ``sax_audio_engine.CONTROL_IN_THREAD`` (patched to False: device
+      commands — open, close, retry, the hot-plug poll — run inline where the
+      window requests them, so a click that opens a device has opened it, and
+      the window has handled the outcome, when the click returns; the real
+      audio-control thread is covered by tests/contracts/test_audio_control.py);
     * data directory ``~/.intonation_analyzer`` (resolved from HOME when the
       window is built, ``sax_paths.AppPaths.from_environment``) holding
       ``config.json``, ``custom_instruments.json``, ``instrument_ranges.json``,
@@ -220,6 +225,7 @@ class AppDriver:
         engine = sys.modules["sax_audio_engine"]
         p.setattr(engine, "HOST_API_OPEN_TIMEOUT_S", self.host.OPEN_TIMEOUT_S)
         p.setattr(engine, "ANALYSIS_IN_THREAD", False)
+        p.setattr(engine, "CONTROL_IN_THREAD", False)
         p.setattr(sys, "excepthook", self._trap_exception)
 
         self.dialogs.classify = self._classify
@@ -950,8 +956,8 @@ class AppDriver:
         self._combo_select(self.win._setup_mic_gain_combo, db, "mic gain")
 
     def select_output_device(self, name: Optional[str]) -> None:
-        # The SETUP list is filled once when the window is built, so a device
-        # plugged in later is not offered until the next launch.
+        # The SETUP list is filled when the window is built and refreshed by
+        # the 1 s device poll (``_out_device_combo``).
         self._combo_select(self.win._out_device_combo, name or "", "output device")
 
     def output_device_names(self) -> list[str]:

@@ -3,8 +3,8 @@
 The output path in ``sax_audio_engine`` mirrors the long-hardened input path:
 worker-thread open with a join timeout + cancelled-flag orphan disposal,
 sample-rate negotiation, device-vanished -> DEVICE_DISCONNECTED, hot-plug
-auto-recover, and a SEPARATE ``_out_transitioning`` guard so output lifecycle
-can never corrupt the input state machine. This file drives that lifecycle
+auto-recover, and SEPARATE output status fields so output lifecycle can never
+corrupt the input state machine. This file drives that lifecycle
 with a fake ``sounddevice`` so no PortAudio / audio hardware is required.
 
 The fake ``sounddevice`` is defined here and put into sys.modules by the
@@ -225,8 +225,8 @@ def test_open_output_with_no_devices_fails_no_device():
 
 
 def test_open_output_failure_does_not_touch_input_state():
-    """D5: the separate _out_transitioning guard + output status fields mean
-    an output failure must NEVER mutate the input state machine."""
+    """D5: the separate output status fields mean an output failure must
+    NEVER mutate the input state machine."""
     _reset([])
     eng = _new_engine()
     input_state_before = eng.state

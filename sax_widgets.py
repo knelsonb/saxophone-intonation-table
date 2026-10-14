@@ -1013,9 +1013,13 @@ class AudioRecoveryBanner(QWidget):
 
     def show_for(self, err: AudioEngineError, device_name: str,
                  raw_msg: str) -> None:
-        if err == AudioEngineError.NO_DEVICE:
+        if err == AudioEngineError.NO_DEVICE and not device_name:
             self._msg.setText('⚠  ' + self._t('audio_banner_no_device'))
-        elif err == AudioEngineError.DEVICE_DISCONNECTED:
+        elif err in (AudioEngineError.NO_DEVICE,
+                     AudioEngineError.DEVICE_DISCONNECTED):
+            # A named device that is missing (unplugged, or the saved one not
+            # found on a retry): name it, rather than claim there is no input
+            # at all while another one is right there.
             self._msg.setText('⚠  ' + self._t('audio_banner_disconnect',
                                               name=device_name or '?'))
         elif err == AudioEngineError.DEVICE_BUSY:
@@ -1077,6 +1081,12 @@ class InfoBanner(QWidget):
                 # in the action propagate up to the Qt event loop and
                 # tear the window down.
                 pass
+
+    def hide_if_showing(self, text: str) -> None:
+        """Hide the banner if it still shows ``text`` (a later, unrelated
+        message stays up)."""
+        if not self.isHidden() and self._msg.text() == text:
+            self.hide()
 
     def show_message(self, text: str, action_label: str | None = None,
                      action_callback=None) -> None:

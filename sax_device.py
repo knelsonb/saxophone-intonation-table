@@ -6,6 +6,10 @@
 # path, the 1 Hz hot-plug poll, the engine-state / devices-changed / interface-appeared Qt slot
 # bodies, and the per-active-device write-back to AppConfig.
 #
+# Device commands are only requested here (engine.request_*): they run on the
+# engine's audio-control thread and the outcome comes back through the engine
+# signals, so the window never waits on a driver.
+#
 # Design notes:
 #   * The QTimer that drives the hot-plug poll and the Qt signal-slot
 #     connections from the engine stay wired in MainWindow.__init__ for
@@ -23,13 +27,14 @@
 #     write-back so MainWindow can do any downstream refresh it needs
 #     (window-title update, etc.) without the controller having to
 #     know about it.
-#   * Known race: the engine-state / devices-changed / interface-appeared
-#     slot bodies read engine.get_active_device() from inside Qt slots
-#     that themselves fire on engine state changes, so the device can
-#     change between the read and its use.  Each slot reads the device
-#     once into a local to narrow the window.  Removing it would need an
-#     immutable DeviceSnapshot in the signal payload, which is an
-#     engine-surface change outside this module.
+#   * The engine-state signal names the device the state is about, so a
+#     failure banner never depends on which device happens to be active
+#     when the (queued) slot runs.  The RUNNING branch still reads
+#     engine.get_active_device() once into a local.
+#   * The saved input is persisted only when the player picked a device or
+#     the engine opened the saved one (or nothing was saved yet).  A
+#     fallback to another input says so and leaves the saved choice alone,
+#     so the saved interface is used again once it is back.
 #   * The controller's `_audio_ok` flag is captured at construction
 #     time from sax_audio_engine.AUDIO_OK (sounddevice importable).
 # =============================================================================
@@ -42,6 +47,7 @@ from PyQt6.QtWidgets import QDialog
 import sax_config
 from sax_audio_engine import (
     AUDIO_OK,
+    AudioEngineError,
     AudioEngineState,
     DeviceInfo,
     DeviceSelection,
@@ -83,6 +89,8 @@ class DeviceController:
         # AUDIO_OK only says sounddevice is importable; the engine's open()
         # can still fail at runtime and surface FAILED via state_changed.
         self._audio_ok = bool(AUDIO_OK)
+        # The device the player picked, until the open it asked for lands.
+        self._user_pick: Optional[DeviceSelection] = None
 
     # -------------------------------------------------------------------------
     # Persistence write-back
@@ -124,11 +132,16 @@ class DeviceController:
             if chosen is not None:
                 pref = str(getattr(self._cfg, 'audio_samplerate_pref',
                                     'auto') or 'auto')
-                self._engine.open_device(
-                    DeviceSelection(name=chosen.name,
-                                    host_api=chosen.host_api,
-                                    samplerate=0),
-                    samplerate_pref=pref)
+                self._open_picked(DeviceSelection(name=chosen.name,
+                                                  host_api=chosen.host_api,
+                                                  samplerate=0), pref)
+
+    def _open_picked(self, sel: DeviceSelection,
+                     samplerate_pref: Optional[str] = None) -> None:
+        """Open a device the player chose; it becomes the saved input once
+        it runs."""
+        self._user_pick = sel
+        self._engine.request_open_device(sel, samplerate_pref=samplerate_pref)
 
     def retry_audio(self) -> None:
         if not self._audio_ok:
@@ -137,23 +150,22 @@ class DeviceController:
         # so a device plugged in after launch can be picked up. The old
         # ``engine.retry()`` reused the stale snapshot and never saw
         # the hot-plugged device.
-        self._engine.retry_open()
+        self._engine.request_retry_open()
 
     def poll_devices(self) -> None:
         if not self._audio_ok:
             return
-        # refresh_devices() emits signals on diff — we just kick it.
-        try:
-            self._engine.refresh_devices()
-        except Exception:
-            pass
+        # One hot-plug tick for inputs and outputs; the engine emits signals
+        # on any change.
+        self._engine.request_poll()
 
     # -------------------------------------------------------------------------
     # Engine Qt slot bodies
     # -------------------------------------------------------------------------
-    def on_engine_state(self, state, err, msg) -> None:
+    def on_engine_state(self, state, err, msg, device: str = '') -> None:
         """React to engine state transitions: update chip, banner, and
-        diagnostics panel device label."""
+        diagnostics panel device label. ``device`` names the device the
+        state is about."""
         dev = self._engine.get_active_device()
         name = dev.name if dev else ''
         host = dev.host_api if dev else ''
@@ -162,11 +174,19 @@ class DeviceController:
         w._audio_chip.update_from_state(state, name, host, sr)
         if self._audio_banner is not None:
             if state == AudioEngineState.FAILED:
-                self._audio_banner.show_for(err, name, msg)
+                # A device-less NO_DEVICE (nothing plugged in at all) must not
+                # borrow the name of a device used earlier.
+                failed = device or (
+                    name if err != AudioEngineError.NO_DEVICE else '')
+                self._audio_banner.show_for(err, failed, msg)
             else:
                 self._audio_banner.hide()
-        if state == AudioEngineState.RUNNING:
-            self.persist_active_device()
+        if state in (AudioEngineState.RUNNING, AudioEngineState.FAILED):
+            picked, self._user_pick = self._user_pick, None
+        else:
+            picked = self._user_pick
+        if state == AudioEngineState.RUNNING and dev is not None:
+            self._settle_device(dev, picked)
             if sr:
                 w._tuner.sample_rate = sr
             # First-time-only notice if we wound up at a non-44.1k rate.
@@ -178,6 +198,23 @@ class DeviceController:
                 # Surface as a passive status-bar line, not a modal, so a
                 # sample-rate disclosure never blocks the player.
                 w._status_lbl.setText(self._t('audio_sr_notice', sr=sr))
+
+    def _settle_device(self, dev: DeviceInfo,
+                       picked: Optional[DeviceSelection]) -> None:
+        """An input runs. Remember it if the player chose it, if it is the
+        saved one, or if none was saved yet; otherwise it is a fallback for
+        a saved device that is missing: say so, and keep the saved choice
+        (and the engine's recovery hint) pointing at the missing device."""
+        saved = str(getattr(self._cfg, 'audio_device_name', '') or '')
+        saved_host = str(getattr(self._cfg, 'audio_device_host_api', '') or '')
+        chosen = picked is not None and picked.name == dev.name
+        is_saved = (dev.name == saved
+                    and (not saved_host or dev.host_api == saved_host))
+        if chosen or is_saved or not saved:
+            self.persist_active_device()
+        elif self._info_banner is not None:
+            self._info_banner.show_message(self._t(
+                'audio_using_fallback', name=dev.name, saved=saved))
 
     def on_devices_changed(self, _devices) -> None:
         # Nothing to do at the MainWindow level — the picker reads
@@ -207,7 +244,7 @@ class DeviceController:
             return
 
         def _do_switch() -> None:
-            self._engine.open_device(DeviceSelection(
+            self._open_picked(DeviceSelection(
                 name=device.name, host_api=device.host_api, samplerate=0))
 
         self._info_banner.show_message(

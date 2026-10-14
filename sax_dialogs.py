@@ -43,6 +43,7 @@ from sax_audio_engine import (
     AudioEngineState,
     DeviceInfo,
     DeviceSelection,
+    query_input_devices,
 )
 from sax_pitch import midi_note_name, note_name_to_midi
 
@@ -328,12 +329,11 @@ class AudioPickerDialog(QDialog):
     selection just calls ``engine.open_device(spec)`` and lets the
     state machine do the rest."""
 
-    # v0.5.7.2: sample-rate re-open runs on a worker thread (open_device
-    # internally walks candidates with t.join(timeout=0.8) per attempt,
-    # which would freeze the UI for multiple seconds on a slow device).
-    # The worker emits this signal carrying (prev_pref, new_pref) and a
-    # QueuedConnection on the receiving slot marshals back to the GUI
-    # thread for the UI updates.
+    # The sample-rate re-open runs on the engine's audio-control thread
+    # (open_device walks candidates with an open timeout per attempt, which
+    # would freeze the UI on a slow device). The command emits this signal
+    # carrying (prev_pref, new_pref) and a QueuedConnection on the receiving
+    # slot marshals back to the GUI thread for the UI updates.
     _sr_reopen_done = pyqtSignal(str, str)
 
     def __init__(self, parent, t_func, engine: 'AudioEngine',
@@ -457,13 +457,13 @@ class AudioPickerDialog(QDialog):
         then reopen the active device with the new pref on a worker
         thread.
 
-        v0.5.7.2: open_device walks candidates and runs
-        ``t.join(timeout=0.8)`` per attempt, which on Qt's main thread
-        froze the dialog for multiple seconds. We now spawn a worker,
-        disable the combo while it runs, and marshal the UI updates
-        back through ``_sr_reopen_done`` (QueuedConnection) so all
-        widget mutation happens on the GUI thread again. The engine's
-        internal lock (v0.5.4) makes the off-thread call safe.
+        open_device walks candidates with an open timeout per attempt,
+        which on Qt's main thread froze the dialog for seconds. The
+        re-open is queued on the engine's audio-control thread (in order
+        with every other device command), the combo is disabled while it
+        runs, and the UI updates are marshalled back through
+        ``_sr_reopen_done`` (QueuedConnection) so all widget mutation
+        happens on the GUI thread again.
         """
         if self._sr_switch_in_flight:
             # Debounce: ignore further changes until the current worker
@@ -517,9 +517,7 @@ class AudioPickerDialog(QDialog):
                         # no receiver to hand off to anyway.
                         pass
 
-        t = threading.Thread(target=_worker, name='sr-reopen',
-                             daemon=True)
-        t.start()
+        self._engine.submit(_worker)
 
     def _on_sr_reopen_done(self, prev_pref: str, new_pref: str) -> None:
         """Runs on the GUI thread (QueuedConnection). Re-enables the
@@ -550,18 +548,12 @@ class AudioPickerDialog(QDialog):
             if dev is not None:
                 sel = DeviceSelection(name=dev.name, host_api=dev.host_api,
                                       samplerate=0)
-                # Retry on a worker too so we don't re-introduce the
-                # main-thread block we just removed. Best-effort: fire
-                # and forget — failure here just leaves the engine in
-                # FAILED, which the banner handles separately.
-                def _retry() -> None:
-                    try:
-                        self._engine.open_device(sel,
+                # Queued like any device command, so we don't re-introduce
+                # the main-thread block we just removed. Fire and forget —
+                # failure here just leaves the engine in FAILED, which the
+                # banner handles separately.
+                self._engine.request_open_device(sel,
                                                  samplerate_pref=prev_pref)
-                    except Exception:
-                        pass
-                threading.Thread(target=_retry, name='sr-revert',
-                                 daemon=True).start()
             self._sr_prev_pref = prev_pref
         else:
             self._sr_prev_pref = new_pref
@@ -633,7 +625,9 @@ class AudioPickerDialog(QDialog):
 
     def _refill(self) -> None:
         self._list.clear()
-        devices = self._engine.refresh_devices()
+        # Only lists devices; plugging in and out is handled by the engine's
+        # hot-plug poll.
+        devices = query_input_devices()
         if not devices:
             it = QListWidgetItem(self._t('audio_picker_no_devices'))
             it.setFlags(Qt.ItemFlag.NoItemFlags)

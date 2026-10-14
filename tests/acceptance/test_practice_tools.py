@@ -167,8 +167,6 @@ def test_switching_to_headphones_does_not_shift_the_beat(two_speakers):
     assert gap == pytest.approx(0.5, abs=0.1)
 
 
-@pytest.mark.xfail(strict=True, reason="Frodo-4, Sauron-7: a replugged speaker is never "
-                                       "reopened; the metronome shows running but is silent")
 def test_metronome_is_heard_again_after_the_speaker_is_replugged(app):
     """Speaker cable pulled and pushed back in mid-practice: the metronome
     clicks again, or it shows that it stopped. Never 'running' and silent."""
@@ -187,8 +185,6 @@ def test_metronome_is_heard_again_after_the_speaker_is_replugged(app):
         assert state.unavailable_text
 
 
-@pytest.mark.xfail(strict=True, reason="Uruk2-10: closing the window leaves the output "
-                                       "stream open")
 def test_closing_the_window_releases_the_speaker(app):
     """Close the app with the metronome and drone going: nothing keeps the
     sound device open afterwards."""
@@ -263,9 +259,6 @@ def test_the_drone_follows_a_speaker_switch_in_tune_without_dropouts(make_app, h
     assert not has_gaps(heard.slice(0.2))            # after the 0.2 s switch-over fade
 
 
-@pytest.mark.xfail(strict=True, reason="Frodo-4, Uruk3-2: a replugged speaker is never "
-                                       "reopened; after recovery the drone would drop part of "
-                                       "every larger block")
 def test_the_drone_survives_the_speaker_coming_back_at_a_new_rate(app):
     """Speaker unplugged, then back at 96 kHz (its settings changed): the drone
     sounds again, in tune and without dropouts, or says it stopped."""

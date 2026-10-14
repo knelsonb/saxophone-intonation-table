@@ -1,8 +1,8 @@
 {
   "allow_out_of_range": false,
-  "audio_device_host_api": "Fake Host API",
-  "audio_device_name": "Test Mic",
-  "audio_device_samplerate": 44100,
+  "audio_device_host_api": "Windows WASAPI",
+  "audio_device_name": "Microphone (FIIO DSP Audio)",
+  "audio_device_samplerate": 48000,
   "audio_samplerate_pref": "auto",
   "audio_sr_notice_shown": false,
   "click_volume": 1.0,

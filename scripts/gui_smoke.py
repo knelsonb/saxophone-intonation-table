@@ -58,7 +58,12 @@ def main() -> int:
 
     from PyQt6.QtWidgets import QApplication
 
+    import sax_audio_engine as E
     import sax_intonation_gui as G
+
+    # Device commands run inline, so every check below sees the outcome of
+    # the click it made at once (no audio-control thread to wait for).
+    E.CONTROL_IN_THREAD = False
 
     # The only modal we can't defuse via config: the headless no-audio box.
     G.QMessageBox.information = staticmethod(lambda *a, **k: None)
@@ -67,6 +72,16 @@ def main() -> int:
     win = G.MainWindow()
     win.show()
     app.processEvents()
+
+    def no_output(*_a, **_k) -> bool:
+        """Stand-in for opening an output: it fails, as on a machine with no
+        speakers, and says so the way the engine does. The smoke never opens
+        a real audio device."""
+        win._engine._set_output_failed(E.AudioEngineError.NO_DEVICE,
+                                       'gui smoke: no output device')
+        return False
+
+    win._engine.open_output_device = no_output
 
     failures: list[str] = []
 
@@ -335,7 +350,6 @@ def main() -> int:
     # honesty path: an audio action that can't sound must revert + show status,
     # never claim to be running.
     win._engine.output_running = False
-    win._engine.open_output_device = lambda *a, **k: None  # never comes up
     win._tabs.setCurrentIndex(win._tab_keys.index("tuner"))
     app.processEvents()
     check(len(win._drone_preset_btns) == 5,
@@ -381,7 +395,6 @@ def main() -> int:
             lambda c: (attached.append(c), _real_attach(c))[1])
         win._engine.output_running = True
         win._engine.output_samplerate = 44100
-        win._engine.open_output_device = lambda *a, **k: None
         win._btn_drone_on.setChecked(True)
         app.processEvents()
         check(bool(attached),
@@ -399,7 +412,6 @@ def main() -> int:
     if win._drone_ctrl is not None:
         win._engine.output_running = True
         win._engine.output_samplerate = 44100
-        win._engine.open_output_device = lambda *a, **k: None
         combo = win._drone_voice_combo
         sine_ix = next((i for i in range(combo.count())
                         if combo.itemData(i) == "sine"), -1)
@@ -489,7 +501,7 @@ def main() -> int:
         win._deck_ctrl = _sd.DeckController(
             win._engine.mixer, 44100, engine=_FakeInputEngine(win._engine.mixer),
             on_state_changed=win._on_deck_state_changed)
-        win._engine.output_running = True  # so _ensure_output_open() is True
+        win._engine.output_running = True  # so playback starts at once
         win._tabs.setCurrentIndex(win._tab_keys.index("deck"))
         app.processEvents()
         win._sync_deck_transport()

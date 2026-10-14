@@ -17,6 +17,7 @@
       "audio_chip_tip",
       "audio_error",
       "audio_error_title",
+      "audio_output_disconnected",
       "audio_picker_apis_more",
       "audio_picker_cancel",
       "audio_picker_current",
@@ -30,6 +31,7 @@
       "audio_sr_notice",
       "audio_toast_dismiss",
       "audio_toast_switch",
+      "audio_using_fallback",
       "autotune_clamp",
       "autotune_confirm",
       "autotune_nodata",
@@ -208,6 +210,11 @@
       "nav_tab_tuner_tip",
       "nickname_tip",
       "no_signal",
+      "output_err_busy",
+      "output_err_failed",
+      "output_err_missing",
+      "output_err_none",
+      "output_err_rate",
       "pdf_a4",
       "pdf_col_finger",
       "pdf_col_mean",
@@ -328,6 +335,9 @@
       "audio_banner_unknown": [
         "msg"
       ],
+      "audio_output_disconnected": [
+        "name"
+      ],
       "audio_picker_apis_more": [
         "n"
       ],
@@ -338,6 +348,10 @@
       ],
       "audio_sr_notice": [
         "sr"
+      ],
+      "audio_using_fallback": [
+        "name",
+        "saved"
       ],
       "autotune_clamp": [
         "clamped",
@@ -433,6 +447,19 @@
       ],
       "matrix_oct_rel_label": [
         "n"
+      ],
+      "output_err_busy": [
+        "name"
+      ],
+      "output_err_failed": [
+        "name"
+      ],
+      "output_err_missing": [
+        "name"
+      ],
+      "output_err_rate": [
+        "name",
+        "rates"
       ],
       "pdf_a4": [
         "hz"
@@ -573,6 +600,7 @@
       "audio_chip_tip",
       "audio_error",
       "audio_error_title",
+      "audio_output_disconnected",
       "audio_picker_apis_more",
       "audio_picker_cancel",
       "audio_picker_current",
@@ -586,6 +614,7 @@
       "audio_sr_notice",
       "audio_toast_dismiss",
       "audio_toast_switch",
+      "audio_using_fallback",
       "autotune_clamp",
       "autotune_confirm",
       "autotune_nodata",
@@ -764,6 +793,11 @@
       "nav_tab_tuner_tip",
       "nickname_tip",
       "no_signal",
+      "output_err_busy",
+      "output_err_failed",
+      "output_err_missing",
+      "output_err_none",
+      "output_err_rate",
       "pdf_a4",
       "pdf_col_finger",
       "pdf_col_mean",
@@ -884,6 +918,9 @@
       "audio_banner_unknown": [
         "msg"
       ],
+      "audio_output_disconnected": [
+        "name"
+      ],
       "audio_picker_apis_more": [
         "n"
       ],
@@ -894,6 +931,10 @@
       ],
       "audio_sr_notice": [
         "sr"
+      ],
+      "audio_using_fallback": [
+        "name",
+        "saved"
       ],
       "autotune_clamp": [
         "clamped",
@@ -989,6 +1030,19 @@
       ],
       "matrix_oct_rel_label": [
         "n"
+      ],
+      "output_err_busy": [
+        "name"
+      ],
+      "output_err_failed": [
+        "name"
+      ],
+      "output_err_missing": [
+        "name"
+      ],
+      "output_err_rate": [
+        "name",
+        "rates"
       ],
       "pdf_a4": [
         "hz"

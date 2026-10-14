@@ -16,15 +16,29 @@ Public surface:
   UNSUPPORTED_RATE, HOSTAPI_FAILURE, UNKNOWN.
 * ``DeviceInfo`` / ``DeviceSelection`` — dataclasses for picker UI and
   persistence.
+* ``OutputState`` / ``OutputStatus`` — the output stream's state (running,
+  disconnected, failed, stopped) with the device and reason.
 * ``AudioSignals`` — Qt signals: ``state_changed``,
-  ``devices_changed``, ``note_detected``, ``note_event``.
+  ``devices_changed``, ``note_detected``, ``note_event``,
+  ``interface_appeared``, ``output_state_changed``,
+  ``output_devices_changed``.
 
 The engine *never* raises across its public API. Failures become state:
-``self.state = FAILED`` plus ``self.last_error`` + ``self.last_error_message``,
-emitted via ``signals.state_changed``. The GUI listens and renders a
-banner.
+``self.state = FAILED`` plus ``self.last_error`` + ``self.last_error_message``
+(+ ``self.last_error_device``), emitted via ``signals.state_changed``; the
+output side publishes an ``OutputStatus`` via ``output_state_changed``. The
+GUI listens and renders banners.
 
 Threading contract:
+
+* Device lifecycle (open, close, retry, the hot-plug poll, for input and
+  output) runs on ONE audio-control thread (``sax_audio_control``), one
+  command at a time. The GUI calls the ``request_*`` methods, which only queue
+  a command, and learns the outcome from the signals above; it never waits on
+  a driver. The synchronous methods they queue (``start``, ``open_device``,
+  ``retry_open``, ``poll_devices``, ``open_output_device`` ...) are the
+  command bodies; tests call them directly. ``CONTROL_IN_THREAD = False`` runs
+  queued commands inline instead (the headless harness).
 
 * The input callback runs on a PortAudio thread and only copies: each block
   goes into the stream's single-producer/single-consumer ``_InputRing`` (and
@@ -40,7 +54,7 @@ Threading contract:
   values the consumer reads under ``self._lock`` at the start of each hop.
 * GUI thread reads via ``get_buf_snapshot()`` and ``get_diagnostics()``
   which both acquire the lock briefly and return immutable snapshots.
-* The hot-plug poll runs on the Qt main thread; ``refresh_devices()``
+* The hot-plug poll runs on the audio-control thread; ``refresh_devices()``
   does not call into PortAudio from inside the audio callback.
 """
 
@@ -58,6 +72,7 @@ from typing import Optional
 
 import numpy as np
 
+from sax_audio_control import ControlWorker
 from sax_coordination import OutputCoordinator
 from sax_detector import (  # noqa: F401  (re-exported)
     FILTER_MODE_DEFAULT,
@@ -110,6 +125,14 @@ DEFAULT_OUT_BLOCK = DEFAULT_HOP_SIZE        # 2048 frames at 44.1k
 SAMPLERATE_CANDIDATES = (48000, 44100, 96000, 88200, 192000)
 SAMPLERATE_PREF_VALUES = ('auto', '44100', '48000', '88200', '96000',
                           '192000')
+
+
+def format_rates(rates) -> str:
+    """Sample rates as a player reads them: '48 / 44.1 / 96 kHz'."""
+    if not rates:
+        return ''
+    return ' / '.join(f'{int(r) / 1000:g}' for r in rates) + ' kHz'
+
 # MIN_FREQ / MAX_FREQ / YIN_THRESHOLD and yin_pitch (sax_yin), and A4_DEFAULT,
 # freq_to_midi and cents_dev (sax_pitch), are re-exported above: callers and
 # tests import them from the engine.
@@ -124,6 +147,13 @@ SAMPLERATE_PREF_VALUES = ('auto', '44100', '48000', '88200', '96000',
 # its fake audio host drives callbacks synchronously and its scenarios need
 # each reading delivered before the next block is pumped.
 ANALYSIS_IN_THREAD = True
+
+# Where device commands (open, close, retry, the hot-plug poll) run. True: on
+# the audio-control thread, in order, so the GUI never waits on a driver.
+# False: inline in the caller. The headless test harness sets False, so that a
+# command has finished, and its signals have been delivered, when the call
+# that requested it returns.
+CONTROL_IN_THREAD = True
 
 # Per-host-API attempt timeout. Stream open measured at 30–400 ms
 # typical; 800 ms is the upper end we'll wait before declaring the host
@@ -185,6 +215,30 @@ class AudioEngineError(Enum):
     UNKNOWN = 'unknown'
 
 
+class OutputState(Enum):
+    STOPPED = 'stopped'            # never opened, or closed on purpose
+    RUNNING = 'running'
+    DISCONNECTED = 'disconnected'  # the open output was unplugged; reopens when back
+    FAILED = 'failed'              # an open was asked for and could not be done
+
+
+@dataclass(frozen=True)
+class OutputStatus:
+    """What the output stream is doing, published on every change.
+
+    ``device`` names the output this is about: the one now running, the one
+    that was unplugged, or the one that refused to open ('' when no output
+    exists at all). ``rates`` lists the sample rates it refused when
+    ``error`` is UNSUPPORTED_RATE. ``message`` is the technical detail
+    (English, for diagnostics); the GUI words the rest itself.
+    """
+    state: OutputState = OutputState.STOPPED
+    error: AudioEngineError = AudioEngineError.NONE
+    device: str = ''
+    rates: tuple = ()
+    message: str = ''
+
+
 @dataclass(frozen=True)
 class DeviceInfo:
     """One row in the device picker. Persistence uses (name, host_api)."""
@@ -231,8 +285,9 @@ class AudioEngineDiagnostics:
 # ---------------------------------------------------------------------------
 if QT_OK:
     class AudioSignals(QObject):
-        # state, error_kind, message
-        state_changed = pyqtSignal(object, object, str)
+        # state, error_kind, message, device: the device the state is about
+        # (the one running, or the one that failed or vanished; '' if none).
+        state_changed = pyqtSignal(object, object, str, str)
         # list[DeviceInfo]
         devices_changed = pyqtSignal(list)
         # midi, freq, cents. Kept for listeners that only need the reading.
@@ -240,8 +295,13 @@ if QT_OK:
         # sax_detector.NoteEvent: the reading plus the A4 (and A4 generation)
         # it was graded against.
         note_event = pyqtSignal(object)
-        # hot-plug toast: a vendor-class interface just appeared
+        # hot-plug toast: a vendor-class interface (or the saved input)
+        # just appeared
         interface_appeared = pyqtSignal(object)  # DeviceInfo
+        # OutputStatus, on every change of the output stream's state
+        output_state_changed = pyqtSignal(object)
+        # list[DeviceInfo]: the output devices, when the set changes
+        output_devices_changed = pyqtSignal(list)
 else:  # pragma: no cover — only hit in pure unit-test contexts
     class AudioSignals:
         pass
@@ -479,6 +539,16 @@ class AudioEngine:
         self.state: AudioEngineState = AudioEngineState.INIT
         self.last_error: AudioEngineError = AudioEngineError.NONE
         self.last_error_message: str = ''
+        # The input device the last error is about ('' if none in particular).
+        self.last_error_device: str = ''
+        # Runs every device lifecycle command (see the module docstring).
+        self._control = ControlWorker(threaded=CONTROL_IN_THREAD)
+        # A poll is queued and has not started yet (polls never pile up
+        # behind a slow open).
+        self._poll_queued = False
+        # Set by _try_open / _try_open_output when the attempt hit the open
+        # timeout: the driver is hung, and every further rate would hang too.
+        self._open_timed_out = False
 
         self.a4 = A4_DEFAULT
         self.instr_key = 'eb_alto'
@@ -530,7 +600,6 @@ class AudioEngine:
         self._buf: np.ndarray = self._ring.window
         self._stream = None
         self._emissions_paused = False
-        self._transitioning = False
         # (error, message) when the last rate probe found the device gone.
         self._probe_error: Optional[tuple[AudioEngineError, str]] = None
 
@@ -561,17 +630,15 @@ class AudioEngine:
         # proven input lifecycle untouched, and owns the sample-accurate
         # master clock via the mixer. Duplex stays a same-device opt-in for
         # later. The output stream mirrors the input stream's lifecycle —
-        # worker-thread open with timeout, orphan disposal, hot-plug recovery
-        # — but on its OWN transitioning guard so it can never corrupt the
-        # input guard (both run on the Qt main thread; the guards are
-        # independent re-entrancy locks, not cross-thread sync).
+        # open with timeout, orphan disposal, hot-plug recovery — with its
+        # own status fields, so an output failure never touches the input
+        # state machine.
         # The mixer owns the output format; every (re)open hands it the new
         # stream's rate and block size (Mixer.set_format), and the sources
         # follow from there.
         self.mixer = Mixer(max_block=DEFAULT_OUT_BLOCK,
                            samplerate=DEFAULT_SAMPLE_RATE)
         self._out_stream = None
-        self._out_transitioning = False
         self.output_samplerate = DEFAULT_SAMPLE_RATE
         self.output_block_size = DEFAULT_OUT_BLOCK
         # Last successfully-opened OUTPUT device. Like active_device: persisted
@@ -582,12 +649,17 @@ class AudioEngine:
         self._last_output_snapshot: tuple = ()
         # Output status — kept separate from the input state machine (which
         # owns the pitch-detection lifecycle) so the two streams never
-        # contend for one state field. The GUI polls these / gets the bool
-        # back from open_output_device.
+        # contend for one state field. output_status is the whole story,
+        # published via output_state_changed; the scalars below mirror it.
+        self.output_status = OutputStatus()
         self.output_running: bool = False
         self.last_output_error: AudioEngineError = AudioEngineError.NONE
         self.last_output_error_message: str = ''
         self._out_underflow_count: int = 0
+        # The output the player asked for (None / '' = system default). A
+        # hot-plug recovery reopens this one, and only once it is back: an
+        # unplugged pair of headphones must not turn into the room speakers.
+        self._output_request: Optional[DeviceSelection] = None
 
         # ---- D3 mic-coordination --------------------------------------------
         # The coordinator is PURE policy (sax_coordination); the engine is its
@@ -602,10 +674,6 @@ class AudioEngine:
         # The source whose gain the duck drives (drone). Attached by the
         # DroneController on enable; duck-typed (anything with set_duck_target).
         self._duck_consumer = None
-        # (name, host_api) hint for output hot-plug auto-recovery, mirroring
-        # _preferred_hint on the input side. No caller sets it at present, so
-        # recovery falls through to the vendor-class / default device choice.
-        self._preferred_output_hint: Optional[DeviceSelection] = None
         # Handle for the engine-managed test tone, so
         # start/stop_test_tone are idempotent and don't leak sources.
         self._test_tone_handle = None
@@ -661,13 +729,17 @@ class AudioEngine:
 
     def _set_state(self, state: AudioEngineState,
                    err: AudioEngineError = AudioEngineError.NONE,
-                   msg: str = '') -> None:
+                   msg: str = '', device: str = '') -> None:
         self.state = state
         self.last_error = err
         self.last_error_message = msg
+        self.last_error_device = device if err != AudioEngineError.NONE else ''
         if self.signals is not None:
+            if not device and state == AudioEngineState.RUNNING:
+                dev = self.active_device
+                device = dev.name if dev is not None else ''
             try:
-                self.signals.state_changed.emit(state, err, msg)
+                self.signals.state_changed.emit(state, err, msg, device)
             except Exception:
                 pass
 
@@ -784,35 +856,29 @@ class AudioEngine:
                             AudioEngineError.NO_DEVICE,
                             'sounddevice / PortAudio not available')
             return
-        if self._transitioning:
-            return
-        self._transitioning = True
-        try:
-            # A start while a stream is open (retry() from RUNNING) replaces
-            # it: two live callbacks must never feed one engine.
-            self._teardown_stream()
-            self._set_state(AudioEngineState.ENUMERATING)
-            devices = query_input_devices()
-            if not devices:
-                self._set_state(AudioEngineState.FAILED,
-                                AudioEngineError.NO_DEVICE,
-                                'No audio input devices detected')
-                self._last_device_snapshot = ()
-                if self.signals is not None:
-                    try:
-                        self.signals.devices_changed.emit(devices)
-                    except Exception:
-                        pass
-                return
-            self._last_device_snapshot = self._snapshot_key(devices)
+        # A start while a stream is open (retry() from RUNNING) replaces
+        # it: two live callbacks must never feed one engine.
+        self._teardown_stream()
+        self._set_state(AudioEngineState.ENUMERATING)
+        devices = query_input_devices()
+        if not devices:
+            self._set_state(AudioEngineState.FAILED,
+                            AudioEngineError.NO_DEVICE,
+                            'No audio input devices detected')
+            self._last_device_snapshot = ()
             if self.signals is not None:
                 try:
                     self.signals.devices_changed.emit(devices)
                 except Exception:
                     pass
-            self._open_with_fallback(preferred, devices)
-        finally:
-            self._transitioning = False
+            return
+        self._last_device_snapshot = self._snapshot_key(devices)
+        if self.signals is not None:
+            try:
+                self.signals.devices_changed.emit(devices)
+            except Exception:
+                pass
+        self._open_with_fallback(preferred, devices)
 
     def open_device(self, sel: DeviceSelection,
                     samplerate_pref: Optional[str] = None) -> None:
@@ -830,20 +896,14 @@ class AudioEngine:
                             AudioEngineError.NO_DEVICE,
                             'sounddevice / PortAudio not available')
             return
-        if self._transitioning:
+        self._teardown_stream()
+        devices = query_input_devices()
+        if not devices:
+            self._set_state(AudioEngineState.FAILED,
+                            AudioEngineError.NO_DEVICE,
+                            'No audio input devices detected')
             return
-        self._transitioning = True
-        try:
-            self._teardown_stream()
-            devices = query_input_devices()
-            if not devices:
-                self._set_state(AudioEngineState.FAILED,
-                                AudioEngineError.NO_DEVICE,
-                                'No audio input devices detected')
-                return
-            self._open_with_fallback(sel, devices)
-        finally:
-            self._transitioning = False
+        self._open_with_fallback(sel, devices)
 
     def retry(self) -> None:
         """Re-enumerate and re-open. Tries the last selection first."""
@@ -889,64 +949,51 @@ class AudioEngine:
                             AudioEngineError.NO_DEVICE,
                             'sounddevice / PortAudio not available')
             return
-        if self._transitioning:
+        # Force re-enumeration; do NOT trust the cached snapshot.
+        devices = query_input_devices()
+        self.last_devices_refresh_at = datetime.datetime.now()
+        self._last_device_snapshot = self._snapshot_key(devices)
+        if self.signals is not None:
+            try:
+                self.signals.devices_changed.emit(devices)
+            except Exception:
+                pass
+        if not devices:
+            # FAILED must mean no stream: the old one would keep emitting
+            # readings under a banner that says the input is down.
+            self._teardown_stream()
+            self._set_state(AudioEngineState.FAILED,
+                            AudioEngineError.NO_DEVICE,
+                            'No audio input devices detected')
             return
-        # v0.5.7.1: take the _transitioning flag for the entire resolve
-        # phase so a concurrent hot-plug auto-recovery (which runs from
-        # the refresh_devices() poller thread) can't race us into
-        # double-open territory. open_device() and start() set their
-        # own _transitioning inside the same flag, so we release the
-        # guard BEFORE delegating to either — otherwise the inner call
-        # would early-return as a no-op and silently skip the reopen.
-        self._transitioning = True
-        try:
-            # Force re-enumeration; do NOT trust the cached snapshot.
-            devices = query_input_devices()
-            self.last_devices_refresh_at = datetime.datetime.now()
-            self._last_device_snapshot = self._snapshot_key(devices)
-            if self.signals is not None:
-                try:
-                    self.signals.devices_changed.emit(devices)
-                except Exception:
-                    pass
-            if not devices:
-                # FAILED must mean no stream: the old one would keep emitting
-                # readings under a banner that says the input is down.
+        # Pick a selection candidate. Always re-resolve by (name,
+        # host_api) — never reuse a stored PortAudio index.
+        sel: Optional[DeviceSelection] = None
+        hint = self._preferred_hint
+        if hint and hint.name:
+            for d in devices:
+                if (d.name == hint.name
+                        and (not hint.host_api
+                             or d.host_api == hint.host_api)):
+                    sel = DeviceSelection(
+                        name=d.name, host_api=d.host_api, samplerate=0)
+                    break
+            if sel is None:
+                # Hint device isn't in the fresh list — surface that
+                # instead of silently falling back to a default. The device
+                # is named, so the player sees which one to plug back in.
                 self._teardown_stream()
-                self._set_state(AudioEngineState.FAILED,
-                                AudioEngineError.NO_DEVICE,
-                                'No audio input devices detected')
+                self._set_state(
+                    AudioEngineState.FAILED,
+                    AudioEngineError.NO_DEVICE,
+                    f'Pinned device not present: {hint.name}',
+                    device=hint.name)
                 return
-            # Pick a selection candidate. Always re-resolve by (name,
-            # host_api) — never reuse a stored PortAudio index.
-            sel: Optional[DeviceSelection] = None
-            hint = self._preferred_hint
-            if hint and hint.name:
-                for d in devices:
-                    if (d.name == hint.name
-                            and (not hint.host_api
-                                 or d.host_api == hint.host_api)):
-                        sel = DeviceSelection(
-                            name=d.name, host_api=d.host_api, samplerate=0)
-                        break
-                if sel is None:
-                    # Hint device isn't in the fresh list — surface that
-                    # instead of silently falling back to a default.
-                    self._teardown_stream()
-                    self._set_state(
-                        AudioEngineState.FAILED,
-                        AudioEngineError.NO_DEVICE,
-                        f'Pinned device not present: {hint.name}')
-                    return
-            elif self.active_device is not None:
-                sel = DeviceSelection(
-                    name=self.active_device.name,
-                    host_api=self.active_device.host_api,
-                    samplerate=0)
-        finally:
-            # Drop the guard before delegating; open_device() / start()
-            # re-acquire it for their own work.
-            self._transitioning = False
+        elif self.active_device is not None:
+            sel = DeviceSelection(
+                name=self.active_device.name,
+                host_api=self.active_device.host_api,
+                samplerate=0)
         # Reopen with the fresh resolution. open_device handles teardown
         # and state transitions internally.
         self.open_device(sel) if sel else self.start(
@@ -1076,9 +1123,6 @@ class AudioEngine:
         """
         if not AUDIO_OK:
             return []
-        if self._transitioning:
-            # Don't race the open path.
-            return []
         devices = query_input_devices()
         # Always advance the refresh timestamp — the diagnostics row
         # uses it to prove the poller is still running even when the
@@ -1112,16 +1156,28 @@ class AudioEngine:
             self._teardown_stream()
             self._set_state(AudioEngineState.FAILED,
                             AudioEngineError.DEVICE_DISCONNECTED,
-                            f'Device disconnected: {active.name}')
-        # Vendor-class device appearing? Emit toast.
-        if appeared and self.signals is not None:
+                            f'Device disconnected: {active.name}',
+                            device=active.name)
+        # Vendor-class device, or the saved input the engine fell back from,
+        # appearing while another input runs? Offer it with the toast; the
+        # saved one first. (A failed input recovers below on its own.)
+        if (appeared and self.signals is not None
+                and self.state == AudioEngineState.RUNNING):
+            hint = self._preferred_hint
+            offer = None
             for d in devices:
-                if d.name in appeared and VENDOR_RE.search(d.name):
-                    try:
-                        self.signals.interface_appeared.emit(d)
-                    except Exception:
-                        pass
+                if d.name not in appeared:
+                    continue
+                if hint is not None and d.name == hint.name:
+                    offer = d
                     break
+                if offer is None and VENDOR_RE.search(d.name):
+                    offer = d
+            if offer is not None:
+                try:
+                    self.signals.interface_appeared.emit(offer)
+                except Exception:
+                    pass
         # Hot-plug auto-recovery from FAILED(NO_DEVICE) /
         # FAILED(DEVICE_DISCONNECTED). Only fires when at least one
         # NEW input-capable device appeared; we don't re-attempt on
@@ -1175,79 +1231,124 @@ class AudioEngine:
         # and FAILED/RUNNING transitions.
         self.open_device(sel)
 
+    # ---- requests: queue a command on the audio-control thread ------------
+    # The GUI's way in. Each returns at once; the outcome arrives through the
+    # signals. With CONTROL_IN_THREAD False the command has already run (and
+    # signalled) when the call returns.
+    def submit(self, fn, *args, **kwargs) -> bool:
+        """Run any device command on the audio-control thread, after the
+        ones already queued. False once the engine has been shut down."""
+        return self._control.submit(fn, *args, **kwargs)
+
+    def request_start(self, preferred: Optional[DeviceSelection] = None,
+                      samplerate_pref: str = 'auto') -> None:
+        self.submit(self.start, preferred, samplerate_pref)
+
+    def request_open_device(self, sel: DeviceSelection,
+                            samplerate_pref: Optional[str] = None) -> None:
+        self.submit(self.open_device, sel, samplerate_pref)
+
+    def request_retry_open(self) -> None:
+        self.submit(self.retry_open)
+
+    def request_open_output(self, sel: Optional[DeviceSelection]) -> None:
+        self.submit(self.open_output_device, sel)
+
+    def request_poll(self) -> None:
+        """Queue one hot-plug poll of inputs and outputs, unless one is
+        already waiting to run."""
+        if self._poll_queued:
+            return
+        self._poll_queued = True
+        if not self.submit(self.poll_devices):
+            self._poll_queued = False
+
+    def poll_devices(self) -> None:
+        """One hot-plug tick: notice devices that came or went, on both
+        sides, and recover a lost input or output when it is back."""
+        self._poll_queued = False
+        self.refresh_devices()
+        self.refresh_output_devices()
+
+    def shutdown(self, timeout: float = 2.0) -> None:
+        """Close both streams and stop the audio-control thread (application
+        exit). No signal is emitted and no command runs afterwards."""
+        self.submit(self._close_streams)
+        if not self._control.shutdown(timeout):
+            # The control thread is stuck in a driver call; close what is
+            # open from here rather than leave the device held.
+            self._close_streams()
+
+    def _close_streams(self) -> None:
+        self._teardown_output_stream()
+        self._teardown_stream()
+        self.state = AudioEngineState.STOPPED
+        self.output_status = OutputStatus(OutputState.STOPPED)
+
     # ---- output path ------------------------------------------------------
     # Mirrors the input lifecycle on a separate sd.OutputStream (D5). Never
-    # raises across its public surface; failure becomes status
-    # (output_running=False + last_output_error*). All entry points run on the
-    # Qt main thread and use the independent _out_transitioning guard.
+    # raises across its public surface; failure becomes status (an
+    # OutputStatus, published via output_state_changed, mirrored into
+    # output_running + last_output_error*). The command bodies run on the
+    # audio-control thread.
     def open_output_device(self, sel: Optional[DeviceSelection],
                            samplerate_pref: Optional[str] = None) -> bool:
         """Open (or switch to) an output device and start pulling the mixer.
 
-        ``sel`` of None opens the system default output. Tears down any
-        current output stream first. Returns True on success, False on
-        failure; never raises. The new stream restarts the mixer's sample
-        clock so absolute-sample scheduling has a known origin.
+        ``sel`` of None (or an empty name) opens the system default output.
+        Tears down any current output stream first; the mixer keeps its
+        sources, which carry on on the new stream (see Mixer.set_format).
+        Publishes the outcome as an OutputStatus. Returns True on success,
+        False on failure; never raises.
         """
         if samplerate_pref is not None:
             self.set_samplerate_pref(samplerate_pref)
+        self._output_request = sel
         if not AUDIO_OK:
             self._set_output_failed(AudioEngineError.NO_DEVICE,
                                     'sounddevice / PortAudio not available')
             return False
-        if self._out_transitioning:
+        self._teardown_output_stream()
+        devices = query_output_devices()
+        self._note_output_devices(devices)
+        if not devices:
+            self._set_output_failed(AudioEngineError.NO_DEVICE,
+                                    'No audio output devices detected')
             return False
-        self._out_transitioning = True
-        try:
-            self._teardown_output_stream()
-            devices = query_output_devices()
-            if not devices:
-                self._set_output_failed(AudioEngineError.NO_DEVICE,
-                                        'No audio output devices detected')
-                self._last_output_snapshot = ()
-                return False
-            self._last_output_snapshot = self._snapshot_key(devices)
-            return self._open_output_with_fallback(sel, devices)
-        finally:
-            self._out_transitioning = False
+        return self._open_output_with_fallback(sel, devices)
 
     def stop_output(self) -> None:
         """Tear down the output stream cleanly. Never raises. Leaves the mixer
         and its registered sources intact so a re-open resumes them."""
         self._teardown_output_stream()
-        self.output_running = False
-        self.last_output_error = AudioEngineError.NONE
-        self.last_output_error_message = ''
+        self._publish_output(OutputStatus(OutputState.STOPPED))
 
     def refresh_output_devices(self) -> list[DeviceInfo]:
         """Poll the output device list. Mirror of refresh_devices for output.
 
-        If the active output device vanished while running, tears the stream
-        down and records DEVICE_DISCONNECTED. If a new output device appears
-        while we're stopped after a disconnect / no-device, auto-recovers the
-        same way the input path does.
+        Publishes the device list when it changes (``output_devices_changed``,
+        so SETUP offers outputs plugged in after launch). If the open output
+        vanished, tears the stream down and publishes DISCONNECTED. Once the
+        output the player asked for is back (or, for the system default, any
+        output appears), reopens it.
         """
         if not AUDIO_OK:
             return []
-        if self._out_transitioning:
-            return []
         devices = query_output_devices()
         active = self.active_output_device
-        key = self._snapshot_key(devices)
-        if key == self._last_output_snapshot:
+        appeared = self._note_output_devices(devices)
+        if appeared is None:
             return devices
-        prev_names = {n for (n, _h, _c) in self._last_output_snapshot}
-        new_names = {n for (n, _h, _c) in key}
-        appeared = new_names - prev_names
-        self._last_output_snapshot = key
         # Active output device vanished?
         if (self.output_running and active is not None
                 and not any(d.name == active.name
                             and d.host_api == active.host_api
                             for d in devices)):
             self._teardown_output_stream()
-            self._set_output_failed(AudioEngineError.DEVICE_DISCONNECTED,
-                                    f'Output device disconnected: {active.name}')
+            self._publish_output(OutputStatus(
+                OutputState.DISCONNECTED, AudioEngineError.DEVICE_DISCONNECTED,
+                device=active.name,
+                message=f'Output device disconnected: {active.name}'))
         # New output device appeared while we're down → auto-recover.
         if (not self.output_running
                 and self.last_output_error in (
@@ -1257,38 +1358,27 @@ class AudioEngine:
             self._auto_recover_output_after_hotplug(devices)
         return devices
 
+    def _note_output_devices(self, devices: list[DeviceInfo]) -> Optional[set]:
+        """Record the output device list. Returns the names that appeared
+        since the last look, or None when nothing changed."""
+        key = self._snapshot_key(devices)
+        if key == self._last_output_snapshot:
+            return None
+        prev_names = {n for (n, _h, _c) in self._last_output_snapshot}
+        self._last_output_snapshot = key
+        if self.signals is not None:
+            try:
+                self.signals.output_devices_changed.emit(devices)
+            except Exception:
+                pass
+        return {n for (n, _h, _c) in key} - prev_names
+
     def _auto_recover_output_after_hotplug(
             self, devices: list[DeviceInfo]) -> None:
-        """Pick an output device from the fresh list and try to open it.
-        Priority: persisted hint (name+host_api) → vendor-class → default."""
-        sel: Optional[DeviceSelection] = None
-        hint = self._preferred_output_hint
-        if hint and hint.name:
-            for d in devices:
-                if (d.name == hint.name
-                        and (not hint.host_api or d.host_api == hint.host_api)):
-                    sel = DeviceSelection(name=d.name, host_api=d.host_api,
-                                          samplerate=0)
-                    break
-        if sel is None:
-            best: Optional[DeviceInfo] = None
-            for d in devices:
-                if VENDOR_RE.search(d.name):
-                    if (best is None
-                            or d.default_samplerate > best.default_samplerate):
-                        best = d
-            if best is not None:
-                sel = DeviceSelection(name=best.name, host_api=best.host_api,
-                                      samplerate=0)
-        if sel is None:
-            di = _probe_default_output_index()
-            if di is not None:
-                for d in devices:
-                    if d.index == di:
-                        sel = DeviceSelection(name=d.name, host_api=d.host_api,
-                                              samplerate=0)
-                        break
-        if sel is None:
+        """Reopen the output the player asked for, once it is back. With the
+        system default asked for, reopen as soon as anything appears."""
+        sel = self._output_request
+        if sel and sel.name and not any(d.name == sel.name for d in devices):
             return
         self.open_output_device(sel)
 
@@ -1386,9 +1476,20 @@ class AudioEngine:
 
     # ---- output internals -------------------------------------------------
     def _set_output_failed(self, err: AudioEngineError, msg: str) -> None:
-        self.output_running = False
-        self.last_output_error = err
-        self.last_output_error_message = msg
+        """An open failed before any particular device was tried."""
+        self._publish_output(OutputStatus(OutputState.FAILED, err, message=msg))
+
+    def _publish_output(self, status: OutputStatus) -> None:
+        """Record the output's new state and tell the GUI."""
+        self.output_status = status
+        self.output_running = status.state == OutputState.RUNNING
+        self.last_output_error = status.error
+        self.last_output_error_message = status.message
+        if self.signals is not None:
+            try:
+                self.signals.output_state_changed.emit(status)
+            except Exception:
+                pass
 
     def _resolve_output_candidates(
             self, sel: Optional[DeviceSelection],
@@ -1458,35 +1559,73 @@ class AudioEngine:
     def _open_output_with_fallback(self, sel: Optional[DeviceSelection],
                                    devices: list[DeviceInfo]) -> bool:
         """Walk candidate devices × sample rates until one OutputStream opens.
-        Mirror of _open_with_fallback. Returns True on success."""
+        Mirror of _open_with_fallback. Returns True on success.
+
+        A failure is reported for the FIRST candidate, the device the player
+        chose (or the system default): that is the one they expect to hear,
+        so it is the one the message names."""
         candidates = self._resolve_output_candidates(sel, devices)
         pinned = (self.samplerate_pref or 'auto') != 'auto'
-        last_err: AudioEngineError = AudioEngineError.UNKNOWN
-        last_msg = ''
+        first: Optional[OutputStatus] = None
         for dev in candidates:
-            sr_clean = self._negotiate_output_sample_rate(dev)
-            if not sr_clean and self._probe_error is not None:
-                last_err, last_msg = self._probe_error
-                continue
-            if not sr_clean:
-                last_err = AudioEngineError.UNSUPPORTED_RATE
-                last_msg = (f'{dev.name} [{dev.host_api}]: output does not '
-                            f'accept the requested sample rate')
-                continue
-            for sr in sr_clean:
-                ok, err_kind, err_msg = self._try_open_output(dev, sr)
-                if ok:
-                    return True
-                last_err, last_msg = err_kind, err_msg
-                if pinned:
-                    break
-                if err_kind not in (AudioEngineError.UNSUPPORTED_RATE,
-                                    AudioEngineError.HOSTAPI_FAILURE):
-                    break
+            failure = self._open_output_on(dev, pinned)
+            if failure is None:
+                return True
+            if first is None:
+                first = failure
             if pinned:
                 break
-        self._set_output_failed(last_err, last_msg)
+        self._publish_output(first or OutputStatus(
+            OutputState.FAILED, AudioEngineError.UNKNOWN))
         return False
+
+    def _open_output_on(self, dev: DeviceInfo,
+                        pinned: bool) -> Optional[OutputStatus]:
+        """Open ``dev`` at the first rate it takes. None on success (RUNNING
+        is published), else how it failed."""
+        sr_clean = self._negotiate_output_sample_rate(dev)
+        if not sr_clean and self._probe_error is not None:
+            err, msg = self._probe_error
+            return OutputStatus(OutputState.FAILED, err, dev.name, message=msg)
+        if not sr_clean:
+            rates = self._output_rates_wanted(dev)
+            return OutputStatus(
+                OutputState.FAILED, AudioEngineError.UNSUPPORTED_RATE, dev.name,
+                rates, f'{dev.name} [{dev.host_api}]: output does not accept '
+                       f'{format_rates(rates)}')
+        refused: list[int] = []
+        failure: Optional[OutputStatus] = None
+        for sr in sr_clean:
+            ok, err_kind, err_msg = self._try_open_output(dev, sr)
+            if ok:
+                self._publish_output(OutputStatus(OutputState.RUNNING,
+                                                  device=dev.name))
+                return None
+            if err_kind == AudioEngineError.UNSUPPORTED_RATE:
+                refused.append(int(sr))
+            failure = OutputStatus(OutputState.FAILED, err_kind, dev.name,
+                                   tuple(refused), err_msg)
+            # A hung driver hangs at every rate: one timeout per device.
+            if pinned or self._open_timed_out:
+                break
+            if err_kind not in (AudioEngineError.UNSUPPORTED_RATE,
+                                AudioEngineError.HOSTAPI_FAILURE):
+                break
+        return failure
+
+    def _output_rates_wanted(self, dev: DeviceInfo) -> tuple:
+        """The rates an output open asks a device for, in order."""
+        pref = self.samplerate_pref or 'auto'
+        if pref != 'auto':
+            try:
+                return (int(pref),)
+            except ValueError:
+                return ()
+        rates = list(SAMPLERATE_CANDIDATES)
+        dev_default = int(dev.default_samplerate or 0)
+        if dev_default and dev_default not in rates:
+            rates.append(dev_default)
+        return tuple(rates)
 
     def _try_open_output(self, dev: DeviceInfo,
                          samplerate: int) -> tuple[bool, AudioEngineError, str]:
@@ -1549,6 +1688,7 @@ class AudioEngine:
                     pass
             return
 
+        self._open_timed_out = False
         t = threading.Thread(target=worker, daemon=True)
         t.start()
         t.join(timeout=HOST_API_OPEN_TIMEOUT_S)
@@ -1566,6 +1706,7 @@ class AudioEngine:
                     handoff.close()
                 except Exception:
                     pass
+            self._open_timed_out = True
             return False, AudioEngineError.HOSTAPI_FAILURE, (
                 f'{dev.name} [{dev.host_api}]: output open timed out '
                 f'after {HOST_API_OPEN_TIMEOUT_S:.1f}s')
@@ -1806,8 +1947,10 @@ class AudioEngine:
         pinned = (self.samplerate_pref or 'auto') != 'auto'
         last_err: AudioEngineError = AudioEngineError.UNKNOWN
         last_msg: str = ''
+        last_dev: str = ''
         for dev in candidates:
             sr_clean = self._negotiate_sample_rate(dev)
+            last_dev = dev.name
             if not sr_clean and self._probe_error is not None:
                 last_err, last_msg = self._probe_error
                 continue
@@ -1832,6 +1975,9 @@ class AudioEngine:
                 # never silently fall back to another rate or device.
                 if pinned:
                     break
+                # A hung driver hangs at every rate: one timeout per device.
+                if self._open_timed_out:
+                    break
                 # In auto mode: UNSUPPORTED_RATE / HOSTAPI_FAILURE on
                 # this rate -> try the next rate; everything else means
                 # the device itself is wedged, so move to the next dev.
@@ -1840,7 +1986,8 @@ class AudioEngine:
                     break
             if pinned:
                 break
-        self._set_state(AudioEngineState.FAILED, last_err, last_msg)
+        self._set_state(AudioEngineState.FAILED, last_err, last_msg,
+                        device=last_dev)
 
     def _try_open(self, dev: DeviceInfo,
                   samplerate: int) -> tuple[bool, AudioEngineError, str]:
@@ -1920,10 +2067,12 @@ class AudioEngine:
                     pass
             return
 
+        self._open_timed_out = False
         t = threading.Thread(target=worker, daemon=True)
         t.start()
         t.join(timeout=HOST_API_OPEN_TIMEOUT_S)
         if t.is_alive():
+            self._open_timed_out = True
             # Driver is slow (or hung). Tell the worker to dispose any
             # stream it eventually produces. If the worker has already
             # completed by the time we set this flag, the assignment is

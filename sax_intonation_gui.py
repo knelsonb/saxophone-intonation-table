@@ -26,6 +26,7 @@ if __name__ == '__main__':
 import csv
 import datetime
 import math
+from functools import partial
 from pathlib import Path
 
 from PyQt6.QtCore import QLocale, Qt, QTimer
@@ -69,8 +70,12 @@ from sax_audio_engine import (
     FILTER_MODE_DEFAULT,
     FILTER_PRESETS,
     AudioEngine,
+    AudioEngineError,
     DeviceInfo,
     DeviceSelection,
+    OutputState,
+    format_rates,
+    query_output_devices,
 )
 from sax_deck import DeckController
 from sax_device import DeviceController
@@ -93,6 +98,7 @@ from sax_instruments import (
 )
 from sax_intonation_log import MeasurementLog
 from sax_metronome import MetronomeController
+from sax_output_users import OutputUsers
 from sax_paths import AppPaths
 from sax_pitch import (  # noqa: F401  (re-exported for older importers)
     A4_DEFAULT,
@@ -241,6 +247,17 @@ class MainWindow(QMainWindow):
                 self._on_devices_changed)
             self._engine.signals.interface_appeared.connect(
                 self._on_interface_appeared)
+        # Wired even without PortAudio: an output request then fails, and
+        # the failure is what turns the asking toggle back off.
+        self._engine.signals.output_state_changed.connect(self._on_output_status)
+        self._engine.signals.output_devices_changed.connect(
+            self._on_output_devices_changed)
+        # Sound sources the player switched on, waiting for (or parked
+        # until) the output runs. See sax_output_users.
+        self._output_users = OutputUsers(
+            lambda: bool(self._engine.output_running), self._request_output_open)
+        # Text of the "output disconnected" notice while it is shown.
+        self._output_notice: str = ''
 
         self._build_ui()
         # Persistable session state (geometry,
@@ -346,14 +363,14 @@ class MainWindow(QMainWindow):
             # user's preferred device against a fresh device list
             # without round-tripping through MainWindow.
             self._engine.set_preferred_hint(saved)
-            self._engine.start(preferred=saved, samplerate_pref=pref)
+            self._engine.request_start(preferred=saved, samplerate_pref=pref)
 
         # Hot-plug poller: 1 Hz (cached
         # query_devices is ~0 ms; only re-init is expensive, and we
         # only re-init when the device set actually changed).
+        self._device_poll = QTimer(self)
+        self._device_poll.timeout.connect(self._poll_devices)
         if AUDIO_OK:
-            self._device_poll = QTimer(self)
-            self._device_poll.timeout.connect(self._poll_devices)
             self._device_poll.start(1000)
 
         if not AUDIO_OK:
@@ -1037,33 +1054,28 @@ class MainWindow(QMainWindow):
             samplerate=int(getattr(self._cfg, 'output_device_samplerate', 0) or 0),
         )
 
-    def _ensure_output_open(self) -> bool:
-        """Make sure an output stream is running, opening the configured device
-        only if it ISN'T already. Returns True if output is running afterward.
-        Deliberately does NOT reopen an already-running stream — a reopen runs
-        mixer.reset_clock(), which would wipe a running metronome's scheduled
-        beat (the rolling-horizon scheduler only reschedules from a fired beat).
-        New sources register on the existing stream fine."""
-        if self._engine.output_running:
-            return True
-        try:
-            self._engine.open_output_device(self._current_output_selection())
-        except Exception:
-            pass
-        return bool(self._engine.output_running)
+    def _request_output_open(self) -> None:
+        """Ask for the chosen output to be opened. The answer comes back as
+        an OutputStatus (_on_output_status)."""
+        self._engine.request_open_output(self._current_output_selection())
 
     def _refresh_output_device_combo(self) -> None:
-        """Fill the SETUP output combo: System default first, then the
-        engine's output enumeration (empty when it fails, leaving only System
-        default)."""
+        """Fill the SETUP output combo when it is built. Later changes to the
+        device list arrive from the engine's hot-plug poll
+        (_on_output_devices_changed). Only enumerates; opens nothing."""
+        try:
+            devices = query_output_devices()
+        except Exception:
+            devices = []
+        self._fill_output_combo(devices)
+
+    def _fill_output_combo(self, devices) -> None:
+        """System default first, then the output devices, with the saved one
+        selected when it is present."""
         combo = self._out_device_combo
         was_blocked = combo.blockSignals(True)
         combo.clear()
         combo.addItem(self._t('setup_output_default'), '')
-        try:
-            devices = self._engine.refresh_output_devices() or []
-        except Exception:
-            devices = []
         self._output_devices_cache = list(devices)
         saved_name = str(getattr(self._cfg, 'output_device_name', '') or '')
         select_idx = 0
@@ -1073,6 +1085,10 @@ class MainWindow(QMainWindow):
                 select_idx = combo.count() - 1
         combo.setCurrentIndex(select_idx)
         combo.blockSignals(was_blocked)
+
+    def _on_output_devices_changed(self, devices) -> None:
+        """An output was plugged in or out: offer the current list."""
+        self._fill_output_combo(devices)
 
     def _on_output_device_changed(self, _idx: int) -> None:
         name = self._out_device_combo.currentData() or ''
@@ -1094,10 +1110,68 @@ class MainWindow(QMainWindow):
         # Re-open on the new device. Whatever is sounding carries over: the
         # mixer re-rates every source for the new stream and keeps the
         # metronome's next beat where it was due.
-        try:
-            self._engine.open_output_device(self._current_output_selection())
-        except Exception:
-            pass
+        self._request_output_open()
+
+    # ── Output state ──────────────────────────────────────────────────────────
+    def _on_output_status(self, status) -> None:
+        """The output stream changed state (engine signal, GUI thread)."""
+        if status.state == OutputState.DISCONNECTED:
+            self._park_output_users()
+            self._output_notice = self._t('audio_output_disconnected',
+                                          name=status.device or '?')
+            self._info_banner.show_message(self._output_notice)
+        elif status.state == OutputState.RUNNING and self._output_notice:
+            self._info_banner.hide_if_showing(self._output_notice)
+            self._output_notice = ''
+        self._output_users.on_status(status)
+
+    def _park_output_users(self) -> None:
+        """The output was unplugged: switch off everything that was sounding,
+        so no toggle claims to play into nothing, and park it to come back on
+        when the output is back."""
+        users = self._output_users
+        if self._test_tone_handle is not None:
+            self._stop_test_tone()
+            self._show_test_tone_on(False)
+            users.park('tone', self._test_tone_on, self._test_tone_failed)
+        if self._metro_ctrl.is_running():
+            self._metro_ctrl.stop()
+            users.park('metro', self._metro_ctrl.start, self._metro_revert_start)
+        if self._drone_ctrl.is_enabled():
+            self._drone_ctrl.set_enabled(False)
+            users.park('drone', self._drone_on, self._drone_revert_toggle)
+        if self._pipes_ctrl is not None:
+            for midi in sorted(self._pipes_ctrl.active_midis()):
+                users.park(f'pipe:{midi}', partial(self._pipe_on, midi),
+                           self._pipes_failed)
+            self._pipes_ctrl.release_all()
+        if self._deck_state() == 'playing':
+            self._deck_ctrl.stop()
+
+    def _output_reason(self, status) -> str:
+        """Why an output open failed, naming the device (and the rates it
+        refused), in the player's language. '' when there is nothing to add."""
+        if status is None:
+            return ''
+        name = status.device
+        err = status.error
+        if err == AudioEngineError.UNSUPPORTED_RATE and name and status.rates:
+            return self._t('output_err_rate', name=name,
+                           rates=format_rates(status.rates))
+        if err == AudioEngineError.DEVICE_BUSY and name:
+            return self._t('output_err_busy', name=name)
+        if err in (AudioEngineError.NO_DEVICE,
+                   AudioEngineError.DEVICE_DISCONNECTED):
+            if name:
+                return self._t('output_err_missing', name=name)
+            return self._t('output_err_none')
+        if name:
+            return self._t('output_err_failed', name=name)
+        return ''
+
+    def _with_reason(self, text: str, status) -> str:
+        reason = self._output_reason(status)
+        return f'{text} {reason}' if reason else text
 
     def _on_prefer_duplex_toggled(self, checked: bool) -> None:
         # Persist the preference; it's consumed the next time the output
@@ -1164,35 +1238,50 @@ class MainWindow(QMainWindow):
         sounds; this is the manual proof of that path."""
         if on:
             self._test_tone_status.setVisible(False)
-            # Make sure an output stream exists before sounding — without
-            # reopening an already-running one (that would reset the mixer
-            # clock and kill a running metronome).
-            self._ensure_output_open()
-            try:
-                self._test_tone_handle = self._engine.start_test_tone(440.0)
-            except Exception:
-                self._test_tone_handle = None
-            if self._test_tone_handle is None:
-                # Nothing is sounding — don't let the button claim "Stop".
-                # Revert the toggle (blocking its signal to avoid re-entrancy)
-                # and tell the user why (N2).
-                blocked = self._btn_test_tone.blockSignals(True)
-                self._btn_test_tone.setChecked(False)
-                self._btn_test_tone.blockSignals(blocked)
-                self._btn_test_tone.setText(self._t('setup_testtone_play'))
-                self._test_tone_status.setText(self._t('setup_testtone_failed'))
-                self._test_tone_status.setVisible(True)
-                return
-            self._btn_test_tone.setText(self._t('setup_testtone_stop'))
+            self._output_users.want('tone', self._test_tone_on,
+                                    self._test_tone_failed)
         else:
-            self._btn_test_tone.setText(self._t('setup_testtone_play'))
+            self._output_users.drop('tone')
             self._test_tone_status.setVisible(False)
-            if self._test_tone_handle is not None:
-                try:
-                    self._engine.stop_test_tone(self._test_tone_handle)
-                except Exception:
-                    pass
-            self._test_tone_handle = None
+            self._stop_test_tone()
+            self._show_test_tone_on(False)
+
+    def _test_tone_on(self) -> None:
+        """The output runs: sound the tone (the engine builds it at the
+        output's format; the mixer keeps it in tune across later switches)."""
+        try:
+            handle = self._engine.start_test_tone(440.0)
+        except Exception:
+            handle = None
+        if handle is None:
+            self._test_tone_failed(None)
+            return
+        self._test_tone_handle = handle
+        self._show_test_tone_on(True)
+
+    def _test_tone_failed(self, status) -> None:
+        """Nothing is sounding — don't let the button claim "Stop"; say why
+        (N2), naming the output when an open failed."""
+        self._show_test_tone_on(False)
+        self._test_tone_status.setText(
+            self._with_reason(self._t('setup_testtone_failed'), status))
+        self._test_tone_status.setVisible(True)
+
+    def _stop_test_tone(self) -> None:
+        if self._test_tone_handle is not None:
+            try:
+                self._engine.stop_test_tone(self._test_tone_handle)
+            except Exception:
+                pass
+        self._test_tone_handle = None
+
+    def _show_test_tone_on(self, on: bool) -> None:
+        """Paint the button without re-entering its toggled handler."""
+        blocked = self._btn_test_tone.blockSignals(True)
+        self._btn_test_tone.setChecked(on)
+        self._btn_test_tone.blockSignals(blocked)
+        self._btn_test_tone.setText(
+            self._t('setup_testtone_stop' if on else 'setup_testtone_play'))
 
     def _install_tab_indicators(self) -> None:
         """Attach status-dot widgets to the METRO and DECK tabs, hidden
@@ -1429,7 +1518,7 @@ class MainWindow(QMainWindow):
         # re-syncs the readout here — no manual set needed.
         self._metro_ctrl.register_tap()
 
-    def _metro_revert_start(self) -> None:
+    def _metro_revert_start(self, status=None) -> None:
         """Un-check the Start button (without re-firing the toggle) and show
         the unavailable status — used whenever the metronome can't actually
         sound, so the button never claims to be running."""
@@ -1437,23 +1526,22 @@ class MainWindow(QMainWindow):
         self._btn_metro_start.setChecked(False)
         self._btn_metro_start.blockSignals(blocked)
         self._btn_metro_start.setText(self._t('metro_start'))
-        self._metro_status.setText(self._t('metro_unavailable'))
+        self._metro_status.setText(
+            self._with_reason(self._t('metro_unavailable'), status))
         self._metro_status.setVisible(True)
 
     def _on_metro_toggle(self, on: bool) -> None:
         if not on:
+            self._output_users.drop('metro')
             self._metro_ctrl.stop()   # fires on_state_changed
             return
         self._metro_status.setVisible(False)
-        # The metronome sounds through the output mixer — ensure an output
-        # stream is open before claiming to run (same honesty as the test
-        # tone: don't show 'running' if nothing can be heard). _ensure_output_open
-        # won't reopen an already-running stream, so starting the metronome
-        # while a test tone plays doesn't reset the clock.
-        if not self._ensure_output_open():
-            self._metro_revert_start()
-            return
-        self._metro_ctrl.start()      # fires on_state_changed -> dot + label
+        # The metronome sounds through the output mixer: it starts once an
+        # output runs (so 'running' is never shown with nothing to hear), or
+        # reverts with the reason if none can open. Starting it on an output
+        # that already runs leaves the stream (and anything sounding) alone.
+        self._output_users.want('metro', self._metro_ctrl.start,
+                                self._metro_revert_start)
 
     def _on_metro_state_changed(self) -> None:
         """Zero-arg slot for MetronomeController.on_state_changed (GUI thread),
@@ -1644,13 +1732,15 @@ class MainWindow(QMainWindow):
         self._deck_last_state = state
         self._deck_last_can_record = can_record
 
-    def _deck_show_status(self, key: str, *, error: bool = True) -> None:
+    def _deck_show_status(self, key: str, *, error: bool = True,
+                          output_status=None) -> None:
         """Inline transport status. Red for can't/failed, green for confirmation
-        (export done) — never leave a stale message of the wrong colour."""
+        (export done) — never leave a stale message of the wrong colour.
+        ``output_status`` adds why the output could not open."""
         self._deck_status.setStyleSheet(
             'color:%s;font-size:12px;padding-top:4px;'
             % ('#c0392b' if error else '#2ecc71'))
-        self._deck_status.setText(self._t(key))
+        self._deck_status.setText(self._with_reason(self._t(key), output_status))
         self._deck_status.setVisible(True)
 
     def _on_deck_state_changed(self) -> None:
@@ -1714,12 +1804,12 @@ class MainWindow(QMainWindow):
 
     def _on_deck_play(self) -> None:
         self._deck_status.setVisible(False)
-        # Playback sounds through the output mixer — ensure an output stream is
-        # open before claiming to play (don't show 'playing' if nothing can be
-        # heard). Mirrors drone/metro.
-        if not self._ensure_output_open():
-            self._deck_show_status('deck_play_unavailable')
-            return
+        # Playback sounds through the output mixer: it starts once an output
+        # runs (never 'playing' with nothing to hear). Mirrors drone/metro.
+        self._output_users.want('deck', self._deck_play_now,
+                                self._deck_play_failed)
+
+    def _deck_play_now(self) -> None:
         ok = False
         try:
             ok = bool(self._deck_ctrl.play())   # fires on_state_changed
@@ -1728,8 +1818,11 @@ class MainWindow(QMainWindow):
         if ok:
             self._deck_played_once = True
         else:
-            self._deck_show_status('deck_play_unavailable')
-            self._sync_deck_transport()
+            self._deck_play_failed(None)
+
+    def _deck_play_failed(self, status) -> None:
+        self._deck_show_status('deck_play_unavailable', output_status=status)
+        self._sync_deck_transport()
 
     def _on_deck_export(self) -> None:
         # File dialog — reuse sax_export's getSaveFileName pattern, .wav filter.
@@ -1868,12 +1961,15 @@ class MainWindow(QMainWindow):
 
     def _on_drone_toggle(self, on: bool) -> None:
         if not on:
+            self._output_users.drop('drone')
             self._drone_ctrl.set_enabled(False)
             return
         self._drone_status.setVisible(False)
-        if not self._ensure_output_open():
-            self._drone_revert_toggle()
-            return
+        self._output_users.want('drone', self._drone_on,
+                                self._drone_revert_toggle)
+
+    def _drone_on(self) -> None:
+        """The output runs: sound the drone (built at the output's format)."""
         self._drone_ctrl.set_enabled(True)   # fires on_state_changed
         self._report_drone_fallback()
 
@@ -1892,11 +1988,12 @@ class MainWindow(QMainWindow):
         self._drone_status.setText(self._t('drone_sine_fallback'))
         self._drone_status.setVisible(True)
 
-    def _drone_revert_toggle(self) -> None:
+    def _drone_revert_toggle(self, status=None) -> None:
         blocked = self._btn_drone_on.blockSignals(True)
         self._btn_drone_on.setChecked(False)
         self._btn_drone_on.blockSignals(blocked)
-        self._drone_status.setText(self._t('drone_unavailable'))
+        self._drone_status.setText(
+            self._with_reason(self._t('drone_unavailable'), status))
         self._drone_status.setVisible(True)
 
     def _on_drone_preset(self, voice_id: str) -> None:
@@ -2003,15 +2100,32 @@ class MainWindow(QMainWindow):
         dlg.show()
 
     def _on_pipe_tapped(self, midi: int) -> None:
-        if not self._ensure_output_open():
-            self._pipes_status.setText(self._t('pipes_unavailable'))
-            self._pipes_status.setVisible(True)
-            self._sync_pipe_btns()
+        key = f'pipe:{midi}'
+        if self._pipes_ctrl is not None and midi in self._pipes_ctrl.active_midis():
+            self._pipes_ctrl.toggle(midi)      # release: needs no output
             return
         self._pipes_status.setVisible(False)
-        self._pipes_ctrl.toggle(midi)          # fires on_pipes_state_changed
+        if self._output_users.waiting(key):
+            # Tapped again before the output came: the player changed their mind.
+            self._output_users.drop(key)
+        else:
+            self._output_users.want(key, partial(self._pipe_on, midi),
+                                    self._pipes_failed)
+        self._sync_pipe_btns()
+
+    def _pipe_on(self, midi: int) -> None:
+        """The output runs: sound the pad (it fires on_pipes_state_changed)."""
+        if midi not in self._pipes_ctrl.active_midis():
+            self._pipes_ctrl.toggle(midi)
+
+    def _pipes_failed(self, status) -> None:
+        self._pipes_status.setText(
+            self._with_reason(self._t('pipes_unavailable'), status))
+        self._pipes_status.setVisible(True)
+        self._sync_pipe_btns()
 
     def _stop_pitch_pipes(self) -> None:
+        self._output_users.drop_prefix('pipe:')
         if self._pipes_ctrl is not None:
             try:
                 self._pipes_ctrl.release_all()
@@ -2443,8 +2557,8 @@ class MainWindow(QMainWindow):
     def _poll_devices(self) -> None:
         self._device_ctrl.poll_devices()
 
-    def _on_engine_state(self, state, err, msg) -> None:
-        self._device_ctrl.on_engine_state(state, err, msg)
+    def _on_engine_state(self, state, err, msg, device) -> None:
+        self._device_ctrl.on_engine_state(state, err, msg, device)
 
     def _on_devices_changed(self, _devices) -> None:
         self._device_ctrl.on_devices_changed(_devices)
@@ -2934,17 +3048,35 @@ class MainWindow(QMainWindow):
             self._save_session_state()
         except Exception:
             pass
-        # Tear the tape deck down BEFORE the engine stops, so a recording/playing
-        # take disarms the input tap and unregisters its mixer source — close()
-        # is idempotent and never raises, never orphans.
-        try:
-            self._deck_pump_timer.stop()
-            self._deck_ctrl.close()
-        except Exception:
-            pass
-        self._engine.stop()
+        for timer in (self._device_poll, self._refresh_timer,
+                      self._deck_pump_timer):
+            timer.stop()
+        self._shut_down_output_users()
+        # Both streams close and the audio-control thread stops: nothing may
+        # keep the microphone or the speaker open after the window is gone.
+        self._engine.shutdown()
         self._log.close()
         ev.accept()
+
+    def _shut_down_output_users(self) -> None:
+        """Silence and release every sound source before the streams close.
+        Each step is independent: one that fails must not keep the others
+        (or the engine shutdown after them) from running."""
+        steps = (
+            lambda: self._output_users.drop_prefix(''),
+            self._stop_test_tone,
+            self._metro_ctrl.stop,
+            self._drone_ctrl.shutdown,
+            self._stop_pitch_pipes,
+            # The deck disarms the input tap and unregisters its playback;
+            # close() is idempotent, never raises, never orphans.
+            self._deck_ctrl.close,
+        )
+        for step in steps:
+            try:
+                step()
+            except Exception:
+                pass
 
     def _save_session_state(self) -> None:
         """Thin delegator + persistence. The snapshot work lives on
