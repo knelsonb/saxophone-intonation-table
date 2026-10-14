@@ -167,10 +167,12 @@ class IntonationTableModel(QAbstractTableModel):
         # Played notes outside the keyed range widen the span so their cells
         # are on screen: all of them when out-of-range notes are allowed,
         # and otherwise those the filter keeps (inside the extended range,
-        # such as altissimo).
+        # such as altissimo). Only notes with enough readings to show in a
+        # cell count, so a brief squeak does not add an empty column.
         allow_all = self._cfg.allow_out_of_range
+        min_n = max(1, self._cfg.min_n_visible)
         played = [m for m, st in session.stats.items()
-                  if st.n > 0 and (allow_all or session.in_range(m))]
+                  if st.n >= min_n and (allow_all or session.in_range(m))]
         if played:
             if griff:
                 played = [m - transp for m in played]

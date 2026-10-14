@@ -60,3 +60,17 @@ def test_the_caption_reads_in_german(make_app):
     assert app.table.caption == app.text(
         "table_matrix_title_outside", played=1, total=ALTO_GUIDE_CELLS, outside=1)
     assert "außerhalb des Rasters" in app.table.caption
+
+
+def test_a_brief_squeak_adds_no_empty_column(make_app):
+    """A stray with fewer readings than a cell needs to show would only add
+    a blank column; once it has enough, its column appears."""
+    app = make_app(config=on("eb_alto", **MATRIX))
+    app.launch()
+    before = app.table.columns
+    app.play(Tone(note="C2", seconds=0.2))       # a few readings only
+    assert 0 < app.history_counts[1] < 5         # measured, below min n
+    assert app.table.columns == before
+
+    app.play(Tone(note="C2", seconds=1.0))
+    assert len(app.table.columns) > len(before)
