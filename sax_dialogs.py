@@ -337,11 +337,13 @@ class AudioPickerDialog(QDialog):
     _sr_reopen_done = pyqtSignal(str, str)
 
     def __init__(self, parent, t_func, engine: 'AudioEngine',
-                 cfg: sax_config.AppConfig, current: 'DeviceInfo | None'):
+                 cfg: sax_config.AppConfig, current: 'DeviceInfo | None',
+                 store: sax_config.ConfigStore):
         super().__init__(parent)
         self._t = t_func
         self._engine = engine
         self._cfg = cfg
+        self._store = store
         self._current = current
         self._chosen: 'DeviceInfo | None' = None
         # v0.5.7.2: debounce flag — ignore further combo changes while
@@ -398,8 +400,7 @@ class AudioPickerDialog(QDialog):
             # both DE and EN locales without dragging in locale plumbing.
             label = f'{hz:,}'.replace(',', ' ') + ' Hz'
             self._sr_combo.addItem(label, str(hz))
-        cur_pref = str(getattr(self._cfg, 'audio_samplerate_pref',
-                                'auto') or 'auto')
+        cur_pref = self._cfg.audio_samplerate_pref
         idx = self._sr_combo.findData(cur_pref)
         if idx < 0:
             idx = 0
@@ -430,13 +431,11 @@ class AudioPickerDialog(QDialog):
 
         opts = QHBoxLayout()
         self._cb_show_all = QCheckBox(self._t('audio_picker_show_all'))
-        self._cb_show_all.setChecked(bool(getattr(self._cfg,
-                                                    'show_all_host_apis',
-                                                    False)))
+        self._cb_show_all.setChecked(self._cfg.show_all_host_apis)
         self._cb_show_all.toggled.connect(self._on_toggle_show_all)
         opts.addWidget(self._cb_show_all)
         self._cb_ks = QCheckBox(self._t('audio_picker_prefer_ks'))
-        self._cb_ks.setChecked(bool(getattr(self._cfg, 'prefer_wdmks', False)))
+        self._cb_ks.setChecked(self._cfg.prefer_wdmks)
         self._cb_ks.toggled.connect(self._on_toggle_ks)
         opts.addWidget(self._cb_ks)
         opts.addStretch()
@@ -477,7 +476,7 @@ class AudioPickerDialog(QDialog):
         if new_pref == prev_pref:
             return
         self._cfg.audio_samplerate_pref = new_pref
-        sax_config.save_config(self._cfg)
+        self._store.save(self._cfg)
         self._sr_error_lbl.setVisible(False)
         dev = self._engine.get_active_device()
         if dev is None:
@@ -537,7 +536,7 @@ class AudioPickerDialog(QDialog):
             # open with the previous pref so the user is left in the
             # same audio state they started with.
             self._cfg.audio_samplerate_pref = prev_pref
-            sax_config.save_config(self._cfg)
+            self._store.save(self._cfg)
             self._sr_combo.blockSignals(True)
             revert_idx = self._sr_combo.findData(prev_pref)
             if revert_idx < 0:
@@ -596,12 +595,12 @@ class AudioPickerDialog(QDialog):
 
     def _on_toggle_show_all(self, checked: bool) -> None:
         self._cfg.show_all_host_apis = bool(checked)
-        sax_config.save_config(self._cfg)
+        self._store.save(self._cfg)
         self._refill()
 
     def _on_toggle_ks(self, checked: bool) -> None:
         self._cfg.prefer_wdmks = bool(checked)
-        sax_config.save_config(self._cfg)
+        self._store.save(self._cfg)
         self._engine.set_prefer_wdmks(bool(checked))
 
     def _rank(self, d: DeviceInfo) -> int:

@@ -1,7 +1,7 @@
 """Round-trip + tolerant-coercion tests for ``sax_config``.
 
-This file exercises ``save_config`` → ``load_config`` and the ``_as_*``
-coercers directly, because every field is read back from
+This file exercises ``ConfigStore.save`` → ``ConfigStore.load`` and the
+``_as_*`` coercers directly, because every field is read back from
 a user-editable ``~/.intonation_analyzer/config.json`` that can be stale,
 partial, or corrupt.  The governing contract (sax_config.py module
 docstring) is *a corrupt or missing field falls back to its default,
@@ -13,8 +13,8 @@ Conventions (matching test_coerce_range_entry.py):
 * ``pytest.mark.parametrize`` for the per-field coercion tables, one named
   case per row.
 * Every assert carries an expected-vs-got failure message.
-* The active ``ConfigStore`` is pointed at ``tmp_path`` via monkeypatch so
-  tests never touch the real user home directory.
+* The ``store`` fixture is a ``ConfigStore`` on ``tmp_path``, so tests never
+  touch the real user home directory.
 """
 from __future__ import annotations
 
@@ -23,27 +23,28 @@ from dataclasses import asdict
 import pytest
 
 import sax_config
-from sax_config import AppConfig, load_config, save_config
+from sax_config import AppConfig
 from sax_paths import AppPaths
 
 
 # ---------------------------------------------------------------------------
-# Fixture: point the active ConfigStore at a tmp dir so save_config writes
-# there and load_config reads it back. atomic_write_json
-# creates parents, so the dir need not pre-exist.
+# Fixtures: a ConfigStore on a tmp dir, and the config.json path it uses.
+# atomic_write_json creates parents, so the dir need not pre-exist.
 # ---------------------------------------------------------------------------
 @pytest.fixture()
-def isolated_config(tmp_path, monkeypatch):
-    cfg_dir = tmp_path / ".intonation_analyzer"
-    store = sax_config.ConfigStore(AppPaths(cfg_dir))
-    monkeypatch.setattr(sax_config, "_active", store)
+def store(tmp_path):
+    return sax_config.ConfigStore(AppPaths(tmp_path / ".intonation_analyzer"))
+
+
+@pytest.fixture()
+def isolated_config(store):
     return store.paths.config
 
 
 # ---------------------------------------------------------------------------
 # 1. Full round-trip — every field survives save → load unchanged.
 # ---------------------------------------------------------------------------
-def test_roundtrip_preserves_all_fields(isolated_config):
+def test_roundtrip_preserves_all_fields(store, isolated_config):
     """A fully-populated, non-default config must survive save→load byte
     for byte at the dataclass level (asdict equality)."""
     original = AppConfig(
@@ -89,10 +90,10 @@ def test_roundtrip_preserves_all_fields(isolated_config):
         drone_semitones=-7,
     )
 
-    save_config(original)
+    store.save(original)
     assert isolated_config.exists(), "save_config did not write the file"
 
-    loaded = load_config()
+    loaded = store.load()
     assert asdict(loaded) == asdict(original), (
         "round-trip mutated the config:\n"
         f"  saved : {asdict(original)}\n"
@@ -103,7 +104,7 @@ def test_roundtrip_preserves_all_fields(isolated_config):
 # ---------------------------------------------------------------------------
 # 2. The new output-device fields specifically round-trip.
 # ---------------------------------------------------------------------------
-def test_output_device_fields_roundtrip(isolated_config):
+def test_output_device_fields_roundtrip(store):
     cfg = AppConfig(
         output_device_name="Headphones (FIIO)",
         output_device_host_api="MME",
@@ -111,8 +112,8 @@ def test_output_device_fields_roundtrip(isolated_config):
         output_prefer_duplex=True,
         last_active_tab="metro",
     )
-    save_config(cfg)
-    loaded = load_config()
+    store.save(cfg)
+    loaded = store.load()
     assert loaded.output_device_name == "Headphones (FIIO)"
     assert loaded.output_device_host_api == "MME"
     assert loaded.output_device_samplerate == 96000
@@ -123,37 +124,37 @@ def test_output_device_fields_roundtrip(isolated_config):
 # ---------------------------------------------------------------------------
 # 3. Tolerant fallbacks — the never-crash contract.
 # ---------------------------------------------------------------------------
-def test_missing_file_returns_defaults(isolated_config):
+def test_missing_file_returns_defaults(store, isolated_config):
     """No config file yet → pristine defaults, no exception."""
     assert not isolated_config.exists()
-    cfg = load_config()
+    cfg = store.load()
     assert cfg == AppConfig(), "missing file must yield default AppConfig()"
 
 
-def test_corrupt_json_returns_defaults(isolated_config):
+def test_corrupt_json_returns_defaults(store, isolated_config):
     """A syntactically broken file must degrade to defaults, not raise."""
     isolated_config.parent.mkdir(parents=True, exist_ok=True)
     isolated_config.write_text("{not valid json,,,", encoding="utf-8")
-    cfg = load_config()
+    cfg = store.load()
     assert cfg == AppConfig(), "corrupt JSON must yield default AppConfig()"
 
 
-def test_non_dict_json_returns_defaults(isolated_config):
+def test_non_dict_json_returns_defaults(store, isolated_config):
     """Valid JSON that isn't an object (e.g. a list) → defaults."""
     isolated_config.parent.mkdir(parents=True, exist_ok=True)
     isolated_config.write_text("[1, 2, 3]", encoding="utf-8")
-    cfg = load_config()
+    cfg = store.load()
     assert cfg == AppConfig(), "non-dict JSON must yield default AppConfig()"
 
 
-def test_partial_config_fills_new_field_defaults(isolated_config):
+def test_partial_config_fills_new_field_defaults(store, isolated_config):
     """A config written by an OLDER build (no output-device keys) must load
     with the new fields at their defaults — backward compatibility."""
     isolated_config.parent.mkdir(parents=True, exist_ok=True)
     isolated_config.write_text(
         '{"audio_device_name": "Old Mic", "last_lang": "de"}',
         encoding="utf-8")
-    cfg = load_config()
+    cfg = store.load()
     # Old field preserved …
     assert cfg.audio_device_name == "Old Mic"
     assert cfg.last_lang == "de"
@@ -177,14 +178,14 @@ def test_partial_config_fills_new_field_defaults(isolated_config):
     assert cfg.drone_semitones == 0
 
 
-def test_unknown_keys_ignored(isolated_config):
+def test_unknown_keys_ignored(store, isolated_config):
     """Keys from a NEWER build than this one must be ignored, not crash —
     forward compatibility."""
     isolated_config.parent.mkdir(parents=True, exist_ok=True)
     isolated_config.write_text(
         '{"output_device_name": "Spk", "a_field_from_the_future": 99}',
         encoding="utf-8")
-    cfg = load_config()
+    cfg = store.load()
     assert cfg.output_device_name == "Spk"
     assert not hasattr(cfg, "a_field_from_the_future")
 
@@ -201,12 +202,12 @@ def test_unknown_keys_ignored(isolated_config):
     pytest.param(None, 0, id="missing_defaults_zero"),
     pytest.param(0, 0, id="zero_means_auto_negotiate"),
 ])
-def test_output_device_samplerate_coercion(isolated_config, raw, expected):
+def test_output_device_samplerate_coercion(store, isolated_config, raw, expected):
     isolated_config.parent.mkdir(parents=True, exist_ok=True)
     import json
     isolated_config.write_text(
         json.dumps({"output_device_samplerate": raw}), encoding="utf-8")
-    cfg = load_config()
+    cfg = store.load()
     assert cfg.output_device_samplerate == expected, (
         f"output_device_samplerate({raw!r}) -> {cfg.output_device_samplerate}, "
         f"expected {expected}")
@@ -227,12 +228,12 @@ def test_output_device_samplerate_coercion(isolated_config, raw, expected):
     pytest.param("nonsense", False, id="garbage_defaults_false"),
     pytest.param(None, False, id="missing_defaults_false"),
 ])
-def test_output_prefer_duplex_coercion(isolated_config, raw, expected):
+def test_output_prefer_duplex_coercion(store, isolated_config, raw, expected):
     isolated_config.parent.mkdir(parents=True, exist_ok=True)
     import json
     isolated_config.write_text(
         json.dumps({"output_prefer_duplex": raw}), encoding="utf-8")
-    cfg = load_config()
+    cfg = store.load()
     assert cfg.output_prefer_duplex is expected, (
         f"output_prefer_duplex({raw!r}) -> {cfg.output_prefer_duplex}, "
         f"expected {expected}")
@@ -253,12 +254,12 @@ def test_output_prefer_duplex_coercion(isolated_config, raw, expected):
     pytest.param(None, "tuner", id="missing_degrades_to_tuner"),
     pytest.param(42, "tuner", id="wrong_type_degrades_to_tuner"),
 ])
-def test_last_active_tab_coercion(isolated_config, raw, expected):
+def test_last_active_tab_coercion(store, isolated_config, raw, expected):
     isolated_config.parent.mkdir(parents=True, exist_ok=True)
     import json
     isolated_config.write_text(
         json.dumps({"last_active_tab": raw}), encoding="utf-8")
-    cfg = load_config()
+    cfg = store.load()
     assert cfg.last_active_tab == expected, (
         f"last_active_tab({raw!r}) -> {cfg.last_active_tab!r}, "
         f"expected {expected!r}")
@@ -275,10 +276,10 @@ def test_last_active_tab_values_match_allowlist():
 # ---------------------------------------------------------------------------
 # 7. v0.8.0 metronome fields — coercion + clamp.
 # ---------------------------------------------------------------------------
-def test_metro_fields_roundtrip(isolated_config):
+def test_metro_fields_roundtrip(store):
     cfg = AppConfig(last_bpm=144, last_time_sig="3/4", click_volume=0.4)
-    save_config(cfg)
-    loaded = load_config()
+    store.save(cfg)
+    loaded = store.load()
     assert loaded.last_bpm == 144
     assert loaded.last_time_sig == "3/4"
     assert loaded.click_volume == pytest.approx(0.4)
@@ -297,11 +298,11 @@ def test_metro_fields_roundtrip(isolated_config):
     pytest.param("junk", 100, id="garbage_defaults_then_in_range"),
     pytest.param(None, 100, id="missing_defaults"),
 ])
-def test_last_bpm_clamped_to_range(isolated_config, raw, expected):
+def test_last_bpm_clamped_to_range(store, isolated_config, raw, expected):
     import json
     isolated_config.parent.mkdir(parents=True, exist_ok=True)
     isolated_config.write_text(json.dumps({"last_bpm": raw}), encoding="utf-8")
-    cfg = load_config()
+    cfg = store.load()
     assert cfg.last_bpm == expected, (
         f"last_bpm({raw!r}) -> {cfg.last_bpm}, expected {expected} (clamp 30-300)")
 
@@ -320,11 +321,11 @@ def test_last_bpm_clamped_to_range(isolated_config, raw, expected):
     pytest.param(float("nan"), 0.0, id="nan_rejected"),
     pytest.param(float("inf"), 0.0, id="inf_rejected"),
 ])
-def test_mic_gain_db_clamped_to_range(isolated_config, raw, expected):
+def test_mic_gain_db_clamped_to_range(store, isolated_config, raw, expected):
     import json
     isolated_config.parent.mkdir(parents=True, exist_ok=True)
     isolated_config.write_text(json.dumps({"mic_gain_db": raw}), encoding="utf-8")
-    cfg = load_config()
+    cfg = store.load()
     assert cfg.mic_gain_db == expected, (
         f"mic_gain_db({raw!r}) -> {cfg.mic_gain_db}, "
         f"expected {expected} (clamp -24..24, reject NaN/inf/garbage)")
@@ -333,10 +334,10 @@ def test_mic_gain_db_clamped_to_range(isolated_config, raw, expected):
 # ---------------------------------------------------------------------------
 # v0.11.0 theme field -- coerced via sax_theme.coerce_theme_name.
 # ---------------------------------------------------------------------------
-def test_theme_roundtrip(isolated_config):
+def test_theme_roundtrip(store):
     for name in ("dark", "night", "light"):
-        save_config(AppConfig(theme=name))
-        assert load_config().theme == name, f"theme {name!r} did not round-trip"
+        store.save(AppConfig(theme=name))
+        assert store.load().theme == name, f"theme {name!r} did not round-trip"
 
 
 @pytest.mark.parametrize("raw,expected", [
@@ -350,11 +351,11 @@ def test_theme_roundtrip(isolated_config):
     pytest.param(None, "dark", id="missing_degrades"),
     pytest.param(123, "dark", id="wrong_type_degrades"),
 ])
-def test_theme_coercion(isolated_config, raw, expected):
+def test_theme_coercion(store, isolated_config, raw, expected):
     import json
     isolated_config.parent.mkdir(parents=True, exist_ok=True)
     isolated_config.write_text(json.dumps({"theme": raw}), encoding="utf-8")
-    cfg = load_config()
+    cfg = store.load()
     assert cfg.theme == expected, (
         f"theme({raw!r}) -> {cfg.theme}, expected {expected}")
 
@@ -370,12 +371,12 @@ def test_theme_coercion(isolated_config, raw, expected):
     pytest.param(None, "4/4", id="missing_degrades"),
     pytest.param(44, "4/4", id="wrong_type_degrades"),
 ])
-def test_last_time_sig_coercion(isolated_config, raw, expected):
+def test_last_time_sig_coercion(store, isolated_config, raw, expected):
     import json
     isolated_config.parent.mkdir(parents=True, exist_ok=True)
     isolated_config.write_text(
         json.dumps({"last_time_sig": raw}), encoding="utf-8")
-    cfg = load_config()
+    cfg = store.load()
     assert cfg.last_time_sig == expected, (
         f"last_time_sig({raw!r}) -> {cfg.last_time_sig!r}, expected {expected!r}")
 
@@ -390,12 +391,12 @@ def test_last_time_sig_coercion(isolated_config, raw, expected):
     pytest.param("loud", 1.0, id="garbage_defaults"),
     pytest.param(None, 1.0, id="missing_defaults"),
 ])
-def test_click_volume_clamped_to_unit_interval(isolated_config, raw, expected):
+def test_click_volume_clamped_to_unit_interval(store, isolated_config, raw, expected):
     import json
     isolated_config.parent.mkdir(parents=True, exist_ok=True)
     isolated_config.write_text(
         json.dumps({"click_volume": raw}), encoding="utf-8")
-    cfg = load_config()
+    cfg = store.load()
     assert cfg.click_volume == pytest.approx(expected), (
         f"click_volume({raw!r}) -> {cfg.click_volume}, expected {expected}")
 
@@ -424,14 +425,14 @@ def test_time_sig_values_match_allowlist():
 # out-of-range / corrupt value must clamp into [1, 600] — never propagate a
 # 0-or-negative length (np.zeros(0) = a dead recorder) or a runaway size.
 # ---------------------------------------------------------------------------
-def test_deck_fields_roundtrip(isolated_config):
+def test_deck_fields_roundtrip(store):
     cfg = AppConfig(
         deck_max_seconds=120,
         last_take_path="/home/u/takes/solo.wav",
         deck_scratch_dir="/var/tmp/deck",
     )
-    save_config(cfg)
-    loaded = load_config()
+    store.save(cfg)
+    loaded = store.load()
     assert loaded.deck_max_seconds == 120
     assert loaded.last_take_path == "/home/u/takes/solo.wav"
     assert loaded.deck_scratch_dir == "/var/tmp/deck"
@@ -449,12 +450,12 @@ def test_deck_fields_roundtrip(isolated_config):
     pytest.param("junk", 300, id="garbage_defaults_then_in_range"),
     pytest.param(None, 300, id="missing_defaults"),
 ])
-def test_deck_max_seconds_clamped_to_range(isolated_config, raw, expected):
+def test_deck_max_seconds_clamped_to_range(store, isolated_config, raw, expected):
     import json
     isolated_config.parent.mkdir(parents=True, exist_ok=True)
     isolated_config.write_text(
         json.dumps({"deck_max_seconds": raw}), encoding="utf-8")
-    cfg = load_config()
+    cfg = store.load()
     assert cfg.deck_max_seconds == expected, (
         f"deck_max_seconds({raw!r}) -> {cfg.deck_max_seconds}, "
         f"expected {expected} (clamp 1-600)")
@@ -466,7 +467,7 @@ def test_deck_max_seconds_clamped_to_range(isolated_config, raw, expected):
     pytest.param("", "", id="empty_string"),
     pytest.param(None, "", id="missing_defaults_empty"),
 ])
-def test_deck_path_fields_coerce_to_str(isolated_config, field_name, raw, expected):
+def test_deck_path_fields_coerce_to_str(store, isolated_config, field_name, raw, expected):
     """last_take_path / deck_scratch_dir are tolerant string fields: a present
     path round-trips, a null/missing value degrades to '' (no export yet / OS
     temp dir)."""
@@ -474,7 +475,7 @@ def test_deck_path_fields_coerce_to_str(isolated_config, field_name, raw, expect
     isolated_config.parent.mkdir(parents=True, exist_ok=True)
     isolated_config.write_text(
         json.dumps({field_name: raw}), encoding="utf-8")
-    cfg = load_config()
+    cfg = store.load()
     assert getattr(cfg, field_name) == expected, (
         f"{field_name}({raw!r}) -> {getattr(cfg, field_name)!r}, "
         f"expected {expected!r}")
@@ -500,14 +501,14 @@ def test_as_int_list_degrades_on_non_finite(bad):
     assert sax_config._as_int_list([10, bad, 30]) == []
 
 
-def test_load_config_with_infinity_tokens_returns_defaults(isolated_config):
+def test_load_config_with_infinity_tokens_returns_defaults(store, isolated_config):
     """A config.json carrying Infinity / NaN (json.load accepts these tokens)
     must load to safe defaults, not crash the GUI on startup."""
     isolated_config.parent.mkdir(parents=True, exist_ok=True)
     isolated_config.write_text(
         '{"last_bpm": Infinity, "splitter_sizes": [1, NaN, 3], '
         '"last_a4_hz": -Infinity}', encoding="utf-8")
-    cfg = load_config()                       # the bug was: this raised
+    cfg = store.load()                       # the bug was: this raised
     defaults = AppConfig()
     assert cfg.last_bpm == defaults.last_bpm, "last_bpm must degrade to default"
     assert cfg.last_a4_hz == defaults.last_a4_hz, "last_a4_hz must degrade"
@@ -537,41 +538,39 @@ def test_atomic_write_accepts_finite_payload(tmp_path):
 #    customs DB too. load_customs previously iterated json.load()'s result
 #    directly, so a non-list top-level (null / a number / a bool) raised an
 #    uncaught TypeError at launch; it now guards isinstance(raw, list),
-#    symmetric with load_config()'s non-dict guard.
+#    symmetric with store.load()'s non-dict guard.
 # ---------------------------------------------------------------------------
 @pytest.fixture()
-def isolated_customs(tmp_path, monkeypatch):
-    store = sax_config.ConfigStore(AppPaths(tmp_path / ".intonation_analyzer"))
-    monkeypatch.setattr(sax_config, "_active", store)
+def isolated_customs(store):
     return store.paths.customs
 
 
 @pytest.mark.parametrize("payload", ["null", "42", "true", "3.14", '"abc"'],
                          ids=["null", "int", "bool", "float", "str"])
-def test_load_customs_non_list_returns_empty(isolated_customs, payload):
+def test_load_customs_non_list_returns_empty(store, isolated_customs, payload):
     """A non-list top-level (the startup-crash class) degrades to [] — never an
     uncaught TypeError from iterating a scalar."""
     isolated_customs.parent.mkdir(parents=True, exist_ok=True)
     isolated_customs.write_text(payload, encoding="utf-8")
-    assert sax_config.load_customs() == []
+    assert store.load_customs() == []
 
 
-def test_load_customs_valid_list_still_loads(isolated_customs):
+def test_load_customs_valid_list_still_loads(store, isolated_customs):
     """The isinstance(list) guard must not reject a valid customs DB."""
     isolated_customs.parent.mkdir(parents=True, exist_ok=True)
     isolated_customs.write_text(
         '[{"key": "my_horn", "transp": -2, "name_en": "My Horn", '
         '"name_de": "Mein Horn", "nickname": "Betsy"}]', encoding="utf-8")
-    out = sax_config.load_customs()
+    out = store.load_customs()
     assert len(out) == 1 and out[0].key == "my_horn" and out[0].transp == -2
 
 
-def test_load_customs_corrupt_or_missing_returns_empty(isolated_customs):
+def test_load_customs_corrupt_or_missing_returns_empty(store, isolated_customs):
     isolated_customs.parent.mkdir(parents=True, exist_ok=True)
     isolated_customs.write_text("{not json,,,", encoding="utf-8")
-    assert sax_config.load_customs() == []          # corrupt
+    assert store.load_customs() == []          # corrupt
     isolated_customs.unlink()
-    assert sax_config.load_customs() == []          # missing
+    assert store.load_customs() == []          # missing
 
 
 # A battery of hostile JSON the loaders must SURVIVE (return the right type,
@@ -587,16 +586,16 @@ _HOSTILE_JSON = [
 
 
 @pytest.mark.parametrize("payload", _HOSTILE_JSON)
-def test_load_config_never_raises_on_hostile_json(isolated_config, payload):
+def test_load_config_never_raises_on_hostile_json(store, isolated_config, payload):
     isolated_config.parent.mkdir(parents=True, exist_ok=True)
     isolated_config.write_text(payload, encoding="utf-8")
-    assert isinstance(load_config(), AppConfig), \
+    assert isinstance(store.load(), AppConfig), \
         "load_config must always return an AppConfig, never raise"
 
 
 @pytest.mark.parametrize("payload", _HOSTILE_JSON)
-def test_load_customs_never_raises_on_hostile_json(isolated_customs, payload):
+def test_load_customs_never_raises_on_hostile_json(store, isolated_customs, payload):
     isolated_customs.parent.mkdir(parents=True, exist_ok=True)
     isolated_customs.write_text(payload, encoding="utf-8")
-    assert isinstance(sax_config.load_customs(), list), \
+    assert isinstance(store.load_customs(), list), \
         "load_customs must always return a list, never raise"

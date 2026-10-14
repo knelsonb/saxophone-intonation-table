@@ -25,9 +25,10 @@
 #     notifications fired AFTER the set callback so MainWindow can
 #     refresh the table / range banner / OOR counter without the
 #     controller having to know about those concerns.
-#   * The controller does NOT call sax_config.save_config(). The
-#     MainWindow owns persistence timing (consistent with the
-#     SessionStateController / ExportController patterns).
+#   * The controller does NOT save the settings. The MainWindow owns
+#     persistence timing (consistent with the SessionStateController /
+#     ExportController patterns). It saves custom instruments through the
+#     ConfigStore it is given.
 #   * The controller does NOT touch self._table — that's the
 #     TableController's territory. It only notifies via callbacks.
 #   * No behavioural change vs. the inlined implementation — dialog
@@ -119,7 +120,7 @@ class InstrumentController:
     correctly."""
 
     def __init__(self, window, *,
-                 cfg, engine, log, t_func,
+                 cfg, store, engine, log, t_func,
                  family_combo, instr_combo, nick_edit, a4_combo,
                  get_stats, get_display_mode, get_lang,
                  set_instrument, set_a4,
@@ -128,6 +129,7 @@ class InstrumentController:
                  on_a4_changed=None) -> None:
         self._w = window
         self._cfg = cfg
+        self._store = store
         self._engine = engine
         self._log = log
         self._t = t_func
@@ -284,7 +286,7 @@ class InstrumentController:
         while key in existing_keys:
             # If the user re-typed the EXACT same display name, treat it as
             # an intentional re-add (let register_custom replace the row).
-            existing = [c for c in sax_config.load_customs() if c.key == key]
+            existing = [c for c in self._store.load_customs() if c.key == key]
             if existing and existing[0].name_en == name:
                 break
             key = f"{base}_{suffix}"
@@ -294,14 +296,14 @@ class InstrumentController:
         # read right now, keep the instrument for this session only rather
         # than rewriting the file from an empty list.
         try:
-            customs = sax_config.load_customs(strict=True)
+            customs = self._store.load_customs(strict=True)
         except OSError:
             customs = None
         if customs is not None:
             customs = [c for c in customs if c.key != key]
             customs.append(sax_config.CustomInstrument(
                 key=key, transp=transp, name_de=name, name_en=name))
-            sax_config.save_customs(customs)
+            self._store.save_customs(customs)
         # Refresh combos and select the new instrument.
         lang = self._get_lang()
         self._family_combo.blockSignals(True)

@@ -23,11 +23,10 @@ from sax_paths import AppPaths
 
 
 @pytest.fixture()
-def isolated_config(tmp_path, monkeypatch):
+def store(tmp_path):
     cfg_dir = tmp_path / ".intonation_analyzer"
-    monkeypatch.setattr(sax_config, "_active", sax_config.ConfigStore(AppPaths(cfg_dir)))
     cfg_dir.mkdir(parents=True)
-    return cfg_dir
+    return sax_config.ConfigStore(AppPaths(cfg_dir))
 
 
 def _fail_reads_of(mp, target: Path) -> None:
@@ -43,46 +42,46 @@ def _fail_reads_of(mp, target: Path) -> None:
 
 
 # --- configuration -----------------------------------------------------------
-def test_config_with_non_utf8_bytes_loads_defaults(isolated_config):
-    sax_config.CONFIG_PATH.write_bytes(b'{"log_path": "C:\\\\M\xe4rz"}')
-    assert sax_config.load_config() == sax_config.AppConfig()
+def test_config_with_non_utf8_bytes_loads_defaults(store):
+    store.paths.config.write_bytes(b'{"log_path": "C:\\\\M\xe4rz"}')
+    assert store.load() == sax_config.AppConfig()
 
 
-def test_unreadable_config_is_not_overwritten_on_save(isolated_config, monkeypatch):
+def test_unreadable_config_is_not_overwritten_on_save(store, monkeypatch):
     original = json.dumps({"persistence_enabled": True, "log_path": "keep-me"})
-    sax_config.CONFIG_PATH.write_text(original, encoding="utf-8")
+    store.paths.config.write_text(original, encoding="utf-8")
     with monkeypatch.context() as mp:
-        _fail_reads_of(mp, sax_config.CONFIG_PATH)
-        sax_config.save_config(sax_config.load_config())
-    assert sax_config.CONFIG_PATH.read_text(encoding="utf-8") == original
+        _fail_reads_of(mp, store.paths.config)
+        store.save(store.load())
+    assert store.paths.config.read_text(encoding="utf-8") == original
 
 
-def test_corrupt_config_is_replaced_on_save(isolated_config):
-    sax_config.CONFIG_PATH.write_text("{not json", encoding="utf-8")
-    sax_config.save_config(sax_config.load_config())
-    assert json.loads(sax_config.CONFIG_PATH.read_text(encoding="utf-8"))
+def test_corrupt_config_is_replaced_on_save(store):
+    store.paths.config.write_text("{not json", encoding="utf-8")
+    store.save(store.load())
+    assert json.loads(store.paths.config.read_text(encoding="utf-8"))
 
 
-def test_matrix_extra_octaves_is_clamped(isolated_config):
-    sax_config.CONFIG_PATH.write_text('{"matrix_extra_octaves": 1000000000}',
+def test_matrix_extra_octaves_is_clamped(store):
+    store.paths.config.write_text('{"matrix_extra_octaves": 1000000000}',
                                       encoding="utf-8")
-    assert sax_config.load_config().matrix_extra_octaves == 4
+    assert store.load().matrix_extra_octaves == 4
 
 
 # --- custom instruments ------------------------------------------------------
-def test_customs_overflowing_transposition_is_skipped(isolated_config):
-    sax_config.CUSTOMS_PATH.write_text(
+def test_customs_overflowing_transposition_is_skipped(store):
+    store.paths.customs.write_text(
         '[{"key": "bad", "transp": 1e400}, {"key": "ok", "transp": -2}]',
         encoding="utf-8")
-    assert [c.key for c in sax_config.load_customs()] == ["ok"]
+    assert [c.key for c in store.load_customs()] == ["ok"]
 
 
-def test_customs_strict_load_raises_on_read_failure(isolated_config, monkeypatch):
-    sax_config.CUSTOMS_PATH.write_text('[{"key": "a", "transp": 0}]', encoding="utf-8")
-    _fail_reads_of(monkeypatch, sax_config.CUSTOMS_PATH)
-    assert sax_config.load_customs() == []
+def test_customs_strict_load_raises_on_read_failure(store, monkeypatch):
+    store.paths.customs.write_text('[{"key": "a", "transp": 0}]', encoding="utf-8")
+    _fail_reads_of(monkeypatch, store.paths.customs)
+    assert store.load_customs() == []
     with pytest.raises(OSError):
-        sax_config.load_customs(strict=True)
+        store.load_customs(strict=True)
 
 
 # --- measurement log ---------------------------------------------------------

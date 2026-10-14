@@ -709,7 +709,7 @@ class AudioEngine:
         # None until the first poll fires.
         self.last_devices_refresh_at: Optional[datetime.datetime] = None
         # Persisted (name, host_api) hint for hot-plug auto-recovery.
-        # Set by the GUI right after load_config so refresh_devices() can
+        # Set by the GUI right after the settings load so refresh_devices() can
         # resolve "the device the user picked last session" against the
         # current device list, which holds rotated PortAudio indices.
         self._preferred_hint: Optional[DeviceSelection] = None

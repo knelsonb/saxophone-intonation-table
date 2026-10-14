@@ -44,7 +44,6 @@ from typing import TYPE_CHECKING, Callable, Optional
 
 from PyQt6.QtWidgets import QDialog
 
-import sax_config
 from sax_audio_engine import (
     AUDIO_OK,
     AudioEngineError,
@@ -57,7 +56,7 @@ from sax_dialogs import AudioPickerDialog
 if TYPE_CHECKING:
     from PyQt6.QtWidgets import QMainWindow
 
-    from sax_config import AppConfig
+    from sax_config import AppConfig, ConfigStore
     from sax_translator import Translator
 
 
@@ -73,6 +72,7 @@ class DeviceController:
     def __init__(self, window: 'QMainWindow', *,
                  engine,
                  cfg: 'AppConfig',
+                 store: 'ConfigStore',
                  tr: 'Translator',
                  info_banner,
                  audio_banner,
@@ -82,6 +82,7 @@ class DeviceController:
         self._w = window
         self._engine = engine
         self._cfg = cfg
+        self._store = store
         self._tr = tr
         self._t = tr.t
         self._info_banner = info_banner
@@ -107,7 +108,7 @@ class DeviceController:
         self._cfg.audio_device_name = dev.name
         self._cfg.audio_device_host_api = dev.host_api
         self._cfg.audio_device_samplerate = int(self._engine.samplerate or 0)
-        sax_config.save_config(self._cfg)
+        self._store.save(self._cfg)
         # v0.5.7: keep the engine's hot-plug auto-recovery hint in sync
         # with whatever's actually active. Otherwise the user picks a
         # new device, unplugs it, plugs it back in, and the engine
@@ -128,12 +129,11 @@ class DeviceController:
         if not self._audio_ok:
             return
         dlg = AudioPickerDialog(self._w, self._t, self._engine, self._cfg,
-                                self._engine.get_active_device())
+                                self._engine.get_active_device(), self._store)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             chosen = dlg.chosen()
             if chosen is not None:
-                pref = str(getattr(self._cfg, 'audio_samplerate_pref',
-                                    'auto') or 'auto')
+                pref = self._cfg.audio_samplerate_pref
                 self._open_picked(DeviceSelection(name=chosen.name,
                                                   host_api=chosen.host_api,
                                                   samplerate=0), pref)
@@ -193,10 +193,9 @@ class DeviceController:
                 w._tuner.sample_rate = sr
             # First-time-only notice if we wound up at a non-44.1k rate.
             if (sr and sr != 44100
-                    and not bool(getattr(self._cfg,
-                                          'audio_sr_notice_shown', False))):
+                    and not self._cfg.audio_sr_notice_shown):
                 self._cfg.audio_sr_notice_shown = True
-                sax_config.save_config(self._cfg)
+                self._store.save(self._cfg)
                 # Surface as a passive status-bar line, not a modal, so a
                 # sample-rate disclosure never blocks the player.
                 self._tr.bind(w._status_lbl.setText, 'audio_sr_notice', sr=sr)
@@ -207,8 +206,8 @@ class DeviceController:
         saved one, or if none was saved yet; otherwise it is a fallback for
         a saved device that is missing: say so, and keep the saved choice
         (and the engine's recovery hint) pointing at the missing device."""
-        saved = str(getattr(self._cfg, 'audio_device_name', '') or '')
-        saved_host = str(getattr(self._cfg, 'audio_device_host_api', '') or '')
+        saved = self._cfg.audio_device_name
+        saved_host = self._cfg.audio_device_host_api
         chosen = picked is not None and picked.name == dev.name
         is_saved = (dev.name == saved
                     and (not saved_host or dev.host_api == saved_host))

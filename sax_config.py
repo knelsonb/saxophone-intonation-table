@@ -29,10 +29,8 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from sax_atomic import atomic_write_json
-from sax_paths import HISTORY_FILENAME, AppPaths
+from sax_paths import AppPaths
 from sax_theme import coerce_theme_name
-
-DEFAULT_LOG_FILENAME = HISTORY_FILENAME
 
 
 # ---------------------------------------------------------------------------
@@ -378,14 +376,14 @@ class AppConfig:
     # Offset from the reference note in semitones, clamped to [-12, 12].
     drone_semitones: int = _setting(0, _int_in(-12, 12))
 
-    def effective_log_path(self, paths: Optional[AppPaths] = None) -> Optional[Path]:
+    def effective_log_path(self, paths: AppPaths) -> Optional[Path]:
         """The history file these settings ask for, or None when history is
         off. SAX_INTONATION_LOG_PATH is applied on top by AppPaths.history."""
         if not self.persistence_enabled:
             return None
         if self.log_path:
             return Path(self.log_path).expanduser()
-        return (paths if paths is not None else active_store().paths).default_history
+        return paths.default_history
 
 
 _FIELDS = fields(AppConfig)
@@ -560,52 +558,3 @@ class ConfigStore:
         return atomic_write_json(
             self.paths.customs, [asdict(c) for c in customs],
             tmp_prefix=".customs.")
-
-
-# ---------------------------------------------------------------------------
-# The session's store. The window creates one from its AppPaths at start-up
-# and installs it with use_store(); the module-level functions below are the
-# entry points the rest of the app (and older call sites) use.
-# ---------------------------------------------------------------------------
-_active: Optional[ConfigStore] = None
-
-
-def active_store() -> ConfigStore:
-    """The store installed by use_store(), or one for the current HOME,
-    created on first use."""
-    global _active
-    if _active is None:
-        _active = ConfigStore(AppPaths.from_environment())
-    return _active
-
-
-def use_store(store: Optional[ConfigStore]) -> None:
-    global _active
-    _active = store
-
-
-def load_config() -> AppConfig:
-    return active_store().load()
-
-
-def save_config(cfg: AppConfig) -> None:
-    active_store().save(cfg)
-
-
-def load_customs(strict: bool = False) -> list[CustomInstrument]:
-    return active_store().load_customs(strict)
-
-
-def save_customs(customs: list[CustomInstrument]) -> None:
-    active_store().save_customs(customs)
-
-
-def __getattr__(name: str):
-    # Paths that used to be module constants computed at import. They now
-    # follow the active store, so nothing is resolved before start-up.
-    paths = {"CONFIG_DIR": lambda p: p.data_dir,
-             "CONFIG_PATH": lambda p: p.config,
-             "CUSTOMS_PATH": lambda p: p.customs}
-    if name in paths:
-        return paths[name](active_store().paths)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -17,7 +17,7 @@
 #     export time rather than freezing whatever was set on the
 #     window when __init__ ran.
 #   * The controller never mutates engine state and never calls
-#     sax_config.save_config — the window owns persistence timing.
+#     saves the settings — the window owns persistence timing.
 #   * `_instr_info_asked`, `_last_maker`, `_last_model` are read
 #     and written on the parent window (self._w) so the existing
 #     reset hook on MainWindow that clears the cache keeps working

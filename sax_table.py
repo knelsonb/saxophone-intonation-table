@@ -233,7 +233,7 @@ class TableController:
         if hi_midi % 12 == 11:     # high note is B → show C in the column above
             hi_oct += 1
         # Configurable extra context on each side.
-        extra = max(0, int(getattr(self._cfg, 'matrix_extra_octaves', 0)))
+        extra = self._cfg.matrix_extra_octaves
         lo_oct -= extra
         hi_oct += extra
         # Clamp to non-negative octaves (MIDI octave -1 not useful for
@@ -304,7 +304,7 @@ class TableController:
         # Min-N filter: rows with 1..min_n-1 measurements are below
         # threshold and hidden as noise. N=0 seeded blanks still show so
         # the instrument range stays visible as a guide.
-        min_n = max(0, int(getattr(self._cfg, 'min_n_visible', 0)))
+        min_n = self._cfg.min_n_visible
         items = [(m, s) for (m, s) in raw_items
                  if s.n == 0 or s.n >= min_n]
 
@@ -444,8 +444,7 @@ class TableController:
                 # arbitrary cents readings. Same rule as single-column:
                 # a cell with 1..min_n-1 hits is treated as if it has no
                 # data yet.
-                min_n = max(0, int(
-                    getattr(self._cfg, 'min_n_visible', 0)))
+                min_n = self._cfg.min_n_visible
                 has_data = (st is not None and st.n > 0
                             and st.n >= min_n)
                 if has_data:

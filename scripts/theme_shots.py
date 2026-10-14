@@ -104,7 +104,7 @@ def main() -> int:
         except Exception as exc:                 # never let one target sink the run
             print(f"  (rangedlg skipped for {theme}: {exc})")
         try:
-            pdlg = AudioPickerDialog(win, win._t, win._engine, win._cfg, None)
+            pdlg = AudioPickerDialog(win, win._t, win._engine, win._cfg, None, win._store)
             pdlg.resize(560, 420)
             _grab(pdlg, f"{theme}-pickerdlg")
             pdlg.close()

@@ -350,17 +350,21 @@ def test_range_editor_stays_open_when_nothing_was_saved(tmp_path):
 # 1.4  Drone voice, volume and semitones persist; volume 0 survives
 # ---------------------------------------------------------------------------
 @pytest.fixture()
-def isolated_config(tmp_path, monkeypatch):
+def store(tmp_path):
     cfg_dir = tmp_path / ".intonation_analyzer"
-    monkeypatch.setattr(sax_config, "_active", sax_config.ConfigStore(AppPaths(cfg_dir)))
     cfg_dir.mkdir(parents=True)
-    return cfg_dir / "config.json"
+    return sax_config.ConfigStore(AppPaths(cfg_dir))
 
 
-def test_drone_settings_round_trip(isolated_config):
-    sax_config.save_config(sax_config.AppConfig(
+@pytest.fixture()
+def isolated_config(store):
+    return store.paths.config
+
+
+def test_drone_settings_round_trip(store):
+    store.save(sax_config.AppConfig(
         drone_voice_id="cello", drone_volume=0.0, drone_semitones=-5))
-    cfg = sax_config.load_config()
+    cfg = store.load()
     assert (cfg.drone_voice_id, cfg.drone_volume, cfg.drone_semitones) == (
         "cello", 0.0, -5)
 
@@ -370,29 +374,29 @@ def test_drone_settings_round_trip(isolated_config):
     ("gm128", "organ"), ("bogus", "organ"), (17, "organ"), (None, "organ"),
     ("", "organ"),
 ])
-def test_drone_voice_id_coercion(isolated_config, raw, expected):
+def test_drone_voice_id_coercion(store, isolated_config, raw, expected):
     isolated_config.write_text(json.dumps({"drone_voice_id": raw}),
                                encoding="utf-8")
-    assert sax_config.load_config().drone_voice_id == expected
+    assert store.load().drone_voice_id == expected
 
 
 @pytest.mark.parametrize("raw,expected", [
     (0.0, 0.0), (0, 0.0), (0.25, 0.25), (2.0, 1.0), (-1, 0.0),
     ("loud", 0.5), (None, 0.5),
 ])
-def test_drone_volume_coercion(isolated_config, raw, expected):
+def test_drone_volume_coercion(store, isolated_config, raw, expected):
     isolated_config.write_text(json.dumps({"drone_volume": raw}),
                                encoding="utf-8")
-    assert sax_config.load_config().drone_volume == pytest.approx(expected)
+    assert store.load().drone_volume == pytest.approx(expected)
 
 
 @pytest.mark.parametrize("raw,expected", [
     (3, 3), (-12, -12), (30, 12), (-30, -12), ("x", 0), (None, 0),
 ])
-def test_drone_semitones_coercion(isolated_config, raw, expected):
+def test_drone_semitones_coercion(store, isolated_config, raw, expected):
     isolated_config.write_text(json.dumps({"drone_semitones": raw}),
                                encoding="utf-8")
-    assert sax_config.load_config().drone_semitones == expected
+    assert store.load().drone_semitones == expected
 
 
 @requires_qt
@@ -771,10 +775,10 @@ def test_diagnostics_timers_run_only_while_visible(tmp_path):
     ("fast", "fast"), ("SLOW", "slow"), ("turbo", "normal"), (None, "normal"),
     (3, "normal"),
 ])
-def test_filter_mode_coercion(isolated_config, raw, expected):
+def test_filter_mode_coercion(store, isolated_config, raw, expected):
     isolated_config.write_text(json.dumps({"filter_mode": raw}),
                                encoding="utf-8")
-    assert sax_config.load_config().filter_mode == expected
+    assert store.load().filter_mode == expected
 
 
 def test_filter_mode_values_match_engine_presets():
@@ -827,7 +831,7 @@ def test_picker_restores_wait_cursor_when_closed_mid_reopen(tmp_path):
         win._engine.get_active_device = lambda: dev
         win._engine.stop = lambda: None
         win._engine.open_device = lambda *a, **k: release.wait(10)
-        dlg = AudioPickerDialog(win, win._t, win._engine, win._cfg, None)
+        dlg = AudioPickerDialog(win, win._t, win._engine, win._cfg, None, win._store)
         idx = dlg._sr_combo.findData("48000")
         dlg._sr_combo.setCurrentIndex(idx)
         app.processEvents()

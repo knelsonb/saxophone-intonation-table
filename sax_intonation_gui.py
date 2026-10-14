@@ -195,17 +195,16 @@ class MainWindow(QMainWindow):
         # Every file the app keeps is resolved once, here, and handed to the
         # store that owns it.
         self._paths = paths if paths is not None else AppPaths.from_environment()
-        self._settings = sax_config.ConfigStore(self._paths)
-        sax_config.use_store(self._settings)
+        self._store = sax_config.ConfigStore(self._paths)
         sax_instruments.use_range_overrides(
             sax_instruments.RangeOverrides(self._paths.ranges))
         sax_crash.set_log_path(self._paths.crash_log)
-        self._cfg = self._settings.load()
+        self._cfg = self._store.load()
         # Apply the saved theme before any widget is built, so the global
         # stylesheet (in _build_ui) and the custom-painted widgets all read the
         # right palette from first paint. Live switches go through _apply_theme.
         sax_theme.set_active(self._cfg.theme)
-        for c in sax_config.load_customs():
+        for c in self._store.load_customs():
             register_custom(c.key, c.transp, c.name_de, c.name_en)
 
         # v0.5.5: restore last-session preferences that influence the
@@ -213,13 +212,13 @@ class MainWindow(QMainWindow):
         # are widget-bound and get applied after _build_ui returns.
         # First-launch (empty config) falls back to the locale-derived
         # default already set above.
-        if getattr(self._cfg, 'last_lang', '') in ('de', 'en'):
+        if self._cfg.last_lang in ('de', 'en'):
             lang = self._cfg.last_lang
         # Every translated text in the window is bound to this translator and
         # follows a language switch by itself (see sax_translator).
         self._tr = Translator(lang, self)
         self._tr.language_changed.connect(self._on_language_changed)
-        if getattr(self._cfg, 'last_instrument_key', ''):
+        if self._cfg.last_instrument_key:
             # Trust the saved key only if the catalog still knows it; a
             # stale custom instrument that was deleted should fall back
             # rather than crash the combo population.
@@ -228,18 +227,15 @@ class MainWindow(QMainWindow):
         # A saved custom instrument cannot be resolved while its file is
         # unreadable. The session runs on the default instrument, but the
         # saved choice is kept unless the player picks another one.
-        keep_saved_instrument = (self._settings.customs_unreadable
+        keep_saved_instrument = (self._store.customs_unreadable
                                  and self._cfg.last_instrument_key not in transp_map())
-        if getattr(self._cfg, 'last_display_mode', '') in ('griff', 'klingend'):
+        if self._cfg.last_display_mode in ('griff', 'klingend'):
             self.display = self._cfg.last_display_mode
 
         self._engine = AudioEngine()
-        self._engine.set_filter_mode(
-            getattr(self._cfg, 'filter_mode', FILTER_MODE_DEFAULT))
-        self._engine.set_mic_gain(
-            _db_to_linear(getattr(self._cfg, 'mic_gain_db', 0.0)))
-        self._engine.set_prefer_wdmks(
-            bool(getattr(self._cfg, 'prefer_wdmks', False)))
+        self._engine.set_filter_mode(self._cfg.filter_mode)
+        self._engine.set_mic_gain(_db_to_linear(self._cfg.mic_gain_db))
+        self._engine.set_prefer_wdmks(self._cfg.prefer_wdmks)
         # Persistence comes from config (welcome dialog), with the env var
         # SAX_INTONATION_LOG_PATH as a power-user override that always wins.
         self._log = MeasurementLog(
@@ -349,6 +345,7 @@ class MainWindow(QMainWindow):
             self,
             engine=self._engine,
             cfg=self._cfg,
+            store=self._store,
             tr=self._tr,
             info_banner=self._info_banner,
             audio_banner=self._audio_banner,
@@ -362,8 +359,7 @@ class MainWindow(QMainWindow):
         # state_changed. This is the v0.5.4 headline fix.
         if AUDIO_OK:
             saved = self._device_selection_from_cfg()
-            pref = str(getattr(self._cfg, 'audio_samplerate_pref',
-                                'auto') or 'auto')
+            pref = self._cfg.audio_samplerate_pref
             # v0.5.7: the engine needs the saved (name, host_api) so its
             # hot-plug poller and retry_open path can re-resolve the
             # user's preferred device against a fresh device list
@@ -387,7 +383,7 @@ class MainWindow(QMainWindow):
         # First-boot welcome dialog asks about persistence. Skipped on every
         # subsequent launch, and when the settings file could not be read:
         # that player is not new, their file is only locked.
-        if not self._cfg.welcome_shown and not self._settings.unreadable:
+        if not self._cfg.welcome_shown and not self._store.unreadable:
             self._show_welcome_dialog()
 
         self._refresh_timer = QTimer(self)
@@ -515,7 +511,7 @@ class MainWindow(QMainWindow):
         tr.bind_items(self._layout_combo, [('layout_auto', 'auto'),
                                            ('layout_single', 'single'),
                                            ('layout_matrix', 'matrix')])
-        pref = getattr(self._cfg, 'layout_mode_preference', 'auto')
+        pref = self._cfg.layout_mode_preference
         for i in range(self._layout_combo.count()):
             if self._layout_combo.itemData(i) == pref:
                 self._layout_combo.setCurrentIndex(i)
@@ -657,8 +653,7 @@ class MainWindow(QMainWindow):
         diag_footer.setContentsMargins(4, 0, 4, 0)
         self._cb_diag = QCheckBox()
         tr.bind(self._cb_diag.setText, 'show_diagnostics')
-        self._cb_diag.setChecked(
-            bool(getattr(self._cfg, 'show_diagnostics', False)))
+        self._cb_diag.setChecked(self._cfg.show_diagnostics)
         tr.bind(self._cb_diag.setToolTip, 'show_diagnostics_tip')
         self._cb_diag.toggled.connect(self._on_diagnostics_toggled)
         diag_footer.addWidget(self._cb_diag)
@@ -691,7 +686,7 @@ class MainWindow(QMainWindow):
         dg_l.addWidget(self._data_panel)
         ll3.addWidget(self._data_grp)
 
-        show_diag = bool(getattr(self._cfg, 'show_diagnostics', False))
+        show_diag = self._cfg.show_diagnostics
         self._spectro_grp.setVisible(show_diag)
         self._data_grp.setVisible(show_diag)
 
@@ -732,7 +727,7 @@ class MainWindow(QMainWindow):
         self._min_n_lbl.setObjectName('dimLabel')      # themed via QLabel#dimLabel
         self._min_n_spin = QSpinBox()
         self._min_n_spin.setRange(0, 999)
-        self._min_n_spin.setValue(int(getattr(self._cfg, 'min_n_visible', 5)))
+        self._min_n_spin.setValue(self._cfg.min_n_visible)
         tr.bind(self._min_n_spin.setToolTip, 'min_n_tip')
         self._min_n_spin.setMinimumWidth(70)
         self._min_n_spin.setObjectName('minNspin')     # themed via QSpinBox#minNspin
@@ -809,7 +804,8 @@ class MainWindow(QMainWindow):
         # invoked before this point.
         self._instr_ctrl = InstrumentController(
             self,
-            cfg=self._cfg, engine=self._engine, log=self._log, t_func=self._t,
+            cfg=self._cfg, store=self._store, engine=self._engine, log=self._log,
+            t_func=self._t,
             family_combo=self._family_combo,
             instr_combo=self._instr_combo,
             nick_edit=self._nick_edit,
@@ -866,8 +862,7 @@ class MainWindow(QMainWindow):
         self._cb_prefer_duplex = QCheckBox()
         tr.bind(self._cb_prefer_duplex.setText, 'setup_prefer_duplex')
         tr.bind(self._cb_prefer_duplex.setToolTip, 'setup_prefer_duplex_tip')
-        self._cb_prefer_duplex.setChecked(
-            bool(getattr(self._cfg, 'output_prefer_duplex', False)))
+        self._cb_prefer_duplex.setChecked(self._cfg.output_prefer_duplex)
         self._cb_prefer_duplex.toggled.connect(self._on_prefer_duplex_toggled)
         og.addRow('', self._cb_prefer_duplex)
         outer.addWidget(out_grp)
@@ -950,7 +945,7 @@ class MainWindow(QMainWindow):
         self._setup_nick_edit.setObjectName('setupNickname')
         tr.bind(self._setup_nick_edit.setPlaceholderText, 'nickname_tip')
         tr.bind(self._setup_nick_edit.setAccessibleName, 'grp_nickname')
-        self._setup_nick_edit.setText(getattr(self._cfg, 'last_nickname', '') or '')
+        self._setup_nick_edit.setText(self._cfg.last_nickname)
         self._setup_nick_edit.editingFinished.connect(
             self._on_setup_nickname_changed)
         nick_row.addWidget(self._setup_nick_edit)
@@ -1023,7 +1018,7 @@ class MainWindow(QMainWindow):
                 '0 dB' if _db == 0 else f'{_db:+d} dB', _db)
         # Snap the display to the nearest offered step (the engine already uses
         # the exact persisted dB; the user can only pick a discrete step).
-        _cur_db = float(getattr(self._cfg, 'mic_gain_db', 0.0))
+        _cur_db = self._cfg.mic_gain_db
         _best_i = min(range(self._setup_mic_gain_combo.count()),
                       key=lambda i: abs(self._setup_mic_gain_combo.itemData(i)
                                         - _cur_db))
@@ -1078,9 +1073,9 @@ class MainWindow(QMainWindow):
         input path's _device_selection_from_cfg). Empty name = system
         default; samplerate 0 = auto-negotiate."""
         return DeviceSelection(
-            name=str(getattr(self._cfg, 'output_device_name', '') or ''),
-            host_api=str(getattr(self._cfg, 'output_device_host_api', '') or ''),
-            samplerate=int(getattr(self._cfg, 'output_device_samplerate', 0) or 0),
+            name=self._cfg.output_device_name,
+            host_api=self._cfg.output_device_host_api,
+            samplerate=self._cfg.output_device_samplerate,
         )
 
     def _request_output_open(self) -> None:
@@ -1106,7 +1101,7 @@ class MainWindow(QMainWindow):
         combo.clear()
         combo.addItem(self._t('setup_output_default'), '')
         self._output_devices_cache = list(devices)
-        saved_name = str(getattr(self._cfg, 'output_device_name', '') or '')
+        saved_name = self._cfg.output_device_name
         select_idx = 0
         for d in devices:
             combo.addItem(f'{d.name} · {d.host_api}', d.name)
@@ -1132,10 +1127,7 @@ class MainWindow(QMainWindow):
         self._cfg.output_device_name = name
         self._cfg.output_device_host_api = host_api
         self._cfg.output_device_samplerate = 0   # auto-negotiate
-        try:
-            sax_config.save_config(self._cfg)
-        except Exception:
-            pass
+        self._save_settings()
         # Re-open on the new device. Whatever is sounding carries over: the
         # mixer re-rates every source for the new stream and keeps the
         # metronome's next beat where it was due.
@@ -1227,10 +1219,7 @@ class MainWindow(QMainWindow):
         # device opens. We don't re-open mid-tone — that would chop a
         # playing test tone for a setting that costs nothing to defer.
         self._cfg.output_prefer_duplex = bool(checked)
-        try:
-            sax_config.save_config(self._cfg)
-        except Exception:
-            pass
+        self._save_settings()
 
     def _on_theme_changed(self, _idx: int) -> None:
         name = self._theme_combo.currentData() or sax_theme.DEFAULT_THEME
@@ -1251,10 +1240,7 @@ class MainWindow(QMainWindow):
         for _w in self.findChildren(QWidget):
             _w.update()
         self._cfg.theme = pal.name
-        try:
-            sax_config.save_config(self._cfg)
-        except Exception:
-            pass
+        self._save_settings()
 
     def _sync_qpalette(self) -> None:
         """Set the QApplication palette from the active theme, so palette-based
@@ -1387,7 +1373,7 @@ class MainWindow(QMainWindow):
             self._cfg.last_active_tab = self._tab_keys[idx]
 
     def _restore_active_tab(self) -> None:
-        key = str(getattr(self._cfg, 'last_active_tab', 'tuner') or 'tuner')
+        key = self._cfg.last_active_tab
         if key in self._tab_keys:
             self._tabs.setCurrentIndex(self._tab_keys.index(key))
 
@@ -1408,8 +1394,8 @@ class MainWindow(QMainWindow):
         start/stop/toggle/is_running, on_state_changed."""
         # Local UI state, seeded from persisted config (the metronome
         # fields, read defensively).
-        self._metro_bpm = self._clamp_bpm(int(getattr(self._cfg, 'last_bpm', 100)))
-        self._metro_time_sig = str(getattr(self._cfg, 'last_time_sig', '4/4'))
+        self._metro_bpm = self._clamp_bpm(self._cfg.last_bpm)
+        self._metro_time_sig = self._cfg.last_time_sig
         if self._metro_time_sig not in self.METRO_TIME_SIGS:
             self._metro_time_sig = '4/4'
         self._metro_running = False
@@ -1420,7 +1406,7 @@ class MainWindow(QMainWindow):
             self._engine.mixer, self._output_rate(),
             bpm=self._metro_bpm,
             time_sig=self._metro_time_sig,
-            volume=float(getattr(self._cfg, 'click_volume', 1.0)),
+            volume=self._cfg.click_volume,
             on_state_changed=self._on_metro_state_changed)
 
         tr = self._tr
@@ -1497,7 +1483,7 @@ class MainWindow(QMainWindow):
         self._metro_vol_slider = QSlider(Qt.Orientation.Horizontal)
         tr.bind(self._metro_vol_slider.setAccessibleName, 'metro_volume')
         self._metro_vol_slider.setRange(0, 100)
-        vol0 = int(round(float(getattr(self._cfg, 'click_volume', 1.0)) * 100))
+        vol0 = int(round(self._cfg.click_volume * 100))
         self._metro_vol_slider.setValue(max(0, min(100, vol0)))
         self._metro_vol_slider.valueChanged.connect(self._on_metro_volume)
         self._metro_vol_lbl = QLabel(f'{self._metro_vol_slider.value()}%')
@@ -1655,10 +1641,8 @@ class MainWindow(QMainWindow):
         self._deck_ctrl = DeckController(
             self._engine.mixer, self._output_rate(),
             engine=self._engine,           # arms the input-recording tap
-            max_seconds=float(getattr(self._cfg, 'deck_max_seconds',
-                                      300.0) or 300.0),
-            scratch_dir=(str(getattr(self._cfg, 'deck_scratch_dir', '')
-                             or '') or None),
+            max_seconds=float(self._cfg.deck_max_seconds),
+            scratch_dir=self._cfg.deck_scratch_dir or None,
             on_state_changed=self._on_deck_state_changed)
 
         tr = self._tr
@@ -1886,7 +1870,7 @@ class MainWindow(QMainWindow):
 
     def _on_deck_export(self) -> None:
         # File dialog — reuse sax_export's getSaveFileName pattern, .wav filter.
-        start = str(getattr(self._cfg, 'last_take_path', '') or '')
+        start = self._cfg.last_take_path
         path, _sel = QFileDialog.getSaveFileName(
             self, self._t('deck_export_title'), start,
             self._t('deck_export_filter'))
@@ -1917,7 +1901,7 @@ class MainWindow(QMainWindow):
         drone on requires an output stream (honesty discipline — no 'on' state
         if nothing can sound). The 128-GM picker lives in SETUP and stays in
         sync via the controller's on_state_changed (single source of truth)."""
-        # Seed persisted state. load_config has already coerced and clamped
+        # Seed persisted state. Loading the settings coerced and clamped
         # these; a saved volume of 0.0 is a real choice and is kept.
         self._drone_voice_id = self._cfg.drone_voice_id
         self._drone_volume = self._cfg.drone_volume
@@ -2380,7 +2364,7 @@ class MainWindow(QMainWindow):
         readability. Matrix never truncates a playable note — wider
         instruments overflow into a horizontal scrollbar instead of
         dropping back to single."""
-        pref = getattr(self._cfg, 'layout_mode_preference', 'auto')
+        pref = self._cfg.layout_mode_preference
         if pref == 'single':
             return 'single'
         if pref == 'matrix':
@@ -2513,7 +2497,7 @@ class MainWindow(QMainWindow):
         UI semantic: `checked` means "filter to range ON" (restrict).
         Internally we store the inverse as `allow_out_of_range`."""
         self._cfg.allow_out_of_range = not checked
-        sax_config.save_config(self._cfg)
+        self._save_settings()
         # Wave-1 bug #7: the docstring above promises a refresh; the
         # v0.5.3 implementation forgot to actually call _refresh_table,
         # so toggling "Filter to instrument range" only took effect on
@@ -2536,9 +2520,9 @@ class MainWindow(QMainWindow):
 
     def _device_selection_from_cfg(self) -> DeviceSelection:
         return DeviceSelection(
-            name=str(getattr(self._cfg, 'audio_device_name', '') or ''),
-            host_api=str(getattr(self._cfg, 'audio_device_host_api', '') or ''),
-            samplerate=int(getattr(self._cfg, 'audio_device_samplerate', 0) or 0),
+            name=self._cfg.audio_device_name,
+            host_api=self._cfg.audio_device_host_api,
+            samplerate=self._cfg.audio_device_samplerate,
         )
 
     # Audio device handling lives on DeviceController.
@@ -2570,7 +2554,7 @@ class MainWindow(QMainWindow):
         the choice. Widgets remain constructed either way so flipping
         the toggle has no allocation cost on the audio thread."""
         self._cfg.show_diagnostics = bool(checked)
-        sax_config.save_config(self._cfg)
+        self._save_settings()
         self._spectro_grp.setVisible(bool(checked))
         self._data_grp.setVisible(bool(checked))
         self._refresh_table()
@@ -2580,7 +2564,7 @@ class MainWindow(QMainWindow):
         pref = self._layout_combo.currentData()
         if pref in ('auto', 'single', 'matrix'):
             self._cfg.layout_mode_preference = pref
-            sax_config.save_config(self._cfg)
+            self._save_settings()
             self._refresh_table()
 
     def _populate_filter_combo(self, combo) -> None:
@@ -2630,7 +2614,7 @@ class MainWindow(QMainWindow):
                 combo.setCurrentIndex(idx)
                 combo.blockSignals(False)
         self._cfg.filter_mode = mode
-        sax_config.save_config(self._cfg)
+        self._save_settings()
         if AUDIO_OK:
             self._engine.set_filter_mode(mode)
 
@@ -2643,7 +2627,7 @@ class MainWindow(QMainWindow):
             return
         db = float(db)
         self._cfg.mic_gain_db = db
-        sax_config.save_config(self._cfg)
+        self._save_settings()
         self._engine.set_mic_gain(10.0 ** (db / 20.0))
         self._update_mic_gain_status()
 
@@ -2652,7 +2636,7 @@ class MainWindow(QMainWindow):
         gives a visible result even though the cents readout is (by design)
         unaffected by gain."""
         lbl = self._setup_mic_gain_status
-        db = int(round(float(getattr(self._cfg, 'mic_gain_db', 0.0))))
+        db = int(round(self._cfg.mic_gain_db))
         if db == 0:
             self._tr.bind(lbl.setText, 'setup_mic_gain_off')
         elif db > 0:
@@ -2665,7 +2649,7 @@ class MainWindow(QMainWindow):
         The filter is purely a display gate — measurements are still
         collected; rows just hide until they accumulate enough hits."""
         self._cfg.min_n_visible = max(0, int(value))
-        sax_config.save_config(self._cfg)
+        self._save_settings()
         self._refresh_table()
 
     def _on_nickname_changed(self) -> None:
@@ -2712,7 +2696,7 @@ class MainWindow(QMainWindow):
 
     def _show_welcome_dialog(self) -> None:
         """First-boot dialog. Offers opt-in for persistent JSONL log."""
-        default_path = sax_config.CONFIG_DIR / sax_config.DEFAULT_LOG_FILENAME
+        default_path = self._paths.default_history
         dlg = WelcomeDialog(self, self._t, default_path,
                             self._add_dialog_lang_toggle)
         accepted = (dlg.exec() == QDialog.DialogCode.Accepted)
@@ -2724,7 +2708,8 @@ class MainWindow(QMainWindow):
             # Rebuild the log on the chosen path. Existing in-memory entries
             # would be lost otherwise — but at this point the user has only
             # been in the app a few seconds at most, so that's fine.
-            new_path = self._cfg.effective_log_path()
+            # The environment override wins here too, as it does at start-up.
+            new_path = self._paths.history(self._cfg.effective_log_path(self._paths))
             if new_path:
                 self._log = MeasurementLog(path=new_path)
                 # The controllers were built with the previous log; point
@@ -2736,7 +2721,7 @@ class MainWindow(QMainWindow):
                     self._log.start_run(instrument=self.instrument,
                                         a4_hz=self._engine.a4,
                                         label=self._nick_edit.text().strip())
-        sax_config.save_config(self._cfg)
+        self._save_settings()
 
     # _ask_custom_instrument lives on InstrumentController.
     # It was only invoked by _on_add_custom (also extracted), so no
@@ -2877,7 +2862,7 @@ class MainWindow(QMainWindow):
             # Single-column mode: rows are the sorted stats after the table's
             # min-N filter (sax_table hides rows with 1..min_n-1 readings), so
             # index the same filtered list or the row maps to another note.
-            min_n = max(0, int(getattr(self._cfg, 'min_n_visible', 0)))
+            min_n = self._cfg.min_n_visible
             keys = sorted(k for k, s in self.stats.items()
                           if s.n == 0 or s.n >= min_n)
             if row >= len(keys):
@@ -3050,18 +3035,24 @@ class MainWindow(QMainWindow):
 
     def _save_session_state(self) -> None:
         """Thin delegator + persistence. The snapshot work lives on
-        SessionStateController; the save_config call stays here because
+        SessionStateController; the settings save stays here because
         the controller is intentionally agnostic about *when* to
         persist. Called from closeEvent. The per-setting saves
         scattered through the GUI remain as a belt; this is the
         suspenders."""
         self._session_state.save()
-        sax_config.save_config(self._cfg)
+        self._save_settings()
+
+    def _save_settings(self) -> None:
+        """Write the settings now. The store never raises: a failed write
+        returns False and the next save tries again, and an unreadable file
+        is left alone for the whole session."""
+        self._store.save(self._cfg)
 
     def _report_settings_problem(self) -> None:
         """Tell the player once, at start-up, that their settings file could
         not be used. Non-modal, so a locked file never blocks the window."""
-        store = self._settings
+        store = self._store
         if store.unreadable:
             self._info_banner.show_message(self._tr.msg(
                 'settings_unreadable', path=str(store.paths.config)))

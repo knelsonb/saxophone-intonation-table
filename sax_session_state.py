@@ -8,9 +8,9 @@
 # AppConfig dataclass.
 #
 # Design notes:
-#   * The controller does NOT call sax_config.save_config(). Persistence
-#     timing belongs to the caller (closeEvent in MainWindow's case).
-#     Keeping save_config out of here makes the controller pure and
+#   * The controller does NOT save the settings. Persistence timing
+#     belongs to the caller (closeEvent in MainWindow's case).
+#     Keeping the store out of here makes the controller pure and
 #     testable: a test can hand it a fake window + a bare AppConfig and
 #     assert on the post-save() field values without touching disk.
 #   * The window and every widget the controller pokes are passed in
@@ -90,7 +90,7 @@ class SessionStateController:
         # Window geometry — only restore if the saved rect still fits on
         # at least one connected screen. A user who unplugged a monitor
         # should not get a window stranded off-screen.
-        geom_b64 = getattr(cfg, 'window_geometry', "")
+        geom_b64 = cfg.window_geometry
         if geom_b64:
             try:
                 ba = QByteArray.fromBase64(geom_b64.encode('ascii'))
@@ -114,7 +114,7 @@ class SessionStateController:
                                        center.y() - w.height() // 2)
             except Exception:
                 pass
-        state_b64 = getattr(cfg, 'window_state', "")
+        state_b64 = cfg.window_state
         if state_b64:
             try:
                 ba = QByteArray.fromBase64(state_b64.encode('ascii'))
@@ -124,13 +124,13 @@ class SessionStateController:
                 pass
 
         # Splitter widths.
-        sizes = list(getattr(cfg, 'splitter_sizes', []) or [])
+        sizes = list(cfg.splitter_sizes)
         if (self._splitter is not None and len(sizes) == 2
                 and all(s >= 0 for s in sizes) and sum(sizes) > 0):
             self._splitter.setSizes(sizes)
 
         # Nickname text.
-        nick = getattr(cfg, 'last_nickname', "")
+        nick = cfg.last_nickname
         if nick and self._nick_edit is not None:
             self._nick_edit.setText(nick)
 
@@ -152,14 +152,14 @@ class SessionStateController:
                 self._disp_combo.blockSignals(False)
 
         # A4 — one path to the combos, engine, drone and pitch pipes.
-        a4 = int(getattr(cfg, 'last_a4_hz', 440))
+        a4 = cfg.last_a4_hz
         if 430 <= a4 <= 450:
             self._apply_a4(float(a4))
 
     # -------------------------------------------------------------------------
     def save(self) -> None:
         """Capture window state into self._cfg. Does NOT call
-        sax_config.save_config — the caller (MainWindow.closeEvent)
+        the settings — the caller (MainWindow.closeEvent)
         decides when to persist."""
         w = self._w
         cfg = self._cfg

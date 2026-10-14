@@ -513,8 +513,7 @@ class DataPanelWidget(QWidget):
             f'{hop} samples ({hop_ms:.1f} ms)')
         # v0.5.6 audio negotiation + precision rows.
         cfg = self._get_cfg() if self._get_cfg else None
-        pref = (str(getattr(cfg, 'audio_samplerate_pref', 'auto'))
-                if cfg else 'auto')
+        pref = cfg.audio_samplerate_pref if cfg else 'auto'
         if pref == 'auto':
             self._rows['data_rate_requested'].setText('Auto')
         else:

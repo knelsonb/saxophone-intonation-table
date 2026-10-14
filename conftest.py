@@ -39,19 +39,16 @@ def tmp_log_path(tmp_path: Path) -> Path:
 
 @pytest.fixture(autouse=True)
 def _fresh_persistence_stores(monkeypatch):
-    """Give every test fresh settings, range-override and crash-log stores.
+    """Give every test fresh range-override and crash-log stores.
 
-    The stores remember what happened to their files: a ConfigStore that
-    found config.json unreadable refuses to save over it for the rest of the
-    session, and RangeOverrides caches what it read. Shared across tests,
-    one test's locked file would turn every later save into a silent no-op
-    and the result would depend on test order. Each store is created again
-    on first use, from the HOME the test runs with.
+    The stores remember what happened to their files: RangeOverrides caches
+    what it read. Shared across tests, one test's state would leak into the
+    next and the result would depend on test order. Each store is created
+    again on first use, from the HOME the test runs with. (Settings need no
+    reset: every ConfigStore is created by whoever uses it.)
     """
-    import sax_config
     import sax_crash
     import sax_instruments
-    monkeypatch.setattr(sax_config, "_active", None)
     monkeypatch.setattr(sax_instruments, "_active_overrides", None)
     monkeypatch.setattr(sax_crash, "_log_path", None)
 

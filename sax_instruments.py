@@ -132,7 +132,7 @@ _FAMILIES = [
 
 
 # Runtime-registered user instruments. Loaded once at startup from
-# sax_config.load_customs() and refreshed when the user adds a Custom… entry.
+# the ConfigStore's custom instruments file and refreshed when the user adds a Custom… entry.
 _CUSTOMS: list[tuple[str, int, str, str]] = []   # (key, transp, name_de, name_en)
 
 
