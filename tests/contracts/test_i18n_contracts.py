@@ -115,18 +115,20 @@ def _call_name(call: ast.Call) -> str | None:
 # Names that hold lists or conditionals of keys which are passed to _t later.
 _KEY_CARRIERS = {'mode_note_key', '_row_keys'}
 
-# Translation calls: call name -> positions of the key arguments. ``_t`` may be
-# a plain name or an attribute; the Translator's methods are always called on
-# an object (``tr.bind(...)``), which keeps an unrelated function that happens
-# to be called ``t`` or ``bind`` out of the scan. ``show_status`` is the TUNER
-# tab's status line, which binds its key and arguments the same way.
-_KEY_ARGS = {'_t': (0,)}
-_TRANSLATOR_KEY_ARGS = {'t': (0,), 'msg': (0,), 'bind': (1,), 'bind_item': (2,),
+# Translation calls: call name -> positions of the key arguments. ``_t`` and
+# ``t`` may be a plain name (a local alias such as ``t = tr.t``) or an
+# attribute; the Translator's other methods are always called on an object
+# (``tr.bind(...)``), which keeps an unrelated function that happens to be
+# called ``bind`` out of the scan. ``show_status`` is the TUNER tab's status
+# line, which binds its key and arguments the same way.
+_KEY_ARGS = {'_t': (0,), 't': (0,)}
+_TRANSLATOR_KEY_ARGS = {'msg': (0,), 'bind': (1,), 'bind_item': (2,),
                         'bind_tab': (2, 3), 'show_status': (0,)}
-# Helpers that take a message key and show it (with a reason appended) later:
-# call name -> position of the key argument.
-_KEY_TAKING_HELPERS = {'_deck_show_status': 0, '_show_status': 0,
-                       'show_with_reason': 2}
+# Helpers that take keys and bind or show them later (some append the reason
+# an output could not open): call name -> positions of the key arguments.
+_KEY_TAKING_HELPERS = {'_deck_show_status': (0,), '_show_status': (0,),
+                       'show_with_reason': (2,), '_titled_group': (0,),
+                       '_action_button': (0,), '_ask_save_path': (0, 2)}
 
 
 def _key_items(node: ast.AST | None) -> list[str]:
@@ -186,10 +188,10 @@ class SourceScan:
                 self.t_calls.append((rel, call.lineno, key, set(), False))
                 self.by_call[name] = self.by_call.get(name, 0) + 1
         elif name in _KEY_TAKING_HELPERS:
-            pos = _KEY_TAKING_HELPERS[name]
-            if pos < len(call.args):
-                for key in _strings_in(call.args[pos]):
-                    self.carried[key] = f'{rel}:{call.lineno}'
+            for pos in _KEY_TAKING_HELPERS[name]:
+                if pos < len(call.args):
+                    for key in _strings_in(call.args[pos]):
+                        self.carried[key] = f'{rel}:{call.lineno}'
         elif (name == 'setProperty' and len(call.args) == 2
               and _strings_in(call.args[0]) == ['_lang_title_key']):
             for key in _strings_in(call.args[1]):
@@ -323,8 +325,13 @@ def test_identical_german_and_english_strings_are_allow_listed() -> None:
 # Keys used by the code
 # ---------------------------------------------------------------------------
 def test_scan_finds_the_call_sites(scan: SourceScan) -> None:
-    """Guards the AST scan against going vacuous after a refactor."""
-    assert len(scan.t_calls) > 300
+    """Guards the AST scan against going vacuous after a refactor: every key
+    in the catalogue is reached through a translation call, a key-taking
+    helper or a dynamic family the scan knows. A key the code reaches some
+    other way would escape the existence and argument checks below; teach
+    the scan the new pattern instead."""
+    reached = ({c[2] for c in scan.t_calls} | set(scan.carried) | _dynamic_keys())
+    assert sorted(set(EN) - reached) == []
     assert {'sax_intonation_gui.py', 'sax_export.py', 'sax_crash.py'} <= {
         c[0] for c in scan.t_calls}
     for key in ('deck_status_empty', 'range_mode_note_griff',

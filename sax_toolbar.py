@@ -98,22 +98,22 @@ class Toolbar(QWidget):
         self._audio_chip.setMinimumWidth(220)
         self._audio_chip.update_from_state(engine.state, '', '', 0)
         inputs.addWidget(self._audio_chip)
-        self._btn_import = self._action('btn_import', '#7f8c8d', self.import_requested.emit)
+        self._btn_import = self._action_button('btn_import', '#7f8c8d', self.import_requested.emit)
         inputs.addWidget(self._btn_import)
         inputs.addStretch()
 
-        self._btn_autotune = self._action('btn_autotune', '#1a6b3a',
+        self._btn_autotune = self._action_button('btn_autotune', '#1a6b3a',
                                           self.autotune_requested.emit)
-        self._btn_record = self._action('btn_stop', '#b7770d',
+        self._btn_record = self._action_button('btn_stop', '#b7770d',
                                         lambda: session.set_recording(not session.recording))
-        self._btn_reset = self._action('btn_reset', '#c0392b', self.reset_requested.emit)
-        self._btn_txt = self._action('btn_txt', '#2980b9',
+        self._btn_reset = self._action_button('btn_reset', '#c0392b', self.reset_requested.emit)
+        self._btn_txt = self._action_button('btn_txt', '#2980b9',
                                      lambda: self.export_requested.emit('txt'))
-        self._btn_pdf = self._action('btn_pdf', '#8e44ad',
+        self._btn_pdf = self._action_button('btn_pdf', '#8e44ad',
                                      lambda: self.export_requested.emit('pdf'))
-        self._btn_csv = self._action('btn_csv', '#16a085',
+        self._btn_csv = self._action_button('btn_csv', '#16a085',
                                      lambda: self.export_requested.emit('csv'))
-        self._btn_chart = self._action('btn_chart', '#d35400',
+        self._btn_chart = self._action_button('btn_chart', '#d35400',
                                        lambda: self.export_requested.emit('chart'))
         for b in (self._btn_autotune, self._btn_record, self._btn_reset):
             actions.addWidget(b)
@@ -145,14 +145,14 @@ class Toolbar(QWidget):
         show_data(self._filter_combo, mode)
 
     # ── Building ─────────────────────────────────────────────────────────────
-    def _group(self, key: str) -> tuple[QGroupBox, QHBoxLayout]:
+    def _titled_group(self, key: str) -> tuple[QGroupBox, QHBoxLayout]:
         box = QGroupBox()
         self._tr.bind(box.setTitle, key)
         row = QHBoxLayout(box)
         row.setContentsMargins(8, 4, 8, 4)
         return box, row
 
-    def _action(self, key: str, color: str, slot) -> QPushButton:
+    def _action_button(self, key: str, color: str, slot) -> QPushButton:
         b = QPushButton()
         self._tr.bind(b.setText, key)
         b.clicked.connect(slot)
@@ -163,7 +163,7 @@ class Toolbar(QWidget):
 
     def _build_instrument_group(self) -> QGroupBox:
         tr = self._tr
-        grp, row = self._group('grp_instrument')
+        grp, row = self._titled_group('grp_instrument')
         row.setSpacing(6)
         # Family and instrument, filled by the InstrumentController.
         self._family_combo = QComboBox()
@@ -203,7 +203,7 @@ class Toolbar(QWidget):
 
     def _build_display_group(self, layout_pref: str) -> QGroupBox:
         tr = self._tr
-        grp, row = self._group('grp_display')
+        grp, row = self._titled_group('grp_display')
         self._disp_combo = QComboBox()
         tr.bind_items(self._disp_combo,
                       [('disp_griff', 'griff'), ('disp_klingend', 'klingend')])
@@ -224,7 +224,7 @@ class Toolbar(QWidget):
         return grp
 
     def _build_a4_group(self) -> QGroupBox:
-        grp, row = self._group('grp_a4')
+        grp, row = self._titled_group('grp_a4')
         self._a4_combo = a4_combo(self._session.a4)
         self._a4_combo.setMinimumWidth(100)
         self._a4_combo.currentIndexChanged.connect(
@@ -234,7 +234,7 @@ class Toolbar(QWidget):
 
     def _build_response_group(self, mode: str) -> QGroupBox:
         # Pitch-detection smoothing, like a guitar tuner's Fast/Normal/Slow.
-        grp, row = self._group('grp_filter')
+        grp, row = self._titled_group('grp_filter')
         self._filter_combo = response_combo(self._tr, mode)
         self._filter_combo.setMinimumWidth(100)
         self._filter_combo.currentIndexChanged.connect(
@@ -243,7 +243,7 @@ class Toolbar(QWidget):
         return grp
 
     def _build_language_group(self) -> QGroupBox:
-        grp, row = self._group('grp_language')
+        grp, row = self._titled_group('grp_language')
         self._lang_combo = QComboBox()
         for code, name in LANGUAGE_NAMES:   # each language in its own name
             self._lang_combo.addItem(name, code)
