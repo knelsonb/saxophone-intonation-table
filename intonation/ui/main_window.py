@@ -396,6 +396,8 @@ class MainWindow(QMainWindow):
             return
         # The wrong-instrument detector runs BEFORE the range filter below, so
         # it still counts when "filter to range" drops the notes it counts.
+        # Both judge the extended range (what a skilled player reaches), not
+        # the keyed guide rows, so altissimo and pedal notes are not flagged.
         try:
             in_range = session.in_range(midi_kl)
         except Exception:

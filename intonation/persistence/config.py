@@ -236,10 +236,11 @@ class AppConfig:
     # default history file in the data directory; the user can override.
     log_path: str = _setting("", _as_str)
     # Whether to accept measurements that fall outside the current
-    # instrument's nominal fingered range. ON = overtones / altissimo /
-    # accidentals get their own cells and appear in the matrix.
-    # OFF = the audio callback silently drops them before they reach
-    # `stats`, so the table stays bounded to the instrument's range.
+    # instrument's extended range (what a skilled player reaches; see
+    # intonation.catalog.instruments). ON = overtones and other stray notes
+    # get their own cells and appear in the matrix. OFF = the window drops
+    # them before they reach `stats`, so the table stays bounded to the
+    # instrument's range.
     allow_out_of_range: bool = _setting(True, _as_bool)
     # Extra octave columns to show in matrix mode beyond the half-step-
     # beyond auto-rule. 0 = minimal (just the half-step rule); 1 = one

@@ -120,11 +120,18 @@ class SessionModel(QObject):
         """Semitones from fingered to sounding for the current instrument."""
         return instruments.transp_map().get(self._instrument, 0)
 
-    def fingered_range(self) -> tuple[int, int]:
-        return instruments.fingered_range(self._instrument)
+    def keyed_range(self) -> tuple[int, int]:
+        """Fingered (lo, hi) the keywork gives: the guide rows and matrix span."""
+        return instruments.keyed_range(self._instrument)
+
+    def extended_range(self) -> tuple[int, int]:
+        """Fingered (lo, hi) skilled players reach: what counts as in range."""
+        return instruments.extended_range(self._instrument)
 
     def in_range(self, midi_sounding: int) -> bool:
-        lo, hi = self.fingered_range()
+        """Whether a played note is one the instrument can reach. Judged on
+        the extended range, so altissimo and pedal notes are not flagged."""
+        lo, hi = self.extended_range()
         return lo <= midi_sounding - self.transposition <= hi
 
     # ── Statistics ───────────────────────────────────────────────────────────
@@ -142,11 +149,11 @@ class SessionModel(QObject):
         return self._active_midi
 
     def seed_expected_notes(self) -> None:
-        """Add an empty row for every note in the instrument's fingered range,
+        """Add an empty row for every note in the instrument's keyed range,
         so the table shows the range before anything is played. Existing
         measurements are kept."""
         transp = self.transposition
-        lo, hi = self.fingered_range()
+        lo, hi = self.keyed_range()
         for fingered in range(lo, hi + 1):
             sounding = fingered + transp
             if sounding in SAX_MIDI and sounding not in self.stats:

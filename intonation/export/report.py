@@ -42,7 +42,7 @@ class NoteRow:
     n: int
     freq_hz: float          # nominal frequency of the sounding note at A4
     band: str               # cents_band(mean): 'in' / 'close' / 'off'
-    in_range: bool          # fingered note inside the instrument's range
+    in_range: bool          # fingered note inside the instrument's extended range
 
 
 @dataclass(frozen=True)
@@ -76,7 +76,8 @@ def take_snapshot(*, instrument: str, instrument_label: str, a4: float,
     exports list measured notes only.
     """
     transp = instruments.transp_map().get(instrument, 0)
-    lo_f, hi_f = instruments.fingered_range(instrument)
+    # In range means reachable by a skilled player: the extended tier.
+    lo_f, hi_f = instruments.extended_range(instrument)
     rows = []
     for midi_kl, st in sorted((k, st) for k, st in stats.items() if st.n > 0):
         midi_gr = midi_kl - transp

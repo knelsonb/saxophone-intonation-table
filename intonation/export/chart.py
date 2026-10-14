@@ -99,11 +99,11 @@ def render_intonation_chart(
     engine's negotiated rate at chart time and gates that precision.
 
     ``instrument`` is the instrument-catalog key for
-    looking up the fingered range when the 7-tuple form isn't used. Any
-    note whose fingered MIDI lands outside ``fingered_range(instrument)``
+    looking up the extended range when the 7-tuple form isn't used. Any
+    note whose fingered MIDI lands outside ``extended_range(instrument)``
     is rendered in a desaturated grey with a small ⚠ marker so the user
-    can see at a glance which notes are out of the instrument's nominal
-    band (overtones, altissimo, accidentals).
+    can see at a glance which notes are beyond what the instrument
+    reaches (overtones, a wrong instrument).
 
     The image format follows the file extension (PNG when there is none);
     .png works without any extra plugins on the standard PyQt6 install.
@@ -160,15 +160,16 @@ class ChartEncodeError(RuntimeError):
 
 def _make_in_range_fn(instrument: str | None):
     """Return a callable ``(midi_fingered) -> bool``. Looks up the
-    instrument's fingered range via ``intonation.catalog.instruments.fingered_range`` so
+    instrument's extended range via ``intonation.catalog.instruments.extended_range``
+    (what a skilled player reaches, so altissimo is not greyed) so
     out-of-range notes can be styled distinctly. Falls back to a
     "everything is in range" function if the instrument is unknown or the
     lookup raises — chart never crashes on a stale instrument key."""
     if not instrument:
         return lambda _midi: True
     try:
-        from intonation.catalog.instruments import fingered_range
-        lo, hi = fingered_range(instrument)
+        from intonation.catalog.instruments import extended_range
+        lo, hi = extended_range(instrument)
     except Exception:
         return lambda _midi: True
     lo_i = int(lo)

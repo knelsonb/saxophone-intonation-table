@@ -223,8 +223,10 @@ class InstrumentController:
         Accepts → persist via intonation.catalog.instruments override DB → notify caller
         so the new bounds take effect immediately."""
         key = self._session.instrument
-        cur_lo, cur_hi = instruments.fingered_range(key)
-        baked_lo, baked_hi = instruments.baked_fingered_range(key)
+        # The editor edits the keyed tier; an override widens the extended
+        # tier but never narrows it (see instruments.extended_range).
+        cur_lo, cur_hi = instruments.keyed_range(key)
+        baked_lo, baked_hi = instruments.baked_keyed_range(key)
         has_baked = instruments.has_baked_range(key)
         name = instrument_display_name(key, self._tr.lang)
         # v0.5.7.1: pass display mode + instrument transposition so the

@@ -85,8 +85,8 @@ def main() -> int:
         from intonation.catalog import instruments as _si
         key = win._session.instrument
         try:
-            cur_lo, cur_hi = _si.fingered_range(key)
-            baked_lo, baked_hi = _si.baked_fingered_range(key)
+            cur_lo, cur_hi = _si.keyed_range(key)
+            baked_lo, baked_hi = _si.baked_keyed_range(key)
             rdlg = RangeEditorDialog(
                 win, win._t, key, _si.display_name(key, win.lang),
                 cur_lo, cur_hi, baked_lo, baked_hi, _si.has_baked_range(key),

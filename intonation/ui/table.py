@@ -152,7 +152,7 @@ class IntonationTableModel(QAbstractTableModel):
 
     def octave_range(self) -> tuple[int, int]:
         """(lo_octave, hi_octave) inclusive the matrix should show now: the
-        instrument's fingered range and, when out-of-range notes are allowed,
+        instrument's keyed range and, when out-of-range notes are allowed,
         every played note outside it (overtones, altissimo, accidentals), so
         nothing is truncated.
 
@@ -161,7 +161,7 @@ class IntonationTableModel(QAbstractTableModel):
         above. cfg.matrix_extra_octaves adds context on both sides."""
         session = self._session
         transp = session.transposition
-        lo_f, hi_f = session.fingered_range()
+        lo_f, hi_f = session.keyed_range()
         griff = session.display == 'griff'
         lo_midi, hi_midi = (lo_f, hi_f) if griff else (lo_f + transp, hi_f + transp)
         played = [m for m, st in session.stats.items() if st.n > 0]
@@ -273,7 +273,8 @@ class IntonationTableModel(QAbstractTableModel):
         session = self._session
         transp = session.transposition
         griff = session.display == 'griff'
-        lo_f, hi_f = session.fingered_range()
+        # Cells inside the keyed range are the guide cells the caption counts.
+        lo_f, hi_f = session.keyed_range()
         octaves = range(self._lo_oct, self._hi_oct + 1)
         # Fingered display labels octaves relative to the instrument's middle
         # octave (-1, 0, +1): saxophone players read "low Bb" as Bb3 in SPN,
