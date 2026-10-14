@@ -88,7 +88,8 @@ must keep or update here:
       instrument (property ``_lang_title_key``), ``RangeEditorDialog``
       (``_lo_spin`` ``_hi_spin`` ``_lo_name`` ``_hi_name`` ``_btn_save``
       ``_btn_cancel`` ``_btn_restore`` ``_error_lbl``; typing into the name
-      fields shows the dialog so Enter reaches its default button),
+      fields shows the dialog so Enter reaches its default button, and a
+      typed Save click leaves the focus in the field),
       ``AudioPickerDialog`` (recognised, not scriptable);
       the classes live in ``intonation.ui.dialogs`` and are recognised by
       class name.
@@ -586,21 +587,40 @@ class AppDriver:
         ``_hi_name``) and press Enter in the last one, as a person does. The
         dialog is shown for this: Qt picks the button Enter presses only for
         a visible dialog. Whatever Enter did, the dialog is closed afterwards
-        (with Cancel if it is still open) so nothing hangs."""
+        (with Cancel if it is still open) so nothing hangs.
+
+        ``type_click_save``: type without moving the focus and click
+        ``_btn_save`` instead of pressing Enter, so no field sends
+        editingFinished (a mouse click on macOS takes no focus).
+        ``type_then_restore``: if the dialog is still open after that, click
+        ``_btn_restore`` and submit the same way once more."""
         from PyQt6.QtCore import Qt
         from PyQt6.QtTest import QTest
         from PyQt6.QtWidgets import QDialog
+        click_save = bool(fields.get("type_click_save"))
         dlg.show()
         self.qapp.processEvents()
         edit = None
         for key, name_edit in (("type_lo", dlg._lo_name), ("type_hi", dlg._hi_name)):
             if key in fields:
                 edit = name_edit
-                edit.setFocus()
+                if not click_save:
+                    edit.setFocus()
                 edit.selectAll()
                 QTest.keyClicks(edit, str(fields[key]))
-        QTest.keyClick(edit, Qt.Key.Key_Return)
-        self.qapp.processEvents()
+
+        def submit() -> None:
+            if click_save:
+                dlg._btn_save.click()
+            else:
+                QTest.keyClick(edit, Qt.Key.Key_Return)
+            self.qapp.processEvents()
+
+        submit()
+        if fields.get("type_then_restore") and dlg.isVisible():
+            dlg._btn_restore.click()
+            self.qapp.processEvents()
+            submit()
         accepted = int(dlg.result()) == int(QDialog.DialogCode.Accepted)
         if dlg.isVisible():
             self.last_form_note = dlg._error_lbl.text() or "Enter did not close the range editor"
@@ -1058,9 +1078,11 @@ class AppDriver:
             self.win._setup_tab._btn_range.click()
         return self._form_accepted
 
-    def type_range(self, lo, hi) -> bool:
+    def type_range(self, lo, hi, click_save: bool = False,
+                   then_restore: bool = False) -> bool:
         """Open the range editor from SETUP, type ``lo`` and/or ``hi`` as note
-        names and press Enter. Returns whether the editor saved."""
+        names and press Enter (or click Save). Returns whether the editor
+        saved."""
         fields = {}
         if lo is not None:
             fields["type_lo"] = lo
@@ -1068,6 +1090,8 @@ class AppDriver:
             fields["type_hi"] = hi
         if not fields:
             raise HarnessError("type_range needs lo or hi")
+        fields["type_click_save"] = click_save
+        fields["type_then_restore"] = then_restore
         self.last_form_note = None
         self._form_accepted = False
         with self.dialogs.scope():

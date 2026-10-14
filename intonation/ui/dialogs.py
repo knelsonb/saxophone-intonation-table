@@ -858,8 +858,10 @@ class RangeEditorDialog(QDialog):
         layout.addLayout(btn_row)
 
         # Live preview wiring.
-        self._lo_spin.valueChanged.connect(self._on_spin_changed)
-        self._hi_spin.valueChanged.connect(self._on_spin_changed)
+        self._lo_spin.valueChanged.connect(
+            lambda _v: self._on_spin_changed(self._lo_spin, self._lo_name))
+        self._hi_spin.valueChanged.connect(
+            lambda _v: self._on_spin_changed(self._hi_spin, self._hi_name))
         self._lo_name.editingFinished.connect(
             lambda: self._on_name_edited(self._lo_name, self._lo_spin))
         self._hi_name.editingFinished.connect(
@@ -878,18 +880,18 @@ class RangeEditorDialog(QDialog):
         w.style().unpolish(w)
         w.style().polish(w)
 
-    def _on_spin_changed(self) -> None:
-        # Spin changed → sync the matching note-name edit, then refresh
-        # the preview. Guarded so we don't recurse when the name-edit
-        # slot is the one mutating the spin.
+    def _on_spin_changed(self, spin, edit) -> None:
+        # Spin changed → sync its own note-name edit, then refresh the
+        # preview. Only its own: rewriting the other field too would replace
+        # a name the player mistyped there with the old value, and Save would
+        # then store that old value without a word. Guarded so we don't
+        # recurse when the name-edit slot is the one mutating the spin.
         if not self._suppress_sync:
             self._suppress_sync = True
             try:
-                self._lo_name.setText(midi_note_name(self._lo_spin.value()))
-                self._hi_name.setText(midi_note_name(self._hi_spin.value()))
+                edit.setText(midi_note_name(spin.value()))
                 # Clear any invalid mark if the user previously typed a bad name.
-                self._set_invalid(self._lo_name, False)
-                self._set_invalid(self._hi_name, False)
+                self._set_invalid(edit, False)
             finally:
                 self._suppress_sync = False
         self._update_preview()
@@ -912,6 +914,9 @@ class RangeEditorDialog(QDialog):
         # the edit canonically via _on_spin_changed).
         self._set_invalid(edit, False)
         spin.setValue(midi)
+        # setValue emits nothing when the spin already held this note, so
+        # refresh here too: the error shown for the earlier typo must go.
+        self._update_preview()
 
     def _update_preview(self) -> None:
         lo = self._lo_spin.value()
@@ -928,7 +933,13 @@ class RangeEditorDialog(QDialog):
             self._preview_lbl.setText('')
             self._btn_save.setEnabled(False)
             return
-        self._error_lbl.setVisible(False)
+        # A name still marked unparseable keeps its message: the spins alone
+        # being in order does not make the range the player typed valid.
+        name_bad = any(bool(e.property('invalid'))
+                       for e in (self._lo_name, self._hi_name))
+        if name_bad:
+            self._error_lbl.setText(self._t('range_note_name_invalid'))
+        self._error_lbl.setVisible(name_bad)
         self._btn_save.setEnabled(True)
         semis = hi - lo
         octs = semis / 12.0
@@ -942,16 +953,28 @@ class RangeEditorDialog(QDialog):
         lo, hi = self._baked
         self._lo_spin.setValue(lo + self._transp)
         self._hi_spin.setValue(hi + self._transp)
+        # When a spin already held the default, setValue emits nothing, so a
+        # mistyped name would stay in its field and Save would keep refusing
+        # it. Rewrite both names from the spins either way.
+        self._on_spin_changed(self._lo_spin, self._lo_name)
+        self._on_spin_changed(self._hi_spin, self._hi_name)
 
     def _on_save(self) -> None:
-        # A typed name that does not parse leaves its spin box on the old
-        # value; saving then would store a range the player did not ask for.
-        # Keep the dialog open with the error shown instead.
+        # The typed names are what the player sees, so they decide what is
+        # saved. A spin box picks up a typed name only on editingFinished,
+        # which a mouse click on Save does not always send: on macOS a click
+        # leaves the focus in the name field. Parse both names first; if one
+        # does not parse, keep the dialog open with the error and save nothing.
+        typed = []
         for edit in (self._lo_name, self._hi_name):
-            if note_name_to_midi(edit.text()) is None:
+            midi = note_name_to_midi(edit.text())
+            if midi is None:
                 self._set_invalid(edit, True)
                 self._show_error(self._t('range_note_name_invalid'))
                 return
+            typed.append(midi)
+        self._lo_spin.setValue(typed[0])
+        self._hi_spin.setValue(typed[1])
         # Spinbox values are in the current display mode. Convert back
         # to fingered (canonical) before persisting so the file format
         # is stable across users with different display preferences.

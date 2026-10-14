@@ -386,10 +386,16 @@ class Settings(_Part):
         Returns whether the editor accepted; ``app.range_error`` says why not."""
         return self._done(self._d.edit_range(lo, hi, restore, accept))
 
-    def type_range(self, lo=None, hi=None) -> bool:
+    def type_range(self, lo=None, hi=None, *, click_save: bool = False,
+                   then_restore: bool = False) -> bool:
         """Open the range editor, type the note name(s) into the low and/or
-        high field and press Enter. Returns whether the editor saved."""
-        return self._done(self._d.type_range(lo, hi))
+        high field and press Enter. Returns whether the editor saved.
+
+        ``click_save`` clicks Save instead of pressing Enter, with the focus
+        left in the field typed last (as a mouse click leaves it on macOS).
+        ``then_restore``: when that first attempt leaves the editor open,
+        press Restore Default and submit the same way again."""
+        return self._done(self._d.type_range(lo, hi, click_save, then_restore))
 
     def add_custom_instrument(self, name: str, transpose: int = 0, accept: bool = True):
         """Add a custom instrument; returns its key (None if not added)."""

@@ -51,3 +51,51 @@ def test_enter_on_a_name_that_does_not_parse_saves_nothing(make_app):
 
     assert app.settings.range_error == app.text("range_note_name_invalid")
     assert saved_ranges(app) == {}
+
+
+def test_a_typo_in_the_bottom_field_saves_nothing(make_app):
+    app = make_app(config=on("eb_alto"))
+    app.launch()
+
+    assert not app.settings.type_range(lo="X9")
+
+    assert app.settings.range_error == app.text("range_note_name_invalid")
+    assert saved_ranges(app) == {}
+
+
+def test_a_typo_in_one_field_blocks_a_good_edit_in_the_other(make_app):
+    """A valid new top with a bottom that does not parse: saving the top alone
+    would keep a bottom I did not ask for, so nothing is saved."""
+    app = make_app(config=on("eb_alto"))
+    app.launch()
+
+    assert not app.settings.type_range(lo="X9", hi="F6")
+
+    assert app.settings.range_error == app.text("range_note_name_invalid")
+    assert saved_ranges(app) == {}
+
+
+def test_clicking_save_with_the_focus_still_in_a_field_saves_what_was_typed(make_app):
+    """On macOS a mouse click on Save leaves the focus in the note field, so
+    the field never reports that editing finished. The typed names are still
+    what gets saved."""
+    app = make_app(config=on("eb_alto"))
+    app.launch()
+
+    assert app.settings.type_range(lo="C4", hi="F6", click_save=True)
+
+    assert saved_ranges(app) == {"eb_alto": [60, 89]}     # C4..F6 fingered
+
+
+def test_restore_default_after_a_typo_lets_enter_save_the_default(make_app):
+    """I mistype the top, Enter refuses it, I press Restore Default: the field
+    shows the default again and Enter saves it."""
+    app = make_app(config=on("eb_alto"))
+    app.launch()
+
+    assert app.settings.type_range(hi="X9", then_restore=True)
+
+    assert app.settings.range_error is None
+    assert saved_ranges(app) == {}                        # the default is no override
+    listed = app.table.rows(played_only=False)
+    assert (listed[0].fingered, listed[-1].fingered) == ("A#/Bb3", "F#/Gb6")
