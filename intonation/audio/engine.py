@@ -547,7 +547,6 @@ class AudioEngine:
         self._open_timed_out = False
 
         self.a4 = A4_DEFAULT
-        self.instr_key = 'eb_alto'
         self.filter_mode = FILTER_MODE_DEFAULT
         self.prefer_wdmks = False
         # 'auto' (probe SAMPLERATE_CANDIDATES in order) or a specific rate
