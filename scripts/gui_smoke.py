@@ -433,25 +433,24 @@ def main() -> int:
     # never fires. Mirror of the drone/metro revert lock, input-side.
     win._tabs.setCurrentIndex(win._tab_keys.index("deck"))
     app.processEvents()
-    for _name in ("_btn_deck_record", "_btn_deck_stop", "_btn_deck_play",
-                  "_btn_deck_export"):
-        check(hasattr(win, _name), f"deck transport button {_name} missing")
+    for _name in ("_btn_record", "_btn_stop", "_btn_play", "_btn_export"):
+        check(hasattr(win._deck_tab, _name), f"deck transport button {_name} missing")
     # Nothing recorded/playing and no input: Stop/Play/Export disabled, dot hidden.
-    check(not win._btn_deck_stop.isEnabled(),
+    check(not win._deck_tab._btn_stop.isEnabled(),
           "deck Stop enabled with nothing recording/playing")
-    check(not win._btn_deck_play.isEnabled(),
+    check(not win._deck_tab._btn_play.isEnabled(),
           "deck Play enabled with no take")
-    check(not win._btn_deck_export.isEnabled(),
+    check(not win._deck_tab._btn_export.isEnabled(),
           "deck Export enabled with no take")
     check(win._deck_dot.isHidden(),
           "deck recording dot visible at rest (should be hidden)")
     # The honesty seam: attempt to record with no armable input → button reverts
     # unchecked, inline status shown, dot stays HIDDEN + pulse timer INACTIVE.
-    win._btn_deck_record.setChecked(True)
+    win._deck_tab._btn_record.setChecked(True)
     app.processEvents()
-    check(not win._btn_deck_record.isChecked(),
+    check(not win._deck_tab._btn_record.isChecked(),
           "deck Record stayed checked with no input (button lies)")
-    check(win._deck_status.isVisible(),
+    check(win._deck_tab._status.isVisible(),
           "deck 'unavailable' status not shown when record could not arm")
     check(win._deck_dot.isHidden(),
           "deck recording dot shown despite no armed take (false recording)")
@@ -466,7 +465,7 @@ def main() -> int:
     # controller on a FAKE input engine + the REAL mixer, swap it in, and drive
     # the real buttons. Faking the engine's input methods keeps this independent
     # of real audio hardware. Skips if sax_deck absent.
-    if win._deck_ctrl is not None:
+    if win._deck_tab._ctrl is not None:
         import numpy as _np
 
         import sax_deck as _sd
@@ -493,49 +492,49 @@ def main() -> int:
                 self._armed = False
                 return (_np.zeros(2048, dtype=_np.float32), 44100, False)
 
-        win._deck_ctrl = _sd.DeckController(
+        win._deck_tab._ctrl = _sd.DeckController(
             win._engine.mixer, 44100, engine=_FakeInputEngine(win._engine.mixer),
-            on_state_changed=win._on_deck_state_changed)
+            on_state_changed=win._deck_tab._on_state_changed)
         win._engine.output_running = True  # so playback starts at once
         win._tabs.setCurrentIndex(win._tab_keys.index("deck"))
         app.processEvents()
-        win._sync_deck_transport()
-        check(win._btn_deck_record.isEnabled(),
+        win._deck_tab._sync()
+        check(win._deck_tab._btn_record.isEnabled(),
               "deck Record not enabled when the input is armable")
 
         # Record → recording: the dot must light + pulse, button checked.
-        win._btn_deck_record.setChecked(True)
+        win._deck_tab._btn_record.setChecked(True)
         app.processEvents()
-        check(str(win._deck_ctrl.state) == "recording",
-              f"deck did not enter recording on Record: {win._deck_ctrl.state}")
+        check(str(win._deck_tab._ctrl.state) == "recording",
+              f"deck did not enter recording on Record: {win._deck_tab._ctrl.state}")
         check(win._deck_dot.isVisible() and win._deck_pulse_timer.isActive(),
               "recording dot/pulse not active while recording (GUI-wiring gap)")
-        check(win._btn_deck_record.isChecked(),
+        check(win._deck_tab._btn_record.isChecked(),
               "deck Record button not checked while recording")
 
         # Stop → have-take: dot off, Play + Export enabled.
-        win._on_deck_stop()
+        win._deck_tab.stop()
         app.processEvents()
-        check(str(win._deck_ctrl.state) == "have-take",
-              f"deck did not reach have-take on Stop: {win._deck_ctrl.state}")
+        check(str(win._deck_tab._ctrl.state) == "have-take",
+              f"deck did not reach have-take on Stop: {win._deck_tab._ctrl.state}")
         check(win._deck_dot.isHidden() and not win._deck_pulse_timer.isActive(),
               "deck recording dot still showing after recording stopped")
-        check(win._btn_deck_play.isEnabled() and win._btn_deck_export.isEnabled(),
+        check(win._deck_tab._btn_play.isEnabled() and win._deck_tab._btn_export.isEnabled(),
               "deck Play/Export not enabled with a take present")
 
         # Play → playing: registers the source; the recording dot stays HIDDEN
         # (playback is not recording — no false recording indicator).
-        win._on_deck_play()
+        win._deck_tab.play()
         app.processEvents()
-        check(str(win._deck_ctrl.state) == "playing",
-              f"deck did not enter playing on Play: {win._deck_ctrl.state}")
+        check(str(win._deck_tab._ctrl.state) == "playing",
+              f"deck did not enter playing on Play: {win._deck_tab._ctrl.state}")
         check(win._deck_dot.isHidden(),
               "deck recording dot lit during playback (false recording)")
 
         # Clean up: drop the playback source from the real mixer, then shut down.
-        win._on_deck_stop()
+        win._deck_tab.stop()
         app.processEvents()
-        win._deck_ctrl.shutdown()
+        win._deck_tab._ctrl.shutdown()
 
     # ── Theme switching (live-apply lock) ────────────────────────────────
     # The SETUP picker exists and _apply_theme switches the palette + re-renders
@@ -618,10 +617,10 @@ def main() -> int:
         "METRO start": win._metro_tab._btn_start,
         "METRO tap": win._metro_tab._btn_tap,
         "drone on": win._btn_drone_on,
-        "DECK record": win._btn_deck_record,
-        "DECK stop": win._btn_deck_stop,
-        "DECK play": win._btn_deck_play,
-        "DECK export": win._btn_deck_export,
+        "DECK record": win._deck_tab._btn_record,
+        "DECK stop": win._deck_tab._btn_stop,
+        "DECK play": win._deck_tab._btn_play,
+        "DECK export": win._deck_tab._btn_export,
     }
     for _name, _w in _buttons.items():
         check(bool(_acc_name(_w) or _w.text().strip()),

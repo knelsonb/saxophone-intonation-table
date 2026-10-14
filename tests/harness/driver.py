@@ -34,7 +34,7 @@ the list below is the contract the rewrite must keep or update here:
       ``log-YYYY-MM.jsonl``); ``MeasurementLog.path`` is the live history file.
   Time
     * QTimers on the window (``_device_poll``, ``_refresh_timer``,
-      ``_deck_pump_timer``, ``_deck_pulse_timer``) and on the tuner widget are
+      ``_deck_pulse_timer``), the DECK tab's ``_pump_timer`` and the tuner widget's are
       virtualised: ticked from the harness clock instead of real time.
   Toolbar widgets (window attributes)
     * ``_family_combo`` / ``_instr_combo`` (instrument), ``_disp_combo``
@@ -65,9 +65,8 @@ the list below is the contract the rewrite must keep or update here:
       ``sax_drone`` imports ``tinysoundfont`` lazily (hidden to simulate a
       missing synth).
   DECK tab
-    * ``_btn_deck_record`` ``_btn_deck_stop`` ``_btn_deck_play``
-      ``_btn_deck_export`` ``_deck_state()`` ``_deck_state_lbl``
-      ``_deck_status``.
+    * ``_deck_tab`` (sax_tab_deck.DeckTab): ``_btn_record`` ``_btn_stop``
+      ``_btn_play`` ``_btn_export`` ``state()`` ``_state_lbl`` ``_status``.
   SETUP tab (``_setup_tab``, sax_tab_setup.SetupTab)
     * ``_output_combo`` ``_btn_test_tone`` ``_test_tone_status``
       ``_theme_combo`` ``_mic_gain_combo`` ``_btn_range`` ``_voice_combo``.
@@ -321,8 +320,9 @@ class AppDriver:
         from PyQt6.QtCore import QTimer
         w = self.win
         timers = [getattr(w, a) for a in
-                  ("_device_poll", "_refresh_timer", "_deck_pump_timer", "_deck_pulse_timer")
+                  ("_device_poll", "_refresh_timer", "_deck_pulse_timer")
                   if getattr(w, a, None) is not None]
+        timers.append(w._deck_tab._pump_timer)
         timers += w._tuner.findChildren(QTimer)
         for t in timers:
             self._timers[t] = [t.interval(), 0.0]
@@ -906,31 +906,31 @@ class AppDriver:
 
     # ===================================================================== deck
     def deck_record(self) -> None:
-        if not self.win._btn_deck_record.isChecked():
-            self.win._btn_deck_record.click()
+        if not self.win._deck_tab._btn_record.isChecked():
+            self.win._deck_tab._btn_record.click()
 
     def deck_stop(self) -> None:
-        self.win._btn_deck_stop.click()
+        self.win._deck_tab._btn_stop.click()
 
     def deck_play(self) -> None:
-        self.win._btn_deck_play.click()
+        self.win._deck_tab._btn_play.click()
 
     def deck_export(self, path) -> Optional[Path]:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         with self.dialogs.scope():
             self.dialogs.save_path(path)
-            self.win._btn_deck_export.click()
+            self.win._deck_tab._btn_export.click()
         return path if path.exists() else None
 
     def deck_state(self) -> DeckState:
         w = self.win
-        status = w._deck_status.text() if not w._deck_status.isHidden() else None
-        return DeckState(state=w._deck_state(), status_text=status,
-                         label=w._deck_state_lbl.text())
+        status = w._deck_tab._status.text() if not w._deck_tab._status.isHidden() else None
+        return DeckState(state=w._deck_tab.state(), status_text=status,
+                         label=w._deck_tab._state_lbl.text())
 
     def deck_can_record(self) -> bool:
-        return bool(self.win._btn_deck_record.isEnabled())
+        return bool(self.win._deck_tab._btn_record.isEnabled())
 
     # =============================================================== settings
     def set_theme(self, name: str) -> None:
