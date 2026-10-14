@@ -129,3 +129,14 @@ def test_narrowing_the_range_drops_the_blank_rows_at_once(make_app):
     assert listed[0] == "A#/Bb3"                 # played, so kept
     assert listed[1:2] == ["C4"] and listed[-1] == "C6"
     assert len(listed) == 1 + 25
+
+
+def test_soprano_altissimo_to_f7_is_kept_and_not_flagged(make_app):
+    """The soprano's extended top is fingered F7, an extension recorded in the
+    range generator (MuseScore stops at A6); it sounds D#7."""
+    app = make_app(config=on("bb_soprano", **FILTER_ON))
+    app.launch()
+    for note in ("C#7", "D7", "D#7"):           # fingered D#7, E7, F7
+        app.play(Tone(note=note, seconds=1.0))
+    assert [r.fingered for r in app.table.rows()] == ["D#/Eb7", "E7", "F7"]
+    assert app.audio.notice is None
