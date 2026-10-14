@@ -111,7 +111,7 @@ def test_first_run_carries_restored_a4_and_nickname(tmp_path):
         out["engine_a4"] = win._engine.a4
         out["drone_a4"] = (win._drone_bar.controller._a4
                            if win._drone_bar.controller is not None else None)
-        out["a4_combo"] = win._a4_combo.currentData()
+        out["a4_combo"] = win._toolbar._a4_combo.currentData()
         out["setup_a4_combo"] = win._setup_tab._a4_combo.currentData()
     ''', config={"last_a4_hz": 442, "last_nickname": "MarkVI"})
     assert out["engine_a4"] == 442.0
@@ -133,16 +133,16 @@ def test_nickname_change_starts_a_new_run(tmp_path):
             first = win._log.current_run()
             # One reading on the first horn, so the run is not coalesced.
             win._log.add_measurement(69, 69, 0.0, 440.0)
-            win._nick_edit.setText("Selmer")
-            win._nick_edit.editingFinished.emit()
+            win._toolbar._nick_edit.setText("Selmer")
+            win._toolbar._nick_edit.editingFinished.emit()
             second = win._log.current_run()
             # A focus change with the same text must not open another run.
-            win._nick_edit.editingFinished.emit()
+            win._toolbar._nick_edit.editingFinished.emit()
             out["same_after_refocus"] = (
                 win._log.current_run().run_id == second.run_id)
             win._log.add_measurement(69, 69, 0.0, 440.0)
-            win._nick_edit.setText("")
-            win._nick_edit.editingFinished.emit()
+            win._toolbar._nick_edit.setText("")
+            win._toolbar._nick_edit.editingFinished.emit()
             third = win._log.current_run()
             runs = {r.run_id: r.label for r in win._log.runs()}
             out["first_label_kept"] = runs.get(first.run_id)
@@ -174,7 +174,7 @@ def test_matrix_span_follows_display_and_played_notes(tmp_path):
         out["mode"] = win._tuner_tab.layout_mode
         out["griff_span"] = list(ctrl.painted_octave_span())
         # Display toggle: fingered -> sounding shifts tenor down 14 semitones.
-        win._disp_combo.setCurrentIndex(1)
+        win._toolbar._disp_combo.setCurrentIndex(1)
         win._tuner_tab.refresh_table()
         out["klingend_live"] = list(ctrl._matrix_octave_range())
         out["klingend_painted"] = list(ctrl.painted_octave_span())
@@ -793,7 +793,7 @@ def test_response_combo_shows_the_engine_mode(tmp_path):
     out = _run_gui(tmp_path, '''
         from sax_controls import response_combo
         out["engine"] = win._engine.filter_mode
-        out["toolbar"] = win._filter_combo.currentData()
+        out["toolbar"] = win._toolbar._filter_combo.currentData()
         out["setup"] = win._setup_tab._response_combo.currentData()
         # Even with a bad value in memory, a freshly filled combo shows the
         # mode the engine runs.

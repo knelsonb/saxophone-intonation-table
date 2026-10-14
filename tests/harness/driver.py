@@ -37,10 +37,10 @@ the list below is the contract the rewrite must keep or update here:
       TUNER tab's ``_refresh_timer``, the DECK tab's ``_pump_timer`` and the
       tuner widget's are virtualised: ticked from the harness clock instead
       of real time.
-  Toolbar widgets (window attributes)
+  Toolbar (``_toolbar``, sax_toolbar.Toolbar)
     * ``_family_combo`` / ``_instr_combo`` (instrument), ``_disp_combo``
       (fingered / sounding), ``_a4_combo`` (430..450), ``_lang_combo``,
-      ``_filter_combo``, ``_nick_edit``,
+      ``_filter_combo``, ``_nick_edit``, ``_audio_chip`` (``_name``),
       buttons ``_btn_autotune`` ``_btn_reset`` ``_btn_txt`` ``_btn_pdf``
       ``_btn_csv`` ``_btn_chart`` ``_btn_import`` ``_btn_custom``;
   TUNER tab (``_tuner_tab``, sax_tab_tuner.TunerTab)
@@ -55,7 +55,7 @@ the list below is the contract the rewrite must keep or update here:
       ``_engine`` (``state`` ``last_error`` ``output_running`` ``samplerate``
       ``output_samplerate`` ``active_device`` ``active_output_device`` ``a4``).
   Banners
-    * ``_audio_banner`` (``_msg``, ``_btn_retry``), ``_audio_chip`` (``_name``),
+    * ``_audio_banner`` (``_msg``, ``_btn_retry``),
       ``_info_banner`` (``_msg``, ``_btn_action``); ``_engine.mixer.active_sources()``.
   METRO tab (``_metro_tab``, sax_tab_metro.MetroTab)
     * ``_slider`` ``_ts_btns`` ``_btn_start`` ``controller`` ``bpm``
@@ -560,8 +560,8 @@ class AppDriver:
         family = sys.modules["sax_instruments"].family_of(key)
         if family is None:
             raise HarnessError(f"unknown instrument key {key!r}")
-        self._combo_select(w._family_combo, family, "instrument family")
-        self._combo_select(w._instr_combo, key, "instrument")
+        self._combo_select(w._toolbar._family_combo, family, "instrument family")
+        self._combo_select(w._toolbar._instr_combo, key, "instrument")
 
     def instrument(self) -> str:
         return self.win._session.instrument
@@ -569,10 +569,10 @@ class AppDriver:
     def set_a4(self, hz: int) -> None:
         if int(hz) != hz or not 430 <= hz <= 450:
             raise HarnessError("the A4 selector offers whole Hz from 430 to 450")
-        self._combo_select(self.win._a4_combo, int(hz), "A4")
+        self._combo_select(self.win._toolbar._a4_combo, int(hz), "A4")
 
     def a4(self) -> int:
-        return int(self.win._a4_combo.currentData())
+        return int(self.win._toolbar._a4_combo.currentData())
 
     def engine_a4(self) -> float:
         return float(self.win._engine.a4)
@@ -581,13 +581,13 @@ class AppDriver:
         idx = {"fingered": 0, "sounding": 1}.get(mode)
         if idx is None:
             raise HarnessError("display mode is 'fingered' or 'sounding'")
-        self.win._disp_combo.setCurrentIndex(idx)
+        self.win._toolbar._disp_combo.setCurrentIndex(idx)
 
     def display(self) -> str:
         return {"griff": "fingered", "klingend": "sounding"}[self.win._session.display]
 
     def set_language(self, lang: str) -> None:
-        self._combo_select(self.win._lang_combo, lang, "language")
+        self._combo_select(self.win._toolbar._lang_combo, lang, "language")
 
     def language(self) -> str:
         return self.win.lang
@@ -645,7 +645,7 @@ class AppDriver:
         with self.dialogs.scope():
             # Optional: a test may have scripted its own answer, which is used first.
             self.dialogs.expect("question", "Yes" if confirm else "No", optional=True)
-            self.win._btn_reset.click()
+            self.win._toolbar._btn_reset.click()
 
     def table_discard(self, name: str, confirm: bool) -> None:
         w = self.win
@@ -709,7 +709,7 @@ class AppDriver:
         with self.dialogs.scope() as sc:
             self.dialogs.expect("warning", "Ok", optional=True)
             self.dialogs.expect("question", "Yes" if accept else "No", optional=True)
-            self.win._btn_autotune.click()
+            self.win._toolbar._btn_autotune.click()
         msg = sc.last
         if msg is None:
             raise HarnessError("autotune showed no dialog")
@@ -742,22 +742,23 @@ class AppDriver:
         raise ExportFailed(what, sc.last.text if sc.last else None)
 
     def export_txt(self, path, maker="", model="", expect_failure=False):
-        return self._export("TXT", self.win._btn_txt, path, maker, model, expect_failure)
+        return self._export("TXT", self.win._toolbar._btn_txt, path, maker, model, expect_failure)
 
     def export_pdf(self, path, maker="", model="", expect_failure=False):
         self.models.pdf = None
-        return self._export("PDF", self.win._btn_pdf, path, maker, model, expect_failure)
+        return self._export("PDF", self.win._toolbar._btn_pdf, path, maker, model, expect_failure)
 
     def export_chart(self, path, maker="", model="", expect_failure=False):
         self.models.chart = None
-        return self._export("chart", self.win._btn_chart, path, maker, model, expect_failure)
+        return self._export("chart", self.win._toolbar._btn_chart, path, maker, model,
+                            expect_failure)
 
     def export_csv(self, path, mode, instrument, run_id, nickname, maker, model,
                    expect_failure, keep_existing: bool = False):
         def slice_form():
             self.dialogs.expect("csv_slice", mode=mode, instrument=instrument,
                                 run_id=run_id, nickname=nickname, optional=True)
-        return self._export("CSV", self.win._btn_csv, path, maker, model,
+        return self._export("CSV", self.win._toolbar._btn_csv, path, maker, model,
                             expect_failure, extra=slice_form, keep_existing=keep_existing)
 
     # =================================================================== import
@@ -768,7 +769,7 @@ class AppDriver:
             self.dialogs.expect("question", "Ok" if confirm else "Cancel", optional=True)
             for kind in ("information", "warning", "critical"):
                 self.dialogs.expect(kind, "Ok", optional=True)
-            self.win._btn_import.click()
+            self.win._toolbar._btn_import.click()
         shown = [m for m in sc.messages if m.kind != "question"]
         text = shown[-1].text if shown else ""
         if not confirm:
@@ -939,7 +940,7 @@ class AppDriver:
         self._combo_select(self.win._setup_tab._theme_combo, name, "theme")
 
     def set_response(self, mode: str) -> None:
-        self._combo_select(self.win._filter_combo, mode, "response mode")
+        self._combo_select(self.win._toolbar._filter_combo, mode, "response mode")
 
     def set_min_n(self, n: int) -> None:
         self.win._tuner_tab._min_n_spin.setValue(int(n))
@@ -948,11 +949,11 @@ class AppDriver:
         self.win._tuner_tab._cb_oor.setChecked(bool(on))
 
     def set_nickname(self, text: str) -> None:
-        self.win._nick_edit.setText(text)
-        self.win._nick_edit.editingFinished.emit()
+        self.win._toolbar._nick_edit.setText(text)
+        self.win._toolbar._nick_edit.editingFinished.emit()
 
     def nickname(self) -> str:
-        return self.win._nick_edit.text()
+        return self.win._toolbar._nick_edit.text()
 
     def set_mic_gain(self, db: int) -> None:
         self._combo_select(self.win._setup_tab._mic_gain_combo, db, "mic gain")
@@ -1002,7 +1003,7 @@ class AppDriver:
             self.dialogs.expect("custom_instrument", "accept" if accept else "reject",
                                 name=name, transpose=transpose)
             self.dialogs.expect("warning", "Ok", optional=True)
-            self.win._btn_custom.click()
+            self.win._toolbar._btn_custom.click()
         after = self.instrument()
         return after if after != before else None
 
@@ -1021,7 +1022,7 @@ class AppDriver:
             output_rate=int(eng.output_samplerate) if eng.output_running else 0,
             banner_visible=not w._audio_banner.isHidden(),
             banner_text=w._audio_banner._msg.text(),
-            chip_text=w._audio_chip._name.text(),
+            chip_text=w._toolbar._audio_chip._name.text(),
             status_text=w._tuner_tab._status_lbl.text())
 
     def audio_retry(self) -> None:
@@ -1064,7 +1065,7 @@ class AppDriver:
 
     def response(self) -> str:
         # Internal: toolbar ``_filter_combo`` item data ('fast' / 'normal' / 'slow').
-        return str(self.win._filter_combo.currentData())
+        return str(self.win._toolbar._filter_combo.currentData())
 
     def drone_set_volume(self, percent: int) -> None:
         # Internal: drone bar ``_drone_vol_slider`` (0..100).
@@ -1104,7 +1105,7 @@ class AppDriver:
                                 transpose=transpose)
             for _ in names:
                 self.dialogs.expect("warning", "Ok", optional=True)
-            self.win._btn_custom.click()
+            self.win._toolbar._btn_custom.click()
         after = self.instrument()
         return after if after != before else None
 

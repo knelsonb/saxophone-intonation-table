@@ -208,7 +208,8 @@ class SourceScan:
                 for value in node.value.value.values:
                     for key in _strings_in(value):
                         self.carried[key] = f'{rel}:{node.lineno}'
-            elif ident == '_tab_keys' and isinstance(node.value, ast.List):
+            elif (ident in ('_tab_keys', 'TAB_KEYS')
+                  and isinstance(node.value, (ast.List, ast.Tuple))):
                 self.tab_keys = _strings_in(node.value)
 
     def _scan_fstring(self, node: ast.JoinedStr) -> None:

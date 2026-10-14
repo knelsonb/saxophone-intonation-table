@@ -43,6 +43,7 @@ from PyQt6.QtWidgets import (
 import sax_config
 import sax_instruments
 from sax_dialogs import RangeEditorDialog, ask_custom_instrument
+from sax_i18n import STRINGS
 from sax_instruments import (
     display_name as instrument_display_name,
     families as instrument_families,
@@ -106,8 +107,9 @@ class InstrumentController:
     per-instrument range editor, custom-instrument registration, and the
     autotune-from-history flow.
 
-    Works on the two instrument combos it is given and the SessionModel;
-    dialogs open over ``parent``."""
+    Fills and follows the two instrument combos it is given (again in the
+    new language after a switch) and works on the SessionModel; dialogs
+    open over ``parent``."""
 
     def __init__(self, parent, *,
                  session, store, engine, tr,
@@ -133,8 +135,35 @@ class InstrumentController:
         self._on_instrument_changed = on_instrument_changed
         self._on_range_changed = on_range_changed
         self._on_a4_changed = on_a4_changed
+        family_combo.currentIndexChanged.connect(self.on_family_changed)
+        instr_combo.currentIndexChanged.connect(self.on_instr_changed)
+        # Instrument names come from the catalog in each language, not from
+        # translation keys, so the combos are filled again after a switch.
+        tr.language_changed.connect(lambda _lang: self.refill())
+
+    def instrument_label(self, key: str) -> str:
+        """The instrument's name as reports and banners show it: the long
+        translated name when there is one, else the catalog name."""
+        long_key = f'instr_long_{key}'
+        if long_key in STRINGS[self._tr.lang]:
+            return self._t(long_key)
+        return instrument_display_name(key, self._tr.lang)
 
     # ── Family / sub-instrument combos ───────────────────────────────────────
+    def refill(self, select_key: str | None = None) -> None:
+        """Fill both combos in the current language and show ``select_key``
+        (default: the session's instrument), selecting it when it changed."""
+        key = select_key if select_key is not None else self._session.instrument
+        combo = self._family_combo
+        blocked = combo.blockSignals(True)
+        combo.clear()
+        lang = self._tr.lang
+        for family_key, name_de, name_en in instrument_families():
+            combo.addItem(name_de if lang == 'de' else name_en, family_key)
+        combo.blockSignals(blocked)
+        self.select_family_for_instrument(key)
+        self.populate_instrument_combo(select_key=key)
+
     def on_family_changed(self, _idx) -> None:
         """Family combo changed → repopulate the sub-instrument combo with
         the new family's entries and select the first one."""
@@ -256,15 +285,8 @@ class InstrumentController:
             customs.append(sax_config.CustomInstrument(
                 key=key, transp=transp, name_de=name, name_en=name))
             self._store.save_customs(customs)
-        # Refresh combos and select the new instrument.
-        lang = self._tr.lang
-        self._family_combo.blockSignals(True)
-        self._family_combo.clear()
-        for fk, de, en in instrument_families():
-            self._family_combo.addItem(de if lang == 'de' else en, fk)
-        self._family_combo.blockSignals(False)
-        self.select_family_for_instrument(key)
-        self.populate_instrument_combo(select_key=key)
+        # Refresh the combos (the new family entry) and select the instrument.
+        self.refill(select_key=key)
 
     def _ask_custom_instrument(self) -> tuple[str, int] | None:
         # The DE | EN toggle switches the whole window, so the dialog

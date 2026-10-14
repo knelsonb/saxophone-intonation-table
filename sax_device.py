@@ -3,7 +3,7 @@
 #
 # Extracted from sax_intonation_gui.py as one of the MainWindow controllers.
 # The controller owns the audio device picker open flow, the retry-on-failure
-# path, the 1 Hz hot-plug poll, the engine-state / devices-changed / interface-appeared Qt slot
+# path, the 1 Hz hot-plug poll, the engine-state and interface-appeared slot
 # bodies, and the per-active-device write-back to AppConfig.
 #
 # Device commands are only requested here (engine.request_*): they run on the
@@ -59,7 +59,7 @@ if TYPE_CHECKING:
 
 class DeviceController:
     """Owns audio device picker, retry-on-failure, hot-plug poller,
-    engine-state / devices-changed / interface-appeared Qt slot handlers,
+    engine-state and interface-appeared slot handlers,
     and the per-active-device persistence write-back.
 
     Connected to engine signals via constructor wiring done by MainWindow
@@ -204,13 +204,6 @@ class DeviceController:
         else:
             self._info_banner.show_message(self._tr.msg(
                 'audio_using_fallback', name=dev.name, saved=saved))
-
-    def on_devices_changed(self, _devices) -> None:
-        # Nothing to do at the MainWindow level — the picker reads
-        # devices lazily on each open, and the chip is driven by state
-        # changes, not the device list. Hook kept so unit tests / future
-        # toasts can subscribe without rewiring the engine.
-        pass
 
     def on_interface_appeared(self, device: 'DeviceInfo') -> None:
         """Hot-plug banner for vendor-class interfaces. Polite, non-modal,

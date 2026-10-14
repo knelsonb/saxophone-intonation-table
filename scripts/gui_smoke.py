@@ -164,26 +164,26 @@ def main() -> int:
           and win._setup_tab._response_combo.isEnabled(),
           "SETUP Response (filter-mode) combo missing or disabled")
     if hasattr(win._setup_tab, "_response_combo"):
-        _saved = win._filter_combo.currentData()
+        _saved = win._toolbar._filter_combo.currentData()
         _t1 = "slow" if _saved != "slow" else "fast"
         _t2 = "fast" if _t1 != "fast" else "normal"
         # SETUP combo drives → toolbar combo + cfg follow.
         win._setup_tab._response_combo.setCurrentIndex(
             win._setup_tab._response_combo.findData(_t1))
         app.processEvents()
-        check(win._filter_combo.currentData() == _t1,
+        check(win._toolbar._filter_combo.currentData() == _t1,
               "SETUP Response change did not mirror into the toolbar combo")
         check(win._cfg.filter_mode == _t1,
               "SETUP Response change did not persist cfg.filter_mode")
         # Toolbar combo drives → SETUP combo follows (other direction).
-        win._filter_combo.setCurrentIndex(win._filter_combo.findData(_t2))
+        win._toolbar._filter_combo.setCurrentIndex(win._toolbar._filter_combo.findData(_t2))
         app.processEvents()
         check(win._setup_tab._response_combo.currentData() == _t2,
               "toolbar Response change did not mirror into the SETUP combo")
         # Restore so later assertions see the original state.
-        _ri = win._filter_combo.findData(_saved)
+        _ri = win._toolbar._filter_combo.findData(_saved)
         if _ri >= 0:
-            win._filter_combo.setCurrentIndex(_ri)
+            win._toolbar._filter_combo.setCurrentIndex(_ri)
         app.processEvents()
 
     # SETUP: horn nickname editor mirrors the toolbar nickname field. Both
@@ -193,10 +193,10 @@ def main() -> int:
     if hasattr(win._setup_tab, "_nick_edit"):
         win._setup_tab._nick_edit.setText("Tenor SmokeTest")
         app.processEvents()
-        check(win._nick_edit.text() == "Tenor SmokeTest"
+        check(win._toolbar._nick_edit.text() == "Tenor SmokeTest"
               and win._session.nickname == "Tenor SmokeTest",
               "SETUP nickname did not reach the session and the toolbar field")
-        win._nick_edit.setText("Alto SmokeTest")
+        win._toolbar._nick_edit.setText("Alto SmokeTest")
         app.processEvents()
         check(win._setup_tab._nick_edit.text() == "Alto SmokeTest",
               "toolbar nickname did not mirror into the SETUP field")
@@ -212,23 +212,23 @@ def main() -> int:
           and win._setup_tab._a4_combo.count() == 21,
           "SETUP A4 combo missing or wrong item count (expected 430..450)")
     if hasattr(win._setup_tab, "_a4_combo"):
-        _a4_saved = win._a4_combo.currentIndex()
+        _a4_saved = win._toolbar._a4_combo.currentIndex()
         # SETUP drives → toolbar + engine follow.
         win._setup_tab._a4_combo.setCurrentIndex(win._setup_tab._a4_combo.findData(442))
         app.processEvents()
-        check(win._a4_combo.currentData() == 442,
+        check(win._toolbar._a4_combo.currentData() == 442,
               "SETUP A4 change did not mirror into the toolbar combo")
         check(int(win._engine.a4) == 442,
               "SETUP A4 change did not reach the engine")
         # Toolbar drives → SETUP follows (other direction).
-        win._a4_combo.setCurrentIndex(win._a4_combo.findData(437))
+        win._toolbar._a4_combo.setCurrentIndex(win._toolbar._a4_combo.findData(437))
         app.processEvents()
         check(win._setup_tab._a4_combo.currentData() == 437,
               "toolbar A4 change did not mirror into the SETUP combo")
         check(int(win._engine.a4) == 437,
               "toolbar A4 change did not reach the engine")
         # Restore original A4.
-        win._a4_combo.setCurrentIndex(_a4_saved)
+        win._toolbar._a4_combo.setCurrentIndex(_a4_saved)
         app.processEvents()
 
     # SETUP: mic-gain combo wires to cfg.mic_gain_db + the engine
@@ -258,12 +258,14 @@ def main() -> int:
     win._session.set_nickname("MarkVI")
     win._session.set_a4(443.0)
     app.processEvents()
-    check(win._nick_edit.text() == "MarkVI" and win._setup_tab._nick_edit.text() == "MarkVI",
+    check(win._toolbar._nick_edit.text() == "MarkVI"
+          and win._setup_tab._nick_edit.text() == "MarkVI",
           "a session nickname did not reach both nickname editors")
-    check(win._a4_combo.currentData() == 443 and win._setup_tab._a4_combo.currentData() == 443,
+    check(win._toolbar._a4_combo.currentData() == 443
+          and win._setup_tab._a4_combo.currentData() == 443,
           "a session A4 did not reach both A4 combos")
     win._session.set_nickname("")            # don't let close-save persist it
-    win._a4_combo.setCurrentIndex(win._a4_combo.findData(440))
+    win._toolbar._a4_combo.setCurrentIndex(win._toolbar._a4_combo.findData(440))
     app.processEvents()
 
     # The table re-derive behind an A4 change must run EXACTLY once per change —
@@ -278,7 +280,7 @@ def main() -> int:
     check(_a4_calls[0] == 1,
           f"A4 re-derive ran {_a4_calls[0]}x for one change (expected 1 — double recalc)")
     del win._session.rederive_stats         # revert to the bound method
-    win._a4_combo.setCurrentIndex(win._a4_combo.findData(440))
+    win._toolbar._a4_combo.setCurrentIndex(win._toolbar._a4_combo.findData(440))
     app.processEvents()
 
     # The autotune path sets the session's A4 directly: BOTH combos + the
@@ -286,15 +288,15 @@ def main() -> int:
     # alone without crashing.
     win._session.set_a4(445.0)
     app.processEvents()
-    check(win._a4_combo.currentData() == 445
+    check(win._toolbar._a4_combo.currentData() == 445
           and win._setup_tab._a4_combo.currentData() == 445
           and int(win._engine.a4) == 445,
           "a session A4 did not sync both combos + engine")
     win._session.set_a4(9999.0)              # out of 430..450 → combos stay
     app.processEvents()
-    check(win._a4_combo.currentData() == 445,
+    check(win._toolbar._a4_combo.currentData() == 445,
           "an A4 outside 430..450 corrupted the A4 combo (missing bounds guard)")
-    win._a4_combo.setCurrentIndex(win._a4_combo.findData(440))
+    win._toolbar._a4_combo.setCurrentIndex(win._toolbar._a4_combo.findData(440))
     app.processEvents()
 
     # Test tone with no engine mirror (headless): must NOT claim to be playing.
@@ -570,9 +572,9 @@ def main() -> int:
     _lang_before = win.lang
     _title_before = _setup_group.title()
     _other = "en" if _lang_before == "de" else "de"
-    for _i in range(win._lang_combo.count()):
-        if win._lang_combo.itemData(_i) == _other:
-            win._lang_combo.setCurrentIndex(_i)
+    for _i in range(win._toolbar._lang_combo.count()):
+        if win._toolbar._lang_combo.itemData(_i) == _other:
+            win._toolbar._lang_combo.setCurrentIndex(_i)
             break
     app.processEvents()
     _title_after = _setup_group.title()
@@ -582,9 +584,9 @@ def main() -> int:
     check(win._setup_tab._mic_gain_status.text().strip() != "",
           "mic-gain status went blank after language switch")
     # Restore original language.
-    for _i in range(win._lang_combo.count()):
-        if win._lang_combo.itemData(_i) == _lang_before:
-            win._lang_combo.setCurrentIndex(_i)
+    for _i in range(win._toolbar._lang_combo.count()):
+        if win._toolbar._lang_combo.itemData(_i) == _lang_before:
+            win._toolbar._lang_combo.setCurrentIndex(_i)
             break
     app.processEvents()
 
