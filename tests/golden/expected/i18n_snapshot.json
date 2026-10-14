@@ -295,6 +295,7 @@
       "status_fmt",
       "table_empty_hint",
       "table_matrix_title",
+      "table_matrix_title_outside",
       "table_summary",
       "theme_dark",
       "theme_light",
@@ -536,6 +537,11 @@
         "sounding"
       ],
       "table_matrix_title": [
+        "played",
+        "total"
+      ],
+      "table_matrix_title_outside": [
+        "outside",
         "played",
         "total"
       ],
@@ -885,6 +891,7 @@
       "status_fmt",
       "table_empty_hint",
       "table_matrix_title",
+      "table_matrix_title_outside",
       "table_summary",
       "theme_dark",
       "theme_light",
@@ -1126,6 +1133,11 @@
         "sounding"
       ],
       "table_matrix_title": [
+        "played",
+        "total"
+      ],
+      "table_matrix_title_outside": [
+        "outside",
         "played",
         "total"
       ],

@@ -164,8 +164,14 @@ class IntonationTableModel(QAbstractTableModel):
         lo_f, hi_f = session.keyed_range()
         griff = session.display == 'griff'
         lo_midi, hi_midi = (lo_f, hi_f) if griff else (lo_f + transp, hi_f + transp)
-        played = [m for m, st in session.stats.items() if st.n > 0]
-        if played and self._cfg.allow_out_of_range:
+        # Played notes outside the keyed range widen the span so their cells
+        # are on screen: all of them when out-of-range notes are allowed,
+        # and otherwise those the filter keeps (inside the extended range,
+        # such as altissimo).
+        allow_all = self._cfg.allow_out_of_range
+        played = [m for m, st in session.stats.items()
+                  if st.n > 0 and (allow_all or session.in_range(m))]
+        if played:
             if griff:
                 played = [m - transp for m in played]
             lo_midi = min(lo_midi, min(played))
@@ -274,6 +280,8 @@ class IntonationTableModel(QAbstractTableModel):
         transp = session.transposition
         griff = session.display == 'griff'
         # Cells inside the keyed range are the guide cells the caption counts.
+        # A played cell outside it is still drawn (with a dashed border) and
+        # counted separately, so the caption never reads "30 of 29".
         lo_f, hi_f = session.keyed_range()
         octaves = range(self._lo_oct, self._hi_oct + 1)
         # Fingered display labels octaves relative to the instrument's middle
@@ -291,7 +299,7 @@ class IntonationTableModel(QAbstractTableModel):
         # A cell with 1..min_n-1 readings is shown as not yet played, as the
         # single layout hides such a row.
         min_n = self._cfg.min_n_visible
-        played_n = in_range_cells = 0
+        played_n = in_range_cells = played_outside = 0
         cells = []
         for r in range(12):
             row = []
@@ -305,7 +313,10 @@ class IntonationTableModel(QAbstractTableModel):
                 in_range_cells += in_range
                 st = stats.get(midi_sounding)
                 has_data = st is not None and st.n > 0 and st.n >= min_n
-                played_n += has_data
+                if in_range:
+                    played_n += has_data
+                else:
+                    played_outside += has_data
                 row.append({
                     'mean':          st.mean if has_data else None,
                     'std':           st.std if has_data else None,
@@ -320,6 +331,9 @@ class IntonationTableModel(QAbstractTableModel):
         self._cells = cells
         if in_range_cells == 0:
             self.caption = t('table_empty_hint')
+        elif played_outside:
+            self.caption = t('table_matrix_title_outside', played=played_n,
+                             total=in_range_cells, outside=played_outside)
         else:
             self.caption = t('table_matrix_title', played=played_n, total=in_range_cells)
 

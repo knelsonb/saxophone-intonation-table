@@ -152,6 +152,7 @@ STRINGS = {
         'table_summary': 'Intonationstabelle  –  {notes} Töne  |  {total} Messungen',
         'table_empty_hint': 'Intonationstabelle  –  spiel einen Ton, dann erscheinen hier Mittelwert und Standardabweichung pro Ton.',
         'table_matrix_title': 'Intonationsmatrix  –  {played} von {total} Zellen gespielt',
+        'table_matrix_title_outside': 'Intonationsmatrix  –  {played} von {total} Zellen im Tonumfang gespielt  |  {outside} außerhalb',
         'matrix_oct_label':   'Okt {n}',
         'matrix_oct_rel_label': 'Okt {n:+d}',
         # Reset-Dialog
@@ -535,6 +536,7 @@ STRINGS = {
         'table_summary': 'Intonation Table  –  {notes} notes  |  {total} measurements',
         'table_empty_hint': 'Intonation Table  –  play a note to begin; per-note mean and standard deviation appear here as you play.',
         'table_matrix_title': 'Intonation matrix  –  {played} of {total} cells played',
+        'table_matrix_title_outside': 'Intonation matrix  –  {played} of {total} cells in range played  |  {outside} outside',
         'matrix_oct_label':   'Oct {n}',
         'matrix_oct_rel_label': 'Oct {n:+d}',
         'reset_title':   'Reset',

@@ -679,9 +679,11 @@ class MatrixCellDelegate(QStyledItemDelegate):
     * Bottom-right corner: small N counter.
 
     Active cell (currently-played note within the last 1.5s) gets the
-    blue background tint. Out-of-range cells render only the dimmed
-    note label (so the player still knows what note that row+column
-    represents) on a darker background.
+    blue background tint. An unplayed cell outside the keyed range is
+    left blank on the window background. A PLAYED cell outside it (low A
+    on an alto, altissimo) shows its data like any other cell, on the
+    window background with a dashed border, so the player sees the note
+    was measured but is not one of the instrument's guide cells.
 
     Data layout per cell (the table model's UserRole, see intonation.ui.table):
         ItemDataRole.UserRole → dict {
@@ -723,26 +725,33 @@ class MatrixCellDelegate(QStyledItemDelegate):
         freq     = float(data.get('freq') or 0.0)
         sr       = self._sr_get() or DEFAULT_SAMPLE_RATE
 
-        if not in_range:
-            # Out-of-range cells render with NO border and NO text — they
-            # blend into the table background so the user only sees the
-            # cells that correspond to physically playable notes. The
-            # surrounding grid structure stays so column alignment is
-            # preserved.
+        played = mean is not None and math.isfinite(float(mean))
+        if not in_range and not played:
+            # Unplayed out-of-range cells render with NO border and NO
+            # text: they blend into the table background so the guide grid
+            # shows only the notes the keys give. The surrounding grid
+            # structure stays so column alignment is preserved.
             painter.fillRect(r, _themed('window_bg'))
             painter.restore()
             return
 
-        # In-range background — active blue tint or default panel color.
+        # Background: active blue tint, the panel colour for guide cells,
+        # the window colour for a played note outside the keyed range.
         if active:
             painter.fillRect(r, _themed('accent_muted'))
-        else:
+        elif in_range:
             painter.fillRect(r, _themed('base_bg'))
+        else:
+            painter.fillRect(r, _themed('window_bg'))
 
-        # Subtle cell border — only on in-range cells, so the playable
-        # area visually pops as a grid against the unbordered out-of-
-        # range background.
-        painter.setPen(QPen(_themed('grid'), 1))
+        # Guide cells get a subtle solid border, so the playable area pops
+        # as a grid. A played note outside the keyed range gets a dashed
+        # one, so its data reads as measured but off the guide grid.
+        if in_range:
+            painter.setPen(QPen(_themed('grid'), 1))
+        else:
+            painter.setPen(QPen(_themed('text_dim'), 1, Qt.PenStyle.DashLine))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawRect(r.adjusted(0, 0, -1, -1))
 
         pad_x = 4
