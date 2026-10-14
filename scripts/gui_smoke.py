@@ -570,15 +570,18 @@ def main() -> int:
     check(hasattr(win, "_setup_mic_gain_status")
           and win._setup_mic_gain_status.text().strip() != "",
           "mic-gain status label missing or empty (no visible gain feedback)")
+    from PyQt6.QtWidgets import QGroupBox as _QGroupBox
+    _setup_page = win._tabs.widget(win._tab_keys.index("setup"))
+    _setup_group = _setup_page.findChildren(_QGroupBox)[0]
     _lang_before = win.lang
-    _title_before = win._setup_i18n_groups[0][0].title()
+    _title_before = _setup_group.title()
     _other = "en" if _lang_before == "de" else "de"
     for _i in range(win._lang_combo.count()):
         if win._lang_combo.itemData(_i) == _other:
             win._lang_combo.setCurrentIndex(_i)
             break
     app.processEvents()
-    _title_after = win._setup_i18n_groups[0][0].title()
+    _title_after = _setup_group.title()
     check(_title_after != _title_before,
           f"SETUP group title did not re-translate on language switch "
           f"({_title_before!r} == {_title_after!r})")

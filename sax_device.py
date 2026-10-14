@@ -58,6 +58,7 @@ if TYPE_CHECKING:
     from PyQt6.QtWidgets import QMainWindow
 
     from sax_config import AppConfig
+    from sax_translator import Translator
 
 
 class DeviceController:
@@ -72,7 +73,7 @@ class DeviceController:
     def __init__(self, window: 'QMainWindow', *,
                  engine,
                  cfg: 'AppConfig',
-                 t_func: Callable[..., str],
+                 tr: 'Translator',
                  info_banner,
                  audio_banner,
                  get_lang: Callable[[], str],
@@ -81,7 +82,8 @@ class DeviceController:
         self._w = window
         self._engine = engine
         self._cfg = cfg
-        self._t = t_func
+        self._tr = tr
+        self._t = tr.t
         self._info_banner = info_banner
         self._audio_banner = audio_banner
         self._get_lang = get_lang
@@ -197,7 +199,7 @@ class DeviceController:
                 sax_config.save_config(self._cfg)
                 # Surface as a passive status-bar line, not a modal, so a
                 # sample-rate disclosure never blocks the player.
-                w._status_lbl.setText(self._t('audio_sr_notice', sr=sr))
+                self._tr.bind(w._status_lbl.setText, 'audio_sr_notice', sr=sr)
 
     def _settle_device(self, dev: DeviceInfo,
                        picked: Optional[DeviceSelection]) -> None:
@@ -213,7 +215,7 @@ class DeviceController:
         if chosen or is_saved or not saved:
             self.persist_active_device()
         elif self._info_banner is not None:
-            self._info_banner.show_message(self._t(
+            self._info_banner.show_message(self._tr.msg(
                 'audio_using_fallback', name=dev.name, saved=saved))
 
     def on_devices_changed(self, _devices) -> None:
@@ -248,7 +250,7 @@ class DeviceController:
                 name=device.name, host_api=device.host_api, samplerate=0))
 
         self._info_banner.show_message(
-            self._t('audio_banner_interface_appeared', name=device.name),
-            action_label=self._t('audio_toast_switch'),
+            self._tr.msg('audio_banner_interface_appeared', name=device.name),
+            action_label=self._tr.msg('audio_toast_switch'),
             action_callback=_do_switch,
         )

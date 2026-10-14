@@ -142,9 +142,6 @@ class SessionStateController:
                     self._lang_combo.setCurrentIndex(i)
                     self._lang_combo.blockSignals(False)
                     break
-            # _build_ui used the lang in effect at construction; if we
-            # overrode it post-load, retranslate now to repaint labels.
-            w._retranslate()
 
         # Display combo — match w.display.
         if self._disp_combo is not None:

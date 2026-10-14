@@ -4,13 +4,14 @@ delegates, the audio-input chip and the two inline banners.
 
 Each widget paints from the active sax_theme palette on every paint, so a
 theme switch only needs a repaint. None of them owns application state: the
-window passes in the engine, a translation function and getters, and calls
-``retranslate`` on a language switch.
+window passes in the engine, the Translator and getters. Translated texts are
+bound to the Translator (sax_translator), so they follow a language switch
+on their own, including a banner message that is showing at the time.
 """
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable, Optional
 
 import numpy as np
 from PyQt6.QtCore import QPointF, QRectF, Qt, QTimer
@@ -41,6 +42,7 @@ from sax_theme import IN_TUNE_CENTS, cents_band
 
 if TYPE_CHECKING:
     from sax_audio_engine import AudioEngine
+    from sax_translator import Translator
 
 
 # Palette role for each cents_band() result.
@@ -408,10 +410,11 @@ class DataPanelWidget(QWidget):
     REFRESH_MS = 250
 
     def __init__(self, engine: 'AudioEngine | None',
-                 t_func, get_notes_count, get_cfg):
+                 tr: 'Translator', get_notes_count, get_cfg):
         super().__init__()
         self._engine = engine
-        self._t = t_func
+        self._tr = tr
+        self._t = tr.t
         self._get_notes_count = get_notes_count
         self._get_cfg = get_cfg
         self._device_label = self._resolve_device_label()
@@ -433,7 +436,8 @@ class DataPanelWidget(QWidget):
             'data_hotplug_poller',
         ]
         for r, key in enumerate(self._row_keys):
-            k_lbl = QLabel(self._t(key) + ':')
+            k_lbl = QLabel()
+            tr.bind_text(k_lbl.setText, lambda key=key: tr.t(key) + ':')
             k_lbl.setStyleSheet('color:#8a8aa0;font-family:Monospace;font-size:11px;')
             v_lbl = QLabel('—')
             v_lbl.setStyleSheet('color:#d8d8ee;font-family:Monospace;font-size:11px;')
@@ -449,6 +453,8 @@ class DataPanelWidget(QWidget):
         self._timer.timeout.connect(self._refresh)
         self._refresh_static()
         self._refresh()
+        # The value column holds one translated line (the hot-plug poller).
+        tr.language_changed.connect(self._refresh)
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
@@ -458,17 +464,6 @@ class DataPanelWidget(QWidget):
     def hideEvent(self, event) -> None:
         super().hideEvent(event)
         self._timer.stop()
-
-    def retranslate(self, t_func) -> None:
-        self._t = t_func
-        # Re-label each row's key column. The grid stores key labels at
-        # column 0 in the same order as self._row_keys.
-        for r, key in enumerate(self._row_keys):
-            item = self._grid.itemAtPosition(r, 0)
-            if item is not None and item.widget() is not None:
-                item.widget().setText(self._t(key) + ':')
-        self._refresh_static()
-        self._refresh()
 
     def _resolve_device_label(self) -> str:
         """Mirror what the engine reports if it's running. Falls back to
@@ -914,9 +909,9 @@ class AudioChip(QPushButton):
     directly, which keeps the GUI thread off the slow PortAudio
     cold-init path."""
 
-    def __init__(self, t_func):
+    def __init__(self, tr: 'Translator'):
         super().__init__()
-        self._t = t_func
+        self._tr = tr
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setMinimumHeight(36)
         self.setObjectName('audioChip')   # themed via QPushButton#audioChip
@@ -934,20 +929,17 @@ class AudioChip(QPushButton):
         # rendering as vertical color bands across the chip.
         # Colour + transparent bg come from QPushButton#audioChip QLabel; keep
         # only the per-label font here.
-        self._label = QLabel(self._t('audio_chip_label'))
+        self._label = QLabel()
+        tr.bind(self._label.setText, 'audio_chip_label')
         self._label.setStyleSheet('font-size:10px;font-weight:bold;')
         lay.addWidget(self._label)
-        self._name = QLabel(self._t('audio_chip_none'))
+        self._name = QLabel()
+        tr.bind(self._name.setText, 'audio_chip_none')
         self._name.setStyleSheet('font-size:12px;')
         lay.addWidget(self._name, 1)
         self._chevron = QLabel('▾')
         self._chevron.setStyleSheet('font-size:12px;')
         lay.addWidget(self._chevron)
-
-    def retranslate(self, t_func) -> None:
-        self._t = t_func
-        self._label.setText(self._t('audio_chip_label'))
-        self.setToolTip(self._t('audio_chip_tip'))
 
     def update_from_state(self, state: AudioEngineState,
                           device_name: str, host_api: str,
@@ -961,6 +953,10 @@ class AudioChip(QPushButton):
             # clean when nothing unusual is happening.
             if samplerate and samplerate != 44100:
                 suffix = f' · {samplerate / 1000:g} kHz'
+            # A device name is not translated: stop re-rendering these two.
+            tr = self._tr
+            tr.unbind(self._name.setText)
+            tr.unbind(self.setToolTip)
             self._name.setText(f'{short}{suffix}')
             tip = device_name
             if host_api:
@@ -970,11 +966,11 @@ class AudioChip(QPushButton):
             self.setToolTip(tip)
         elif state in (AudioEngineState.OPENING,
                         AudioEngineState.ENUMERATING):
-            self._name.setText(self._t('audio_chip_opening'))
-            self.setToolTip(self._t('audio_chip_opening'))
+            self._tr.bind(self._name.setText, 'audio_chip_opening')
+            self._tr.bind(self.setToolTip, 'audio_chip_opening')
         else:
-            self._name.setText(self._t('audio_chip_none'))
-            self.setToolTip(self._t('audio_chip_tip'))
+            self._tr.bind(self._name.setText, 'audio_chip_none')
+            self._tr.bind(self.setToolTip, 'audio_chip_tip')
 
 
 class AudioRecoveryBanner(QWidget):
@@ -984,9 +980,9 @@ class AudioRecoveryBanner(QWidget):
     device). The copy is selected by ``AudioEngineError``, so the
     user never sees raw PortAudio error codes."""
 
-    def __init__(self, t_func, on_retry, on_pick):
+    def __init__(self, tr: 'Translator', on_retry, on_pick):
         super().__init__()
-        self._t = t_func
+        self._tr = tr
         self._on_retry = on_retry
         self._on_pick = on_pick
         # Themed via QWidget#audioBanner in build_app_qss (was an inline dark box
@@ -998,41 +994,36 @@ class AudioRecoveryBanner(QWidget):
         self._msg = QLabel('')
         self._msg.setWordWrap(True)
         lay.addWidget(self._msg, 1)
-        self._btn_retry = QPushButton(self._t('audio_banner_retry'))
+        self._btn_retry = QPushButton()
+        tr.bind(self._btn_retry.setText, 'audio_banner_retry')
         self._btn_retry.clicked.connect(lambda: self._on_retry())
         lay.addWidget(self._btn_retry)
-        self._btn_pick = QPushButton(self._t('audio_banner_pick'))
+        self._btn_pick = QPushButton()
+        tr.bind(self._btn_pick.setText, 'audio_banner_pick')
         self._btn_pick.clicked.connect(lambda: self._on_pick())
         lay.addWidget(self._btn_pick)
         self.hide()
 
-    def retranslate(self, t_func) -> None:
-        self._t = t_func
-        self._btn_retry.setText(self._t('audio_banner_retry'))
-        self._btn_pick.setText(self._t('audio_banner_pick'))
-
     def show_for(self, err: AudioEngineError, device_name: str,
                  raw_msg: str) -> None:
+        tr = self._tr
         if err == AudioEngineError.NO_DEVICE and not device_name:
-            self._msg.setText('⚠  ' + self._t('audio_banner_no_device'))
+            message = tr.msg('audio_banner_no_device')
         elif err in (AudioEngineError.NO_DEVICE,
                      AudioEngineError.DEVICE_DISCONNECTED):
             # A named device that is missing (unplugged, or the saved one not
             # found on a retry): name it, rather than claim there is no input
             # at all while another one is right there.
-            self._msg.setText('⚠  ' + self._t('audio_banner_disconnect',
-                                              name=device_name or '?'))
+            message = tr.msg('audio_banner_disconnect', name=device_name or '?')
         elif err == AudioEngineError.DEVICE_BUSY:
-            self._msg.setText('⚠  ' + self._t('audio_banner_busy',
-                                              name=device_name or '?'))
+            message = tr.msg('audio_banner_busy', name=device_name or '?')
         elif err == AudioEngineError.UNSUPPORTED_RATE:
-            self._msg.setText('⚠  '
-                              + self._t('audio_banner_unsupported_rate'))
+            message = tr.msg('audio_banner_unsupported_rate')
         else:
             # HOSTAPI_FAILURE / UNKNOWN — surface a generic line. The
             # raw PortAudio text goes to diagnostics, not here.
-            self._msg.setText('⚠  '
-                              + self._t('audio_banner_unknown', msg=raw_msg or '—'))
+            message = tr.msg('audio_banner_unknown', msg=raw_msg or '—')
+        tr.bind_text(self._msg.setText, lambda: '⚠  ' + message())
         self.show()
 
 
@@ -1043,13 +1034,17 @@ class InfoBanner(QWidget):
     notifications and wrong-instrument hints — anything that would otherwise
     interrupt the player with a modal QMessageBox.
 
-    Use ``show_message(text, action_label=None, action_callback=None)`` to
-    surface a banner; Dismiss always hides it. If no action label is
-    provided, only the Dismiss button is shown."""
+    Use ``show_message(message, action_label=None, action_callback=None)``
+    to surface a banner; Dismiss always hides it. If no action label is
+    provided, only the Dismiss button is shown. ``message`` and
+    ``action_label`` are callables returning the text (a Translator
+    ``msg()``, or a lambda over ``t()``), so a banner that is up during a
+    language switch is re-worded."""
 
-    def __init__(self, t_func):
+    def __init__(self, tr: 'Translator'):
         super().__init__()
-        self._t = t_func
+        self._tr = tr
+        self._message: Optional[Callable[[], str]] = None
         self._action_callback = None
         self.setObjectName('infoBanner')   # themed via QWidget#infoBanner
         lay = QHBoxLayout(self)
@@ -1061,14 +1056,11 @@ class InfoBanner(QWidget):
         self._btn_action = QPushButton('')
         self._btn_action.clicked.connect(self._on_action)
         lay.addWidget(self._btn_action)
-        self._btn_dismiss = QPushButton(self._t('audio_toast_dismiss'))
+        self._btn_dismiss = QPushButton()
+        tr.bind(self._btn_dismiss.setText, 'audio_toast_dismiss')
         self._btn_dismiss.clicked.connect(self.hide)
         lay.addWidget(self._btn_dismiss)
         self.hide()
-
-    def retranslate(self, t_func) -> None:
-        self._t = t_func
-        self._btn_dismiss.setText(self._t('audio_toast_dismiss'))
 
     def _on_action(self) -> None:
         cb = self._action_callback
@@ -1082,18 +1074,20 @@ class InfoBanner(QWidget):
                 # tear the window down.
                 pass
 
-    def hide_if_showing(self, text: str) -> None:
-        """Hide the banner if it still shows ``text`` (a later, unrelated
+    def hide_if_showing(self, message: Callable[[], str]) -> None:
+        """Hide the banner if it still shows ``message`` (a later, unrelated
         message stays up)."""
-        if not self.isHidden() and self._msg.text() == text:
+        if not self.isHidden() and self._message == message:
             self.hide()
 
-    def show_message(self, text: str, action_label: str | None = None,
+    def show_message(self, message: Callable[[], str],
+                     action_label: Optional[Callable[[], str]] = None,
                      action_callback=None) -> None:
-        self._msg.setText(text)
-        if action_label and action_callback is not None:
+        self._message = message
+        self._tr.bind_text(self._msg.setText, message)
+        if action_label is not None and action_callback is not None:
             self._action_callback = action_callback
-            self._btn_action.setText(action_label)
+            self._tr.bind_text(self._btn_action.setText, action_label)
             self._btn_action.show()
         else:
             self._action_callback = None

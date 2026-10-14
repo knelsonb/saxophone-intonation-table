@@ -296,9 +296,6 @@ def test_switching_language_relabels_the_title_and_tabs_and_keeps_the_version(ap
         assert tips == [words[f"nav_tab_{k}_tip"] for k in keys]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Uruk2-4: metro, deck, drone bar, pipes, theme and response combos stay stale")
 @pytest.mark.parametrize("start, switch_to", [("en", "de"), ("de", "en")],
                          ids=["en-to-de", "de-to-en"])
 def test_after_a_language_switch_no_text_is_left_in_the_old_language(make_app, start,
@@ -338,9 +335,6 @@ def test_questions_asked_after_a_language_switch_use_the_new_language(app):
     assert app.table.rows() == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Frodo-10: the open pitch pipes window keeps its old-language title and labels")
 def test_an_open_pitch_pipes_window_follows_a_language_switch(app):
     """The pitch pipes window that is open while the language changes is
     relabelled too."""
@@ -353,9 +347,6 @@ def test_an_open_pitch_pipes_window_follows_a_language_switch(app):
     assert stale_texts(app, "en", "de", area="dialog:") == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Frodo-10: a visible audio banner keeps its old-language message")
 def test_the_audio_problem_banner_follows_a_language_switch(app):
     """A banner that is up when the language changes is re-worded."""
     app.host.unplug(DEFAULT_INPUT)
@@ -399,9 +390,6 @@ def test_german_note_names_call_b_natural_h(make_app):
     assert app.table.rows()[0].sounding == "H4"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Frodo-16: Export TXT/PDF/CSV and Reset stay English in the German UI")
 def test_german_toolbar_buttons_are_in_german(make_app):
     """The export and reset buttons do not stay English in the German UI."""
     app = make_app(lang="de")

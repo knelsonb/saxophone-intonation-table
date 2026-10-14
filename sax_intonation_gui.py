@@ -114,6 +114,7 @@ from sax_pitch_pipes import PitchPipesController
 from sax_session_state import SessionStateController
 from sax_stats import NoteStats
 from sax_table import TableController
+from sax_translator import Translator
 from sax_widgets import (  # noqa: F401  (MatrixCellDelegate re-exported)
     AudioChip,
     AudioRecoveryBanner,
@@ -148,7 +149,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         # Pick the user's system language as the default. German-speaking
         # locales get the original DE strings; anyone else gets English.
-        self.lang       = 'de' if QLocale.system().name().startswith('de') else 'en'
+        # The saved language replaces it below, before any widget is built.
+        lang = 'de' if QLocale.system().name().startswith('de') else 'en'
         # v0.5.7.1: default to Bb tenor — the most common community-band
         # sax. Existing users with a persisted ``last_instrument_key``
         # keep their own choice (restored a few lines below); this only
@@ -212,7 +214,11 @@ class MainWindow(QMainWindow):
         # First-launch (empty config) falls back to the locale-derived
         # default already set above.
         if getattr(self._cfg, 'last_lang', '') in ('de', 'en'):
-            self.lang = self._cfg.last_lang
+            lang = self._cfg.last_lang
+        # Every translated text in the window is bound to this translator and
+        # follows a language switch by itself (see sax_translator).
+        self._tr = Translator(lang, self)
+        self._tr.language_changed.connect(self._on_language_changed)
         if getattr(self._cfg, 'last_instrument_key', ''):
             # Trust the saved key only if the catalog still knows it; a
             # stale custom instrument that was deleted should fall back
@@ -256,8 +262,8 @@ class MainWindow(QMainWindow):
         # until) the output runs. See sax_output_users.
         self._output_users = OutputUsers(
             lambda: bool(self._engine.output_running), self._request_output_open)
-        # Text of the "output disconnected" notice while it is shown.
-        self._output_notice: str = ''
+        # The "output disconnected" notice while it is shown.
+        self._output_notice = None
 
         self._build_ui()
         # Persistable session state (geometry,
@@ -343,7 +349,7 @@ class MainWindow(QMainWindow):
             self,
             engine=self._engine,
             cfg=self._cfg,
-            t_func=self._t,
+            tr=self._tr,
             info_banner=self._info_banner,
             audio_banner=self._audio_banner,
             get_lang=lambda: self.lang,
@@ -389,12 +395,18 @@ class MainWindow(QMainWindow):
         self._refresh_timer.start(300)
 
     # ── Übersetzungs-Helfer ──────────────────────────────────────────────────
+    @property
+    def lang(self) -> str:
+        return self._tr.lang
+
     def _t(self, key, **kwargs):
-        s = STRINGS[self.lang].get(key, STRINGS['de'].get(key, f'[{key}]'))
-        return s.format(**kwargs) if kwargs else s
+        """A string in the current language, for text shown once (message
+        boxes, file dialogs). Text that stays on screen is bound instead."""
+        return self._tr.t(key, **kwargs)
 
     # ── UI aufbauen ──────────────────────────────────────────────────────────
     def _build_ui(self):
+        tr = self._tr
         central = QWidget()
         self.setCentralWidget(central)
         root = QVBoxLayout(central)
@@ -419,15 +431,14 @@ class MainWindow(QMainWindow):
         toolbar_v.addLayout(toolbar_actions)
 
         # Instrument: family combo + sub-instrument combo + Custom + nickname.
-        self._grp_instr = QGroupBox(self._t('grp_instrument'))
+        self._grp_instr = QGroupBox()
+        tr.bind(self._grp_instr.setTitle, 'grp_instrument')
         il = QHBoxLayout(self._grp_instr)
         il.setContentsMargins(8, 4, 8, 4)
         il.setSpacing(6)
 
         self._family_combo = QComboBox()
-        for family_key, name_de, name_en in instrument_families():
-            label = name_de if self.lang == 'de' else name_en
-            self._family_combo.addItem(label, family_key)
+        self._fill_family_combo()
         self._family_combo.setMinimumWidth(130)
         self._family_combo.currentIndexChanged.connect(self._on_family_changed)
         il.addWidget(self._family_combo)
@@ -444,21 +455,22 @@ class MainWindow(QMainWindow):
         # the dependency surface minimal.
         self._btn_range = QToolButton()
         self._btn_range.setText('⚙')   # U+2699 GEAR
-        self._btn_range.setToolTip(self._t('gear_tip'))
+        tr.bind(self._btn_range.setToolTip, 'gear_tip')
         self._btn_range.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_range.setObjectName('gear')   # themed via QToolButton#gear
         self._btn_range.clicked.connect(self._open_range_editor)
         il.addWidget(self._btn_range)
 
-        self._btn_custom = QPushButton(self._t('custom_label'))
-        self._btn_custom.setToolTip(self._t('custom_dlg_title'))
+        self._btn_custom = QPushButton()
+        tr.bind(self._btn_custom.setText, 'custom_label')
+        tr.bind(self._btn_custom.setToolTip, 'custom_dlg_title')
         self._btn_custom.setMaximumWidth(110)
         self._btn_custom.clicked.connect(self._on_add_custom)
         self._btn_custom.setObjectName('chrome')   # themed via QPushButton#chrome
         il.addWidget(self._btn_custom)
 
         self._nick_edit = QLineEdit()
-        self._nick_edit.setPlaceholderText(self._t('nickname_tip'))
+        tr.bind(self._nick_edit.setPlaceholderText, 'nickname_tip')
         # v0.5.7.1: 160px capped at ~12 characters, which truncated real
         # horn names like "Selmer Reference 54 Tenor #2" before the user
         # could see what they'd typed. Bump to 320 max / 280 min.
@@ -486,11 +498,13 @@ class MainWindow(QMainWindow):
         # — see the construction site near the bottom of this method.
 
         # Anzeige
-        self._grp_disp = QGroupBox(self._t('grp_display'))
+        self._grp_disp = QGroupBox()
+        tr.bind(self._grp_disp.setTitle, 'grp_display')
         dl = QHBoxLayout(self._grp_disp)
         dl.setContentsMargins(8, 4, 8, 4)
         self._disp_combo = QComboBox()
-        self._disp_combo.addItems([self._t('disp_griff'), self._t('disp_klingend')])
+        tr.bind_items(self._disp_combo,
+                      [('disp_griff', 'griff'), ('disp_klingend', 'klingend')])
         self._disp_combo.currentIndexChanged.connect(self._on_disp_changed)
         dl.addWidget(self._disp_combo)
 
@@ -498,9 +512,9 @@ class MainWindow(QMainWindow):
         # window width; the explicit choices let the user pin the layout
         # they want regardless of how wide the window is.
         self._layout_combo = QComboBox()
-        self._layout_combo.addItem(self._t('layout_auto'), 'auto')
-        self._layout_combo.addItem(self._t('layout_single'), 'single')
-        self._layout_combo.addItem(self._t('layout_matrix'), 'matrix')
+        tr.bind_items(self._layout_combo, [('layout_auto', 'auto'),
+                                           ('layout_single', 'single'),
+                                           ('layout_matrix', 'matrix')])
         pref = getattr(self._cfg, 'layout_mode_preference', 'auto')
         for i in range(self._layout_combo.count()):
             if self._layout_combo.itemData(i) == pref:
@@ -511,7 +525,8 @@ class MainWindow(QMainWindow):
         dl.addWidget(self._layout_combo)
 
         # Kammerton
-        self._grp_a4 = QGroupBox(self._t('grp_a4'))
+        self._grp_a4 = QGroupBox()
+        tr.bind(self._grp_a4.setTitle, 'grp_a4')
         al = QHBoxLayout(self._grp_a4)
         al.setContentsMargins(8, 4, 8, 4)
         self._a4_combo = QComboBox()
@@ -525,7 +540,8 @@ class MainWindow(QMainWindow):
         # Response: pitch-detection smoothing preset. Mirrors a guitar-
         # tuner "Fast/Normal/Slow" toggle. Routed straight into the
         # engine; persisted in cfg.filter_mode.
-        self._grp_filter = QGroupBox(self._t('grp_filter'))
+        self._grp_filter = QGroupBox()
+        tr.bind(self._grp_filter.setTitle, 'grp_filter')
         fl = QHBoxLayout(self._grp_filter)
         fl.setContentsMargins(8, 4, 8, 4)
         self._filter_combo = QComboBox()
@@ -536,7 +552,8 @@ class MainWindow(QMainWindow):
         fl.addWidget(self._filter_combo)
 
         # Sprache
-        self._grp_lang = QGroupBox(self._t('grp_language'))
+        self._grp_lang = QGroupBox()
+        tr.bind(self._grp_lang.setTitle, 'grp_language')
         ll2 = QHBoxLayout(self._grp_lang)
         ll2.setContentsMargins(8, 4, 8, 4)
         self._lang_combo = QComboBox()
@@ -547,20 +564,19 @@ class MainWindow(QMainWindow):
         ll2.addWidget(self._lang_combo)
 
         # Buttons
-        self._btn_autotune = self._make_btn(self._t('btn_autotune'), '#1a6b3a', self._on_autotune)
-        self._btn_record   = self._make_btn(
-            self._t('btn_stop'), '#b7770d', self._on_record_toggle)
-        self._btn_reset    = self._make_btn(self._t('btn_reset'),    '#c0392b', self._on_reset)
-        self._btn_txt      = self._make_btn(self._t('btn_txt'),      '#2980b9', self._export_txt)
-        self._btn_pdf      = self._make_btn(self._t('btn_pdf'),      '#8e44ad', self._export_pdf)
-        self._btn_csv      = self._make_btn(self._t('btn_csv'),      '#16a085', self._export_csv)
-        self._btn_chart    = self._make_btn(self._t('btn_chart'),    '#d35400', self._export_chart)
-        self._btn_import   = self._make_btn(self._t('btn_import'),   '#7f8c8d', self._import_csv)
+        self._btn_autotune = self._make_btn('btn_autotune', '#1a6b3a', self._on_autotune)
+        self._btn_record   = self._make_btn('btn_stop',     '#b7770d', self._on_record_toggle)
+        self._btn_reset    = self._make_btn('btn_reset',    '#c0392b', self._on_reset)
+        self._btn_txt      = self._make_btn('btn_txt',      '#2980b9', self._export_txt)
+        self._btn_pdf      = self._make_btn('btn_pdf',      '#8e44ad', self._export_pdf)
+        self._btn_csv      = self._make_btn('btn_csv',      '#16a085', self._export_csv)
+        self._btn_chart    = self._make_btn('btn_chart',    '#d35400', self._export_chart)
+        self._btn_import   = self._make_btn('btn_import',   '#7f8c8d', self._import_csv)
 
         # AUDIO IN chip, placed between Language and Import.
         # The chip is the user's at-a-glance health indicator when the
         # tuner goes silent. Clicking opens the picker modal.
-        self._audio_chip = AudioChip(self._t)
+        self._audio_chip = AudioChip(tr)
         self._audio_chip.clicked.connect(self._open_audio_picker)
         self._audio_chip.setMinimumWidth(220)
         # Reflect whatever state the engine has at this point. The
@@ -601,13 +617,13 @@ class MainWindow(QMainWindow):
         # Recovery banner — appears only when the engine is in FAILED.
         # Hidden by default; show_for() makes it visible with the right copy.
         self._audio_banner = AudioRecoveryBanner(
-            self._t, self._retry_audio, self._open_audio_picker)
+            tr, self._retry_audio, self._open_audio_picker)
         ll3.addWidget(self._audio_banner)
         # Non-modal info banner for hot-plug and the
         # wrong-instrument hint. Hidden by default; the GUI calls
         # show_message() to surface it with an optional Switch action and
         # an always-present Dismiss button.
-        self._info_banner = InfoBanner(self._t)
+        self._info_banner = InfoBanner(tr)
         ll3.addWidget(self._info_banner)
 
         self._tuner = TunerWidget()
@@ -621,7 +637,8 @@ class MainWindow(QMainWindow):
         # left pane. The spectrum analyzer + diagnostics panel sit below
         # it and only consume space when diagnostics are enabled.
         ll3.addWidget(self._tuner)
-        self._status_lbl = QLabel(self._t('no_signal'))
+        self._status_lbl = QLabel()
+        tr.bind(self._status_lbl.setText, 'no_signal')
         self._status_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._status_lbl.setObjectName('dimLabel')   # themed via QLabel#dimLabel
         ll3.addWidget(self._status_lbl)
@@ -638,10 +655,11 @@ class MainWindow(QMainWindow):
         # the old toolbar-resident checkbox — only the parent moved.
         diag_footer = QHBoxLayout()
         diag_footer.setContentsMargins(4, 0, 4, 0)
-        self._cb_diag = QCheckBox(self._t('show_diagnostics'))
+        self._cb_diag = QCheckBox()
+        tr.bind(self._cb_diag.setText, 'show_diagnostics')
         self._cb_diag.setChecked(
             bool(getattr(self._cfg, 'show_diagnostics', False)))
-        self._cb_diag.setToolTip(self._t('show_diagnostics_tip'))
+        tr.bind(self._cb_diag.setToolTip, 'show_diagnostics_tip')
         self._cb_diag.toggled.connect(self._on_diagnostics_toggled)
         diag_footer.addWidget(self._cb_diag)
         diag_footer.addStretch()
@@ -652,19 +670,21 @@ class MainWindow(QMainWindow):
         # consistent and avoids reconstruction cost when flipped
         # repeatedly. Attribute name kept as _spectro to minimize churn
         # against the rest of the file's references.
-        self._spectro_grp = QGroupBox(self._t('spectro_title'))
+        self._spectro_grp = QGroupBox()
+        tr.bind(self._spectro_grp.setTitle, 'spectro_title')
         sg_l = QVBoxLayout(self._spectro_grp)
         sg_l.setContentsMargins(6, 6, 6, 6)
         self._spectro = SpectrumAnalyzerWidget(self._engine if AUDIO_OK else None)
         sg_l.addWidget(self._spectro)
         ll3.addWidget(self._spectro_grp, 1)
 
-        self._data_grp = QGroupBox(self._t('data_panel_title'))
+        self._data_grp = QGroupBox()
+        tr.bind(self._data_grp.setTitle, 'data_panel_title')
         dg_l = QVBoxLayout(self._data_grp)
         dg_l.setContentsMargins(6, 6, 6, 6)
         self._data_panel = DataPanelWidget(
             self._engine if AUDIO_OK else None,
-            self._t,
+            tr,
             lambda: self._notes_count,
             lambda: self._cfg,
         )
@@ -679,6 +699,8 @@ class MainWindow(QMainWindow):
         right = QWidget()
         rl = QVBoxLayout(right)
         rl.setContentsMargins(6, 0, 0, 0)
+        # Written by the table controller on every refresh, and refreshed on
+        # a language switch, so it is not bound here.
         self._table_lbl = QLabel(self._t('table_empty_hint'))
         self._table_lbl.setStyleSheet('font-size:14px;font-weight:bold;padding:2px 0 6px 0;')
         self._table_lbl.setWordWrap(True)
@@ -705,12 +727,13 @@ class MainWindow(QMainWindow):
         # min-n requirement.
         min_n_row = QHBoxLayout()
         min_n_row.setContentsMargins(0, 6, 0, 0)
-        self._min_n_lbl = QLabel(self._t('min_n_label'))
+        self._min_n_lbl = QLabel()
+        tr.bind(self._min_n_lbl.setText, 'min_n_label')
         self._min_n_lbl.setObjectName('dimLabel')      # themed via QLabel#dimLabel
         self._min_n_spin = QSpinBox()
         self._min_n_spin.setRange(0, 999)
         self._min_n_spin.setValue(int(getattr(self._cfg, 'min_n_visible', 5)))
-        self._min_n_spin.setToolTip(self._t('min_n_tip'))
+        tr.bind(self._min_n_spin.setToolTip, 'min_n_tip')
         self._min_n_spin.setMinimumWidth(70)
         self._min_n_spin.setObjectName('minNspin')     # themed via QSpinBox#minNspin
         self._min_n_spin.valueChanged.connect(self._on_min_n_changed)
@@ -722,9 +745,10 @@ class MainWindow(QMainWindow):
         # one place instead of hunting in the top toolbar. UI logic
         # preserved verbatim: checked = filter ON, unchecked = show all
         # (stored as the inverted cfg.allow_out_of_range).
-        self._cb_oor = QCheckBox(self._t('allow_oor'))
+        self._cb_oor = QCheckBox()
+        tr.bind(self._cb_oor.setText, 'allow_oor')
         self._cb_oor.setChecked(not self._cfg.allow_out_of_range)
-        self._cb_oor.setToolTip(self._t('allow_oor_tip'))
+        tr.bind(self._cb_oor.setToolTip, 'allow_oor_tip')
         self._cb_oor.toggled.connect(self._on_oor_toggled)
         min_n_row.addSpacing(16)
         min_n_row.addWidget(self._cb_oor)
@@ -749,12 +773,12 @@ class MainWindow(QMainWindow):
         self._tabs = QTabWidget()
         self._tabs.setDocumentMode(True)
         self._tab_keys = ['tuner', 'metro', 'deck', 'setup']
-        self._tabs.addTab(splitter, self._t('nav_tab_tuner'))
-        self._tabs.addTab(self._build_metro_tab(), self._t('nav_tab_metro'))
-        self._tabs.addTab(self._build_deck_tab(), self._t('nav_tab_deck'))
-        self._tabs.addTab(self._build_setup_tab(), self._t('nav_tab_setup'))
+        self._tabs.addTab(splitter, '')
+        self._tabs.addTab(self._build_metro_tab(), '')
+        self._tabs.addTab(self._build_deck_tab(), '')
+        self._tabs.addTab(self._build_setup_tab(), '')
         for i, key in enumerate(self._tab_keys):
-            self._tabs.setTabToolTip(i, self._t(f'nav_tab_{key}_tip'))
+            tr.bind_tab(self._tabs, i, f'nav_tab_{key}', f'nav_tab_{key}_tip')
         self._install_tab_indicators()
         # Paint the deck transport now that the tab's recording dot exists.
         self._sync_deck_transport()
@@ -773,7 +797,8 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(sax_theme.build_app_qss(sax_theme.active()))
         self._sync_qpalette()
 
-        self.setWindowTitle(f"{self._t('window_title')} {APP_VERSION}")
+        tr.bind_text(self.setWindowTitle,
+                     lambda: f"{tr.t('window_title')} {APP_VERSION}")
 
         # InstrumentController owns family/instr/nickname
         # work, the range editor, custom-instrument registration, and
@@ -810,19 +835,21 @@ class MainWindow(QMainWindow):
         output path — a tone plays through the mixer while the tuner keeps
         reading the mic), plus drone voice, theme, instrument, nickname,
         concert pitch, response and mic-gain settings."""
+        tr = self._tr
         w = QWidget()
         outer = QVBoxLayout(w)
         outer.setContentsMargins(18, 16, 18, 16)
         outer.setSpacing(14)
 
         # Audio output device + duplex preference.
-        out_grp = QGroupBox(self._t('setup_output_group'))
+        out_grp = QGroupBox()
+        tr.bind(out_grp.setTitle, 'setup_output_group')
         og = QFormLayout(out_grp)
         og.setContentsMargins(12, 10, 12, 10)
         og.setSpacing(8)
         self._out_device_combo = QComboBox()
         self._out_device_combo.setMinimumWidth(320)
-        self._out_device_combo.setAccessibleName(self._t('setup_output_device'))
+        tr.bind(self._out_device_combo.setAccessibleName, 'setup_output_device')
         self._out_device_combo.currentIndexChanged.connect(
             self._on_output_device_changed)
         # Handle for the active test-tone source (None while silent).
@@ -832,10 +859,13 @@ class MainWindow(QMainWindow):
         # without re-querying the engine (N3).
         self._output_devices_cache: list = []
         self._refresh_output_device_combo()
-        self._lbl_out_device = QLabel(self._t('setup_output_device'))
-        og.addRow(self._lbl_out_device, self._out_device_combo)
-        self._cb_prefer_duplex = QCheckBox(self._t('setup_prefer_duplex'))
-        self._cb_prefer_duplex.setToolTip(self._t('setup_prefer_duplex_tip'))
+        tr.bind_item(self._out_device_combo, 0, 'setup_output_default')
+        out_lbl = QLabel()
+        tr.bind(out_lbl.setText, 'setup_output_device')
+        og.addRow(out_lbl, self._out_device_combo)
+        self._cb_prefer_duplex = QCheckBox()
+        tr.bind(self._cb_prefer_duplex.setText, 'setup_prefer_duplex')
+        tr.bind(self._cb_prefer_duplex.setToolTip, 'setup_prefer_duplex_tip')
         self._cb_prefer_duplex.setChecked(
             bool(getattr(self._cfg, 'output_prefer_duplex', False)))
         self._cb_prefer_duplex.toggled.connect(self._on_prefer_duplex_toggled)
@@ -845,21 +875,28 @@ class MainWindow(QMainWindow):
         # Drone voice — the full 128-GM picker lives here; the
         # TUNER drone bar carries the 5-preset quick row. Both drive the same
         # voice and stay in sync via DroneController.on_state_changed.
-        voice_grp = QGroupBox(self._t('setup_drone_voice_group'))
+        voice_grp = QGroupBox()
+        tr.bind(voice_grp.setTitle, 'setup_drone_voice_group')
         vg = QFormLayout(voice_grp)
         vg.setContentsMargins(12, 10, 12, 10)
         self._drone_voice_combo = QComboBox()
         self._drone_voice_combo.setMinimumWidth(260)
-        self._drone_voice_combo.setAccessibleName(self._t('setup_drone_voice'))
-        # Presets first (labelled), then the full GM catalog. Each item's data
-        # is the voice id the controller resolves.
-        seen_ids = set()
-        # Presets, then the desktop-only synth voices (pure sine), then full GM.
-        for vid, label, _program in DRONE_PRESETS + DRONE_SYNTH_VOICES + DRONE_FULL_GM:
-            if vid in seen_ids:
-                continue
-            seen_ids.add(vid)
-            self._drone_voice_combo.addItem(label, vid)
+        tr.bind(self._drone_voice_combo.setAccessibleName, 'setup_drone_voice')
+        # Presets, then the desktop-only synth voices (pure sine), then the
+        # full GM catalog. Each item's data is the voice id the controller
+        # resolves. Presets and synth voices have translated names. The GM
+        # voices keep their standard General MIDI names, numbered as in the
+        # GM table: two presets share a GM voice's name (Cello, Tenor Sax),
+        # and the number tells the preset and the raw GM voice apart.
+        named = DRONE_PRESETS + DRONE_SYNTH_VOICES
+        for vid, _label, _program in named:
+            self._drone_voice_combo.addItem('', vid)
+            tr.bind_item(self._drone_voice_combo, self._drone_voice_combo.count() - 1,
+                         f'drone_voice_{vid}')
+        named_ids = {vid for vid, _label, _program in named}
+        for vid, gm_name, program in DRONE_FULL_GM:
+            if vid not in named_ids:
+                self._drone_voice_combo.addItem(f'GM {program + 1} · {gm_name}', vid)
         sel_id = self._cfg.drone_voice_id
         for i in range(self._drone_voice_combo.count()):
             if self._drone_voice_combo.itemData(i) == sel_id:
@@ -867,33 +904,37 @@ class MainWindow(QMainWindow):
                 break
         self._drone_voice_combo.currentIndexChanged.connect(
             self._on_drone_voice_changed)
-        self._lbl_drone_voice = QLabel(self._t('setup_drone_voice'))
-        vg.addRow(self._lbl_drone_voice, self._drone_voice_combo)
+        voice_lbl = QLabel()
+        tr.bind(voice_lbl.setText, 'setup_drone_voice')
+        vg.addRow(voice_lbl, self._drone_voice_combo)
         outer.addWidget(voice_grp)
 
         # Appearance — theme switching (dark / night / light).
-        appear_grp = QGroupBox(self._t('setup_appearance_group'))
+        appear_grp = QGroupBox()
+        tr.bind(appear_grp.setTitle, 'setup_appearance_group')
         ag = QFormLayout(appear_grp)
         ag.setContentsMargins(12, 10, 12, 10)
         self._theme_combo = QComboBox()
-        self._theme_combo.setAccessibleName(self._t('setup_theme'))
-        for _tname in sax_theme.THEME_ORDER:
-            self._theme_combo.addItem(self._t(f'theme_{_tname}'), _tname)
+        tr.bind(self._theme_combo.setAccessibleName, 'setup_theme')
+        tr.bind_items(self._theme_combo,
+                      [(f'theme_{name}', name) for name in sax_theme.THEME_ORDER])
         _cur_theme = sax_theme.active_name()
         for i in range(self._theme_combo.count()):
             if self._theme_combo.itemData(i) == _cur_theme:
                 self._theme_combo.setCurrentIndex(i)
                 break
         self._theme_combo.currentIndexChanged.connect(self._on_theme_changed)
-        self._lbl_theme = QLabel(self._t('setup_theme'))
-        ag.addRow(self._lbl_theme, self._theme_combo)
+        theme_lbl = QLabel()
+        tr.bind(theme_lbl.setText, 'setup_theme')
+        ag.addRow(theme_lbl, self._theme_combo)
         outer.addWidget(appear_grp)
 
         # Instrument — range-editor link (also reachable via the
         # toolbar gear). No inline stylesheet: it rides the global themed
         # QPushButton QSS so it re-themes on a theme switch (avoids adding to
         # the inline-style tail, task #31).
-        instr_grp = QGroupBox(self._t('setup_instrument_group'))
+        instr_grp = QGroupBox()
+        tr.bind(instr_grp.setTitle, 'setup_instrument_group')
         ig = QVBoxLayout(instr_grp)
         ig.setContentsMargins(12, 10, 12, 10)
         # Horn nickname — promote the existing config field (cfg.last_nickname,
@@ -902,18 +943,20 @@ class MainWindow(QMainWindow):
         # controller + session-state read it) and both sync via _apply_nickname.
         # No inline style — rides the themed QLineEdit QSS (off the #31 tail).
         nick_row = QHBoxLayout()
-        self._setup_nick_lbl = QLabel(self._t('grp_nickname'))
-        nick_row.addWidget(self._setup_nick_lbl)
+        nick_lbl = QLabel()
+        tr.bind(nick_lbl.setText, 'grp_nickname')
+        nick_row.addWidget(nick_lbl)
         self._setup_nick_edit = QLineEdit()
         self._setup_nick_edit.setObjectName('setupNickname')
-        self._setup_nick_edit.setPlaceholderText(self._t('nickname_tip'))
-        self._setup_nick_edit.setAccessibleName(self._t('grp_nickname'))
+        tr.bind(self._setup_nick_edit.setPlaceholderText, 'nickname_tip')
+        tr.bind(self._setup_nick_edit.setAccessibleName, 'grp_nickname')
         self._setup_nick_edit.setText(getattr(self._cfg, 'last_nickname', '') or '')
         self._setup_nick_edit.editingFinished.connect(
             self._on_setup_nickname_changed)
         nick_row.addWidget(self._setup_nick_edit)
         ig.addLayout(nick_row)
-        self._btn_setup_range = QPushButton(self._t('setup_range_edit'))
+        self._btn_setup_range = QPushButton()
+        tr.bind(self._btn_setup_range.setText, 'setup_range_edit')
         self._btn_setup_range.setObjectName('setupRangeEdit')
         self._btn_setup_range.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_setup_range.clicked.connect(self._open_range_editor)
@@ -925,13 +968,14 @@ class MainWindow(QMainWindow):
         # the shared _apply_a4, mirrored under blockSignals so the re-derive
         # runs exactly once. Items are language-independent ("NNN Hz"), so no
         # retranslate. No inline style — themed QSS (off the #31 tail).
-        a4_grp = QGroupBox(self._t('grp_a4'))
+        a4_grp = QGroupBox()
+        tr.bind(a4_grp.setTitle, 'grp_a4')
         a4g = QVBoxLayout(a4_grp)
         a4g.setContentsMargins(12, 10, 12, 10)
         self._setup_a4_combo = QComboBox()
         self._setup_a4_combo.setObjectName('setupA4')
         self._setup_a4_combo.setMinimumWidth(160)
-        self._setup_a4_combo.setAccessibleName(self._t('grp_a4'))
+        tr.bind(self._setup_a4_combo.setAccessibleName, 'grp_a4')
         for hz in range(430, 451):
             self._setup_a4_combo.addItem(f'{hz} Hz', hz)
         self._setup_a4_combo.setCurrentIndex(self._a4_combo.currentIndex())
@@ -946,13 +990,14 @@ class MainWindow(QMainWindow):
         # mirrored (blockSignals) so changing one updates the other without
         # double-routing. No inline stylesheet — rides the themed QComboBox
         # QSS, keeping it off the inline-style tail (#31).
-        resp_grp = QGroupBox(self._t('grp_filter'))
+        resp_grp = QGroupBox()
+        tr.bind(resp_grp.setTitle, 'grp_filter')
         rg = QVBoxLayout(resp_grp)
         rg.setContentsMargins(12, 10, 12, 10)
         self._setup_filter_combo = QComboBox()
         self._setup_filter_combo.setObjectName('setupResponse')
         self._setup_filter_combo.setMinimumWidth(220)
-        self._setup_filter_combo.setAccessibleName(self._t('grp_filter'))
+        tr.bind(self._setup_filter_combo.setAccessibleName, 'grp_filter')
         self._populate_filter_combo(self._setup_filter_combo)
         self._setup_filter_combo.currentIndexChanged.connect(
             self._on_setup_filter_mode_changed)
@@ -964,14 +1009,15 @@ class MainWindow(QMainWindow):
         # scales ONLY the silence gate + level meter (not the signal), so the
         # cents readout is unchanged. Persisted as cfg.mic_gain_db. dB labels
         # are language-independent → no retranslate. No inline style (#31 tail).
-        mic_grp = QGroupBox(self._t('setup_mic_gain'))
+        mic_grp = QGroupBox()
+        tr.bind(mic_grp.setTitle, 'setup_mic_gain')
         mg = QVBoxLayout(mic_grp)
         mg.setContentsMargins(12, 10, 12, 10)
         self._setup_mic_gain_combo = QComboBox()
         self._setup_mic_gain_combo.setObjectName('setupMicGain')
         self._setup_mic_gain_combo.setMinimumWidth(160)
-        self._setup_mic_gain_combo.setAccessibleName(self._t('setup_mic_gain'))
-        self._setup_mic_gain_combo.setToolTip(self._t('setup_mic_gain_tip'))
+        tr.bind(self._setup_mic_gain_combo.setAccessibleName, 'setup_mic_gain')
+        tr.bind(self._setup_mic_gain_combo.setToolTip, 'setup_mic_gain_tip')
         for _db in MIC_GAIN_DB_STEPS:
             self._setup_mic_gain_combo.addItem(
                 '0 dB' if _db == 0 else f'{_db:+d} dB', _db)
@@ -998,12 +1044,14 @@ class MainWindow(QMainWindow):
         outer.addWidget(mic_grp)
 
         # Test tone — proves the output path end to end.
-        tone_grp = QGroupBox(self._t('setup_testtone_group'))
+        tone_grp = QGroupBox()
+        tr.bind(tone_grp.setTitle, 'setup_testtone_group')
         tg = QVBoxLayout(tone_grp)
         tg.setContentsMargins(12, 10, 12, 10)
-        self._btn_test_tone = QPushButton(self._t('setup_testtone_play'))
+        self._btn_test_tone = QPushButton()
+        tr.bind(self._btn_test_tone.setText, 'setup_testtone_play')
         self._btn_test_tone.setCheckable(True)
-        self._btn_test_tone.setToolTip(self._t('setup_testtone_tip'))
+        tr.bind(self._btn_test_tone.setToolTip, 'setup_testtone_tip')
         self._btn_test_tone.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_test_tone.setStyleSheet("""
             QPushButton{background:#16a085;color:#fff;border:none;
@@ -1023,25 +1071,6 @@ class MainWindow(QMainWindow):
         tg.addWidget(self._test_tone_status)
         outer.addWidget(tone_grp)
         outer.addStretch()
-        # Register every translatable SETUP widget so _retranslate can re-label
-        # the whole tab on a LIVE language switch — previously the SETUP titles
-        # went stale until restart. Group boxes + form-row labels.
-        self._setup_i18n_groups = [
-            (out_grp, 'setup_output_group'),
-            (voice_grp, 'setup_drone_voice_group'),
-            (appear_grp, 'setup_appearance_group'),
-            (instr_grp, 'setup_instrument_group'),
-            (a4_grp, 'grp_a4'),
-            (resp_grp, 'grp_filter'),
-            (mic_grp, 'setup_mic_gain'),
-            (tone_grp, 'setup_testtone_group'),
-        ]
-        self._setup_i18n_labels = [
-            (self._lbl_out_device, 'setup_output_device'),
-            (self._lbl_drone_voice, 'setup_drone_voice'),
-            (self._lbl_theme, 'setup_theme'),
-            (self._setup_nick_lbl, 'grp_nickname'),
-        ]
         return w
 
     def _current_output_selection(self) -> 'DeviceSelection':
@@ -1123,16 +1152,16 @@ class MainWindow(QMainWindow):
             self._park_output_users()
         elif status.state == OutputState.RUNNING and self._output_notice:
             self._info_banner.hide_if_showing(self._output_notice)
-            self._output_notice = ''
+            self._output_notice = None
         users.on_status(status)
         if status.state == OutputState.DISCONNECTED or (
                 status.state == OutputState.FAILED and users.any_parked()):
             # Something waits for the output to come back: say which one.
             if status.device:
-                self._output_notice = self._t('audio_output_disconnected',
-                                              name=status.device)
+                self._output_notice = self._tr.msg('audio_output_disconnected',
+                                                   name=status.device)
             else:
-                self._output_notice = self._t('output_err_none')
+                self._output_notice = self._tr.msg('output_err_none')
             self._info_banner.show_message(self._output_notice)
 
     def _park_output_users(self) -> None:
@@ -1186,6 +1215,12 @@ class MainWindow(QMainWindow):
     def _with_reason(self, text: str, status) -> str:
         reason = self._output_reason(status)
         return f'{text} {reason}' if reason else text
+
+    def _show_with_reason(self, label: QLabel, key: str, status) -> None:
+        """Show the message ``key`` on ``label``, followed by why the output
+        could not open, in whatever language is current, now and later."""
+        self._tr.bind_text(label.setText,
+                           lambda: self._with_reason(self._t(key), status))
 
     def _on_prefer_duplex_toggled(self, checked: bool) -> None:
         # Persist the preference; it's consumed the next time the output
@@ -1277,8 +1312,7 @@ class MainWindow(QMainWindow):
         """Nothing is sounding — don't let the button claim "Stop"; say why
         (N2), naming the output when an open failed."""
         self._show_test_tone_on(False)
-        self._test_tone_status.setText(
-            self._with_reason(self._t('setup_testtone_failed'), status))
+        self._show_with_reason(self._test_tone_status, 'setup_testtone_failed', status)
         self._test_tone_status.setVisible(True)
 
     def _stop_test_tone(self, fade: bool = True) -> None:
@@ -1294,8 +1328,8 @@ class MainWindow(QMainWindow):
         blocked = self._btn_test_tone.blockSignals(True)
         self._btn_test_tone.setChecked(on)
         self._btn_test_tone.blockSignals(blocked)
-        self._btn_test_tone.setText(
-            self._t('setup_testtone_stop' if on else 'setup_testtone_play'))
+        self._tr.bind(self._btn_test_tone.setText,
+                      'setup_testtone_stop' if on else 'setup_testtone_play')
 
     def _install_tab_indicators(self) -> None:
         """Attach status-dot widgets to the METRO and DECK tabs, hidden
@@ -1389,6 +1423,7 @@ class MainWindow(QMainWindow):
             volume=float(getattr(self._cfg, 'click_volume', 1.0)),
             on_state_changed=self._on_metro_state_changed)
 
+        tr = self._tr
         w = QWidget()
         outer = QVBoxLayout(w)
         outer.setContentsMargins(24, 20, 24, 20)
@@ -1400,7 +1435,8 @@ class MainWindow(QMainWindow):
         self._metro_bpm_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._metro_bpm_lbl.setObjectName('bpmReadout')   # themed accent number
         outer.addWidget(self._metro_bpm_lbl)
-        unit = QLabel(self._t('metro_bpm'))
+        unit = QLabel()
+        tr.bind(unit.setText, 'metro_bpm')
         unit.setAlignment(Qt.AlignmentFlag.AlignCenter)
         unit.setObjectName('bpmUnit')
         outer.addWidget(unit)
@@ -1409,22 +1445,23 @@ class MainWindow(QMainWindow):
         bpm_row = QHBoxLayout()
         btn_down = QToolButton()
         btn_down.setText('−')
-        btn_down.setToolTip(self._t('metro_nudge_down_tip'))
+        tr.bind(btn_down.setToolTip, 'metro_nudge_down_tip')
         btn_down.clicked.connect(lambda: self._metro_nudge(-1))
         btn_up = QToolButton()
         btn_up.setText('+')
-        btn_up.setToolTip(self._t('metro_nudge_up_tip'))
+        tr.bind(btn_up.setToolTip, 'metro_nudge_up_tip')
         btn_up.clicked.connect(lambda: self._metro_nudge(1))
         for b in (btn_down, btn_up):
             b.setCursor(Qt.CursorShape.PointingHandCursor)
             b.setObjectName('stepperLg')   # themed via QToolButton#stepperLg
         self._metro_slider = QSlider(Qt.Orientation.Horizontal)
-        self._metro_slider.setAccessibleName(self._t('metro_bpm'))
+        tr.bind(self._metro_slider.setAccessibleName, 'metro_bpm')
         self._metro_slider.setRange(self.METRO_BPM_MIN, self.METRO_BPM_MAX)
         self._metro_slider.setValue(self._metro_bpm)
         self._metro_slider.valueChanged.connect(self._on_metro_slider)
-        self._btn_metro_tap = QPushButton(self._t('metro_tap'))
-        self._btn_metro_tap.setToolTip(self._t('metro_tap_tip'))
+        self._btn_metro_tap = QPushButton()
+        tr.bind(self._btn_metro_tap.setText, 'metro_tap')
+        tr.bind(self._btn_metro_tap.setToolTip, 'metro_tap_tip')
         self._btn_metro_tap.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_metro_tap.clicked.connect(self._on_metro_tap)
         self._btn_metro_tap.setObjectName('chrome')   # themed via QPushButton#chrome
@@ -1436,7 +1473,8 @@ class MainWindow(QMainWindow):
         outer.addLayout(bpm_row)
 
         # Time-signature selector (exclusive).
-        ts_grp = QGroupBox(self._t('metro_timesig'))
+        ts_grp = QGroupBox()
+        tr.bind(ts_grp.setTitle, 'metro_timesig')
         ts_l = QHBoxLayout(ts_grp)
         ts_l.setContentsMargins(12, 8, 12, 8)
         self._metro_ts_btns: dict = {}
@@ -1452,11 +1490,12 @@ class MainWindow(QMainWindow):
         outer.addWidget(ts_grp)
 
         # Click volume.
-        vol_grp = QGroupBox(self._t('metro_volume'))
+        vol_grp = QGroupBox()
+        tr.bind(vol_grp.setTitle, 'metro_volume')
         vol_l = QHBoxLayout(vol_grp)
         vol_l.setContentsMargins(12, 8, 12, 8)
         self._metro_vol_slider = QSlider(Qt.Orientation.Horizontal)
-        self._metro_vol_slider.setAccessibleName(self._t('metro_volume'))
+        tr.bind(self._metro_vol_slider.setAccessibleName, 'metro_volume')
         self._metro_vol_slider.setRange(0, 100)
         vol0 = int(round(float(getattr(self._cfg, 'click_volume', 1.0)) * 100))
         self._metro_vol_slider.setValue(max(0, min(100, vol0)))
@@ -1469,7 +1508,8 @@ class MainWindow(QMainWindow):
         outer.addWidget(vol_grp)
 
         # Start / stop (the run toggle; green→red on run).
-        self._btn_metro_start = QPushButton(self._t('metro_start'))
+        self._btn_metro_start = QPushButton()
+        tr.bind(self._btn_metro_start.setText, 'metro_start')
         self._btn_metro_start.setCheckable(True)
         self._btn_metro_start.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_metro_start.toggled.connect(self._on_metro_toggle)
@@ -1539,9 +1579,8 @@ class MainWindow(QMainWindow):
         blocked = self._btn_metro_start.blockSignals(True)
         self._btn_metro_start.setChecked(False)
         self._btn_metro_start.blockSignals(blocked)
-        self._btn_metro_start.setText(self._t('metro_start'))
-        self._metro_status.setText(
-            self._with_reason(self._t('metro_unavailable'), status))
+        self._tr.bind(self._btn_metro_start.setText, 'metro_start')
+        self._show_with_reason(self._metro_status, 'metro_unavailable', status)
         self._metro_status.setVisible(True)
 
     def _on_metro_toggle(self, on: bool) -> None:
@@ -1568,8 +1607,8 @@ class MainWindow(QMainWindow):
         blocked = self._btn_metro_start.blockSignals(True)
         self._btn_metro_start.setChecked(running)
         self._btn_metro_start.blockSignals(blocked)
-        self._btn_metro_start.setText(
-            self._t('metro_stop') if running else self._t('metro_start'))
+        self._tr.bind(self._btn_metro_start.setText,
+                      'metro_stop' if running else 'metro_start')
         self.set_metro_running(running)
         # Sync BPM (e.g. tap-tempo changed it inside the controller) + persist.
         bpm = self._clamp_bpm(int(ctrl.bpm))
@@ -1622,13 +1661,15 @@ class MainWindow(QMainWindow):
                              or '') or None),
             on_state_changed=self._on_deck_state_changed)
 
+        tr = self._tr
         w = QWidget()
         outer = QVBoxLayout(w)
         outer.setContentsMargins(24, 20, 24, 20)
         outer.setSpacing(16)
         outer.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-        title = QLabel(self._t('deck_group'))
+        title = QLabel()
+        tr.bind(title.setText, 'deck_group')
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.setStyleSheet('font-size:18px;font-weight:bold;letter-spacing:3px;')
         outer.addWidget(title)
@@ -1641,17 +1682,21 @@ class MainWindow(QMainWindow):
 
         # Transport: Record (toggle, green→red) · Stop · Play/Replay · Export.
         row = QHBoxLayout()
-        self._btn_deck_record = QPushButton(self._t('deck_record'))
+        self._btn_deck_record = QPushButton()
+        tr.bind(self._btn_deck_record.setText, 'deck_record')
         self._btn_deck_record.setCheckable(True)
-        self._btn_deck_record.setToolTip(self._t('deck_record_tip'))
+        tr.bind(self._btn_deck_record.setToolTip, 'deck_record_tip')
         self._btn_deck_record.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_deck_record.toggled.connect(self._on_deck_record_toggle)
         self._btn_deck_record.setObjectName('transportRec')   # green/red + themed disabled
-        self._btn_deck_stop = QPushButton(self._t('deck_stop'))
-        self._btn_deck_play = QPushButton(self._t('deck_play'))
-        self._btn_deck_play.setToolTip(self._t('deck_play_tip'))
-        self._btn_deck_export = QPushButton(self._t('deck_export'))
-        self._btn_deck_export.setToolTip(self._t('deck_export_tip'))
+        self._btn_deck_stop = QPushButton()
+        tr.bind(self._btn_deck_stop.setText, 'deck_stop')
+        self._btn_deck_play = QPushButton()
+        tr.bind(self._btn_deck_play.setText, 'deck_play')
+        tr.bind(self._btn_deck_play.setToolTip, 'deck_play_tip')
+        self._btn_deck_export = QPushButton()
+        tr.bind(self._btn_deck_export.setText, 'deck_export')
+        tr.bind(self._btn_deck_export.setToolTip, 'deck_export_tip')
         self._btn_deck_stop.clicked.connect(self._on_deck_stop)
         self._btn_deck_play.clicked.connect(self._on_deck_play)
         self._btn_deck_export.clicked.connect(self._on_deck_export)
@@ -1666,7 +1711,8 @@ class MainWindow(QMainWindow):
         outer.addLayout(row)
 
         # Records the mic only, a single take (as in the Android app).
-        hint = QLabel(self._t('deck_hint'))
+        hint = QLabel()
+        tr.bind(hint.setText, 'deck_hint')
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         hint.setWordWrap(True)
         hint.setObjectName('dimLabel')
@@ -1728,9 +1774,9 @@ class MainWindow(QMainWindow):
         self._btn_deck_stop.setEnabled(recording or playing)
         # Play/Replay: a take exists (have-take → play; playing → restart@0).
         self._btn_deck_play.setEnabled(have_take)
-        self._btn_deck_play.setText(
-            self._t('deck_replay') if (self._deck_played_once or playing)
-            else self._t('deck_play'))
+        self._tr.bind(self._btn_deck_play.setText,
+                      'deck_replay' if (self._deck_played_once or playing)
+                      else 'deck_play')
         # Export: whenever a take exists.
         self._btn_deck_export.setEnabled(have_take)
 
@@ -1741,7 +1787,7 @@ class MainWindow(QMainWindow):
         key = {'idle': 'deck_status_empty', 'recording': 'deck_status_recording',
                'have_take': 'deck_status_have_take',
                'playing': 'deck_status_playing'}[state]
-        self._deck_state_lbl.setText(self._t(key))
+        self._tr.bind(self._deck_state_lbl.setText, key)
 
         self._deck_last_state = state
         self._deck_last_can_record = can_record
@@ -1754,7 +1800,7 @@ class MainWindow(QMainWindow):
         self._deck_status.setStyleSheet(
             'color:%s;font-size:12px;padding-top:4px;'
             % ('#c0392b' if error else '#2ecc71'))
-        self._deck_status.setText(self._with_reason(self._t(key), output_status))
+        self._show_with_reason(self._deck_status, key, output_status)
         self._deck_status.setVisible(True)
 
     def _on_deck_state_changed(self) -> None:
@@ -1891,16 +1937,19 @@ class MainWindow(QMainWindow):
             engine=self._engine,   # enables D3 duck-attach on enable
             on_state_changed=self._on_drone_state_changed)
 
-        grp = QGroupBox(self._t('drone_group'))
+        tr = self._tr
+        grp = QGroupBox()
+        tr.bind(grp.setTitle, 'drone_group')
         g = QVBoxLayout(grp)
         g.setContentsMargins(8, 4, 8, 6)
         g.setSpacing(6)
 
         # Row 1: on/off + 5-preset row.
         row1 = QHBoxLayout()
-        self._btn_drone_on = QPushButton(self._t('drone_group'))
+        self._btn_drone_on = QPushButton()
+        tr.bind(self._btn_drone_on.setText, 'drone_group')
         self._btn_drone_on.setCheckable(True)
-        self._btn_drone_on.setToolTip(self._t('drone_on_tip'))
+        tr.bind(self._btn_drone_on.setToolTip, 'drone_on_tip')
         self._btn_drone_on.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_drone_on.toggled.connect(self._on_drone_toggle)
         self._btn_drone_on.setStyleSheet(
@@ -1910,8 +1959,9 @@ class MainWindow(QMainWindow):
             'QPushButton:checked{background:#c0392b;}')
         row1.addWidget(self._btn_drone_on)
         self._drone_preset_btns: dict = {}
-        for vid, label, _program in DRONE_PRESETS:
-            b = QPushButton(label)
+        for vid, _label, _program in DRONE_PRESETS:
+            b = QPushButton()
+            tr.bind(b.setText, f'drone_voice_{vid}')
             b.setCheckable(True)
             b.setChecked(vid == self._drone_voice_id)
             b.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1924,23 +1974,25 @@ class MainWindow(QMainWindow):
 
         # Row 2: volume · semitone steppers · pitch-pipes launcher.
         row2 = QHBoxLayout()
-        vlbl = QLabel(self._t('drone_volume'))
+        vlbl = QLabel()
+        tr.bind(vlbl.setText, 'drone_volume')
         vlbl.setObjectName('dimLabel')
         row2.addWidget(vlbl)
         self._drone_vol_slider = QSlider(Qt.Orientation.Horizontal)
-        self._drone_vol_slider.setAccessibleName(self._t('drone_volume'))
+        tr.bind(self._drone_vol_slider.setAccessibleName, 'drone_volume')
         self._drone_vol_slider.setRange(0, 100)
         self._drone_vol_slider.setValue(max(0, min(100,
             int(round(self._drone_volume * 100)))))
         self._drone_vol_slider.valueChanged.connect(self._on_drone_volume)
         row2.addWidget(self._drone_vol_slider, 1)
         row2.addSpacing(10)
-        slbl = QLabel(self._t('drone_semitone'))
+        slbl = QLabel()
+        tr.bind(slbl.setText, 'drone_semitone')
         slbl.setObjectName('dimLabel')
         row2.addWidget(slbl)
         btn_sd = QToolButton()
         btn_sd.setText('−')
-        btn_sd.setToolTip(self._t('drone_semitone_down_tip'))
+        tr.bind(btn_sd.setToolTip, 'drone_semitone_down_tip')
         btn_sd.clicked.connect(lambda: self._drone_semitone_nudge(-1))
         self._drone_semi_lbl = QLabel(self._fmt_semitone(self._drone_semitones))
         self._drone_semi_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1948,7 +2000,7 @@ class MainWindow(QMainWindow):
         self._drone_semi_lbl.setStyleSheet('font-size:13px;min-width:28px;')
         btn_su = QToolButton()
         btn_su.setText('+')
-        btn_su.setToolTip(self._t('drone_semitone_up_tip'))
+        tr.bind(btn_su.setToolTip, 'drone_semitone_up_tip')
         btn_su.clicked.connect(lambda: self._drone_semitone_nudge(1))
         for b in (btn_sd, btn_su):
             b.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1957,8 +2009,9 @@ class MainWindow(QMainWindow):
         row2.addWidget(self._drone_semi_lbl)
         row2.addWidget(btn_su)
         row2.addSpacing(12)
-        self._btn_pipes = QPushButton(self._t('pipes_launch'))
-        self._btn_pipes.setToolTip(self._t('pipes_tip'))
+        self._btn_pipes = QPushButton()
+        tr.bind(self._btn_pipes.setText, 'pipes_launch')
+        tr.bind(self._btn_pipes.setToolTip, 'pipes_tip')
         self._btn_pipes.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_pipes.clicked.connect(self._open_pitch_pipes)
         self._btn_pipes.setObjectName('chrome')   # themed via QPushButton#chrome
@@ -1999,15 +2052,14 @@ class MainWindow(QMainWindow):
             blocked = combo.blockSignals(True)
             combo.setCurrentIndex(idx)
             combo.blockSignals(blocked)
-        self._drone_status.setText(self._t('drone_sine_fallback'))
+        self._tr.bind(self._drone_status.setText, 'drone_sine_fallback')
         self._drone_status.setVisible(True)
 
     def _drone_revert_toggle(self, status=None) -> None:
         blocked = self._btn_drone_on.blockSignals(True)
         self._btn_drone_on.setChecked(False)
         self._btn_drone_on.blockSignals(blocked)
-        self._drone_status.setText(
-            self._with_reason(self._t('drone_unavailable'), status))
+        self._show_with_reason(self._drone_status, 'drone_unavailable', status)
         self._drone_status.setVisible(True)
 
     def _on_drone_preset(self, voice_id: str) -> None:
@@ -2069,7 +2121,11 @@ class MainWindow(QMainWindow):
         """Pitch-pipes modal: 12 chromatic pads (C4–B4). Pads route to
         PitchPipesController (numpy sine); tap toggles a sustained reference
         tone. Needs an output stream — honest status if it can't sound."""
-        if self._pipes_dlg is not None and self._pipes_dlg.isVisible():
+        if self._pipes_dlg is not None:
+            if not self._pipes_dlg.isVisible():
+                self._pipes_status.setVisible(False)
+                self._sync_pipe_btns()
+                self._pipes_dlg.show()
             self._pipes_dlg.raise_()
             return
         # Built on first open; until then there is nothing to retune.
@@ -2081,12 +2137,14 @@ class MainWindow(QMainWindow):
                 on_state_changed=self._on_pipes_state_changed)
 
         from PyQt6.QtWidgets import QGridLayout
+        tr = self._tr
         dlg = QDialog(self)
-        dlg.setWindowTitle(self._t('pipes_title'))
+        tr.bind(dlg.setWindowTitle, 'pipes_title')
         # bg inherits the global QWidget/window_bg rule (themed); pads + tip +
         # status carry their own themed objectName rules.
         v = QVBoxLayout(dlg)
-        tip = QLabel(self._t('pipes_tip'))
+        tip = QLabel()
+        tr.bind(tip.setText, 'pipes_tip')
         tip.setWordWrap(True)
         tip.setObjectName('dimLabel')   # themed via QLabel#dimLabel
         v.addWidget(tip)
@@ -2134,8 +2192,7 @@ class MainWindow(QMainWindow):
             self._pipes_ctrl.toggle(midi)
 
     def _pipes_failed(self, status) -> None:
-        self._pipes_status.setText(
-            self._with_reason(self._t('pipes_unavailable'), status))
+        self._show_with_reason(self._pipes_status, 'pipes_unavailable', status)
         self._pipes_status.setVisible(True)
         self._sync_pipe_btns()
 
@@ -2172,8 +2229,9 @@ class MainWindow(QMainWindow):
                 self._t('col_mean'), self._t('col_std'),
                 self._t('col_n'), self._t('col_tendency')]
 
-    def _make_btn(self, text, color, slot):
-        b = QPushButton(text)
+    def _make_btn(self, key, color, slot):
+        b = QPushButton()
+        self._tr.bind(b.setText, key)
         b.clicked.connect(slot)
         b.setMinimumHeight(36)
         b.setMinimumWidth(150)
@@ -2187,98 +2245,24 @@ class MainWindow(QMainWindow):
 
     # ── Sprache wechseln ─────────────────────────────────────────────────────
     def _on_lang_changed(self, idx):
-        self.lang = self._lang_combo.itemData(idx)
-        self._retranslate()
+        self._tr.set_language(self._lang_combo.itemData(idx))
 
-    def _retranslate(self):
-        """Aktualisiert alle beschrifteten Widgets ohne Neuaufbau."""
-        self.setWindowTitle(f"{self._t('window_title')} {APP_VERSION}")
-        for i, key in enumerate(self._tab_keys):
-            self._tabs.setTabText(i, self._t(f'nav_tab_{key}'))
-            self._tabs.setTabToolTip(i, self._t(f'nav_tab_{key}_tip'))
-        self._grp_instr.setTitle(self._t('grp_instrument'))
-        self._grp_disp.setTitle(self._t('grp_display'))
-        self._grp_a4.setTitle(self._t('grp_a4'))
-        self._grp_filter.setTitle(self._t('grp_filter'))
-        self._grp_lang.setTitle(self._t('grp_language'))
-
-        # Family + sub-instrument combos re-populated in current language.
-        self._family_combo.blockSignals(True)
-        self._family_combo.clear()
-        for family_key, name_de, name_en in instrument_families():
-            label = name_de if self.lang == 'de' else name_en
-            self._family_combo.addItem(label, family_key)
-        self._family_combo.blockSignals(False)
+    def _on_language_changed(self, _lang: str) -> None:
+        """After the translator re-rendered every bound text: rebuild what is
+        not a translation key (instrument names come from the catalog in each
+        language) and repaint the table, whose captions are drawn per refresh."""
+        self._fill_family_combo()
         self._select_family_for_instrument(self.instrument)
         self._populate_instrument_combo(select_key=self.instrument)
-        self._btn_custom.setText(self._t('custom_label'))
-        self._btn_custom.setToolTip(self._t('custom_dlg_title'))
-        self._btn_range.setToolTip(self._t('gear_tip'))
-        self._nick_edit.setPlaceholderText(self._t('nickname_tip'))
-
-        # Display-Combo
-        idx_d = self._disp_combo.currentIndex()
-        self._disp_combo.blockSignals(True)
-        self._disp_combo.clear()
-        self._disp_combo.addItems([self._t('disp_griff'), self._t('disp_klingend')])
-        self._disp_combo.setCurrentIndex(idx_d)
-        self._disp_combo.blockSignals(False)
-
-        # Layout-Combo — re-label the Auto/List/Grid items in the new lang.
-        cur = self._layout_combo.currentData()
-        self._layout_combo.blockSignals(True)
-        self._layout_combo.clear()
-        self._layout_combo.addItem(self._t('layout_auto'), 'auto')
-        self._layout_combo.addItem(self._t('layout_single'), 'single')
-        self._layout_combo.addItem(self._t('layout_matrix'), 'matrix')
-        for i in range(self._layout_combo.count()):
-            if self._layout_combo.itemData(i) == cur:
-                self._layout_combo.setCurrentIndex(i)
-                break
-        self._layout_combo.blockSignals(False)
-
-        # Response combo (toolbar) — re-label Fast/Normal/Slow. The SETUP
-        # response combo is built once in the active language alongside its
-        # SETUP neighbours (drone-voice / theme), which likewise do not
-        # live-retranslate; both combos carry the same data values, so
-        # _apply_filter_mode keeps them in functional sync regardless.
-        self._populate_filter_combo(self._filter_combo)
-        self._min_n_lbl.setText(self._t('min_n_label'))
-        self._min_n_spin.setToolTip(self._t('min_n_tip'))
-        self._cb_oor.setText(self._t('allow_oor'))
-        self._cb_oor.setToolTip(self._t('allow_oor_tip'))
-
-        # Buttons
-        self._btn_autotune.setText(self._t('btn_autotune'))
-        self._btn_record.setText(self._t('btn_stop' if self._recording else 'btn_start'))
-        self._btn_reset.setText(self._t('btn_reset'))
-        self._btn_txt.setText(self._t('btn_txt'))
-        self._btn_pdf.setText(self._t('btn_pdf'))
-        self._btn_csv.setText(self._t('btn_csv'))
-        self._btn_chart.setText(self._t('btn_chart'))
-        self._btn_import.setText(self._t('btn_import'))
-
-        # Tabellen-Header
-        self._table.setHorizontalHeaderLabels(self._table_headers())
-
-        # Status & Tabellenlabel
-        self._status_lbl.setText(self._t('no_signal'))
-
-        # Diagnose-Panel + Spektrogramm.
-        self._cb_diag.setText(self._t('show_diagnostics'))
-        self._cb_diag.setToolTip(self._t('show_diagnostics_tip'))
-        self._spectro_grp.setTitle(self._t('spectro_title'))
-        self._data_grp.setTitle(self._t('data_panel_title'))
-        self._data_panel.retranslate(self._t)
-        self._audio_chip.retranslate(self._t)
-        self._audio_banner.retranslate(self._t)
-        self._info_banner.retranslate(self._t)
-
-        # SETUP tab is built once, not rebuilt — re-label its titles/labels here
-        # so a live language switch doesn't leave it half-translated.
-        self._retranslate_setup()
-
         self._refresh_table()
+
+    def _fill_family_combo(self) -> None:
+        combo = self._family_combo
+        blocked = combo.blockSignals(True)
+        combo.clear()
+        for family_key, name_de, name_en in instrument_families():
+            combo.addItem(name_de if self.lang == 'de' else name_en, family_key)
+        combo.blockSignals(blocked)
 
     # ── Audio-Callback ────────────────────────────────────────────────────────
     def _on_note_event(self, ev) -> None:
@@ -2315,10 +2299,10 @@ class MainWindow(QMainWindow):
             if (not self._oor_banner_shown
                     and self._oor_count >= self._oor_threshold):
                 self._oor_banner_shown = True
-                instr_label = self._instr_label(self.instrument)
+                instrument = self.instrument
                 self._info_banner.show_message(
-                    self._t('wrong_instrument_banner_body',
-                            instrument=instr_label))
+                    lambda: self._t('wrong_instrument_banner_body',
+                                    instrument=self._instr_label(instrument)))
 
         # Drop out-of-range notes when the toggle is off — keeps the table
         # bounded to the instrument's nominal range.
@@ -2351,9 +2335,9 @@ class MainWindow(QMainWindow):
         self._tuner.sample_rate = sr_now
         self._tuner.set_note(disp_name, freq, cents)
         cents_str = format_cents(cents, freq, sr_now)
-        self._status_lbl.setText(self._t(
-            'status_fmt', fingered=gr_name, sounding=kl_name,
-            freq=freq, cents_str=cents_str, a4=self._engine.a4))
+        self._tr.bind(self._status_lbl.setText,
+                      'status_fmt', fingered=gr_name, sounding=kl_name,
+                      freq=freq, cents_str=cents_str, a4=self._engine.a4)
         # Highlight the row currently being played so the user can see
         # which entry in a long table just ticked. _refresh_table reads
         # this on its next tick (every 300ms via _refresh_timer).
@@ -2600,29 +2584,23 @@ class MainWindow(QMainWindow):
             self._refresh_table()
 
     def _populate_filter_combo(self, combo) -> None:
-        """(Re)fill a Response combo with localized Fast / Normal / Slow,
-        preserving the current selection (seeding from cfg.filter_mode on
-        first build, when the combo is still empty). Signals stay blocked
-        throughout, so it is safe during construction and live
-        re-translation alike. Shared by the toolbar Response combo and the
-        SETUP-tab response combo so the two never drift in contents."""
-        cur = combo.currentData()
-        if cur not in FILTER_PRESETS:
-            # Seed from the engine: it ignores an unknown mode, so it holds
-            # the mode actually in use.
-            cur = self._engine.filter_mode
+        """Fill a Response combo with Fast / Normal / Slow in the current
+        language (and every later one) and select the mode the engine uses:
+        it ignores an unknown mode, so it holds the mode actually in use.
+        Shared by the toolbar Response combo and the SETUP-tab response combo
+        so the two never drift in contents."""
+        self._tr.bind_items(combo, [('filter_fast', 'fast'),
+                                    ('filter_normal', 'normal'),
+                                    ('filter_slow', 'slow')])
+        self._tr.bind(combo.setToolTip, 'filter_tip')
+        cur = self._engine.filter_mode
         if cur not in FILTER_PRESETS:
             cur = FILTER_MODE_DEFAULT
-        combo.blockSignals(True)
-        combo.clear()
-        combo.addItem(self._t('filter_fast'),   'fast')
-        combo.addItem(self._t('filter_normal'), 'normal')
-        combo.addItem(self._t('filter_slow'),   'slow')
         idx = combo.findData(cur)
         if idx >= 0:
+            blocked = combo.blockSignals(True)
             combo.setCurrentIndex(idx)
-        combo.setToolTip(self._t('filter_tip'))
-        combo.blockSignals(False)
+            combo.blockSignals(blocked)
 
     def _on_filter_mode_changed(self, _idx: int = 0) -> None:
         """Toolbar Response combo changed → apply + mirror into SETUP."""
@@ -2676,29 +2654,11 @@ class MainWindow(QMainWindow):
         lbl = self._setup_mic_gain_status
         db = int(round(float(getattr(self._cfg, 'mic_gain_db', 0.0))))
         if db == 0:
-            lbl.setText(self._t('setup_mic_gain_off'))
+            self._tr.bind(lbl.setText, 'setup_mic_gain_off')
         elif db > 0:
-            lbl.setText(self._t('setup_mic_gain_boost', db=db))
+            self._tr.bind(lbl.setText, 'setup_mic_gain_boost', db=db)
         else:
-            lbl.setText(self._t('setup_mic_gain_cut', db=db))
-
-    def _retranslate_setup(self) -> None:
-        """Re-label every translatable SETUP-tab widget on a language switch.
-        The tab is built once (never rebuilt), so without this its titles and
-        labels stay in the build-time language until restart."""
-        for grp, key in self._setup_i18n_groups:
-            grp.setTitle(self._t(key))
-        for lbl, key in self._setup_i18n_labels:
-            lbl.setText(self._t(key))
-        self._cb_prefer_duplex.setText(self._t('setup_prefer_duplex'))
-        self._cb_prefer_duplex.setToolTip(self._t('setup_prefer_duplex_tip'))
-        self._btn_setup_range.setText(self._t('setup_range_edit'))
-        self._btn_test_tone.setToolTip(self._t('setup_testtone_tip'))
-        if not self._btn_test_tone.isChecked():
-            self._btn_test_tone.setText(self._t('setup_testtone_play'))
-        self._setup_nick_edit.setPlaceholderText(self._t('nickname_tip'))
-        self._setup_mic_gain_combo.setToolTip(self._t('setup_mic_gain_tip'))
-        self._update_mic_gain_status()
+            self._tr.bind(lbl.setText, 'setup_mic_gain_cut', db=db)
 
     def _on_min_n_changed(self, value: int) -> None:
         """User adjusted the min-N filter. Persist + redraw the table.
@@ -2864,16 +2824,11 @@ class MainWindow(QMainWindow):
                 self._log.start_run(instrument=self.instrument,
                                     a4_hz=self._engine.a4,
                                     label=self._nick_edit.text().strip())
-            self._btn_record.setText(self._t('btn_stop'))
-            self._btn_record.setStyleSheet(
-                self._btn_record.styleSheet()
-                .replace('#2ecc71', '#b7770d').replace('#27ae60', '#b7770d'))
             self._update_record_btn_style()
-            self._status_lbl.setText(self._t('no_signal'))
+            self._tr.bind(self._status_lbl.setText, 'no_signal')
         else:
             self._log.end_run()
             self._update_record_btn_style()
-            self._btn_record.setText(self._t('btn_start'))
 
     def _update_record_btn_style(self):
         if self._recording:
@@ -2886,8 +2841,8 @@ class MainWindow(QMainWindow):
             QPushButton:hover{{background:{color}cc;}}
             QPushButton:pressed{{background:{color}99;}}
         """)
-        self._btn_record.setText(
-            self._t('btn_stop') if self._recording else self._t('btn_start'))
+        self._tr.bind(self._btn_record.setText,
+                      'btn_stop' if self._recording else 'btn_start')
 
     # ── Tabellen-Kontextmenü ──────────────────────────────────────────────────
     def _on_table_context_menu(self, pos):
@@ -3108,10 +3063,10 @@ class MainWindow(QMainWindow):
         not be used. Non-modal, so a locked file never blocks the window."""
         store = self._settings
         if store.unreadable:
-            self._info_banner.show_message(self._t(
+            self._info_banner.show_message(self._tr.msg(
                 'settings_unreadable', path=str(store.paths.config)))
         elif store.corrupt_backup is not None:
-            self._info_banner.show_message(self._t(
+            self._info_banner.show_message(self._tr.msg(
                 'settings_damaged', path=str(store.paths.config),
                 backup=str(store.corrupt_backup)))
 

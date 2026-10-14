@@ -9,10 +9,16 @@ This file adds the checks that catch the failures a user would actually see:
   * a call site that does not pass the arguments its string needs,
   * a key nothing uses any more,
   * a dynamic family (``nav_tab_{key}``, ``csv_mode_{key}``, ``theme_{name}``,
-    ``instr_long_{key}``) missing a member for something the code iterates.
+    ``instr_long_{key}``, ``drone_voice_{id}``) missing a member for something
+    the code iterates.
 
 The call sites are found by parsing the application sources (AST), so a new
-``_t('...')`` literal is checked without anyone editing this file.
+``_t('...')`` literal is checked without anyone editing this file. Besides
+``_t``, the scan reads the Translator's own entry points (sax_translator):
+``x.t(key)``, ``x.msg(key)``, ``x.bind(setter, key)``,
+``x.bind_item(combo, index, key)``, ``x.bind_items(combo, [(key, data), ...])``
+and ``x.bind_tab(tabs, index, key, tip_key)``, each with the keyword
+arguments it formats the string with.
 """
 from __future__ import annotations
 
@@ -25,6 +31,7 @@ import pytest
 import sax_i18n
 import sax_instruments
 import sax_theme
+from sax_drone import DRONE_PRESETS, DRONE_SYNTH_VOICES
 from sax_intonation_log import MeasurementLog
 
 REPO = Path(__file__).resolve().parents[2]
@@ -39,6 +46,7 @@ EXPECTED_FAMILIES = {
     ('csv_mode_', ''),
     ('theme_', ''),
     ('instr_long_', ''),
+    ('drone_voice_', ''),
 }
 
 # Strings that are the same in German and English on purpose: loanwords,
@@ -49,11 +57,7 @@ IDENTICAL_DE_EN = {
     'setup_instrument_group': 'loanword',
     'csv_instr_label': 'loanword',
     'layout_auto': 'loanword',
-    'btn_reset': 'loanword with icon',
     'reset_title': 'loanword',
-    'btn_txt': 'format name with icon',
-    'btn_pdf': 'format name with icon',
-    'btn_csv': 'format name with icon',
     'export_title': 'loanword',
     'chart_subtitle': 'placeholders and units only',
     'chart_subtitle_id': 'placeholders and units only',
@@ -70,6 +74,7 @@ IDENTICAL_DE_EN = {
     'metro_start': 'loanword',
     'metro_nudge_down_tip': 'unit',
     'metro_nudge_up_tip': 'unit',
+    'drone_voice_cello': 'loanword',
 }
 
 
@@ -108,13 +113,37 @@ def _call_name(call: ast.Call) -> str | None:
 
 
 # Names that hold lists or conditionals of keys which are passed to _t later.
-_KEY_CARRIERS = {'mode_note_key', '_row_keys',
-                 '_setup_i18n_groups', '_setup_i18n_labels'}
+_KEY_CARRIERS = {'mode_note_key', '_row_keys'}
+
+# Translation calls: call name -> positions of the key arguments. ``_t`` may be
+# a plain name or an attribute; the Translator's methods are always called on
+# an object (``tr.bind(...)``), which keeps an unrelated function that happens
+# to be called ``t`` or ``bind`` out of the scan.
+_KEY_ARGS = {'_t': (0,)}
+_TRANSLATOR_KEY_ARGS = {'t': (0,), 'msg': (0,), 'bind': (1,), 'bind_item': (2,),
+                        'bind_tab': (2, 3)}
+# Helpers that take a message key and show it (with a reason appended) later.
+_KEY_TAKING_HELPERS = {'_deck_show_status': 0, '_show_with_reason': 1}
+
+
+def _key_items(node: ast.AST | None) -> list[str]:
+    """Keys in a ``bind_items`` list literal: the first element of each
+    ``(key, data)`` pair. A computed list (a comprehension over an f-string
+    family) yields nothing here; the family check covers it."""
+    if not isinstance(node, (ast.List, ast.Tuple)):
+        return []
+    keys: list[str] = []
+    for elt in node.elts:
+        if isinstance(elt, (ast.Tuple, ast.List)) and elt.elts:
+            keys += _strings_in(elt.elts[0])
+    return keys
 
 
 class SourceScan:
     def __init__(self) -> None:
         self.t_calls: list[tuple[str, int, str, set[str], bool]] = []
+        # Call name -> number of keys found through it (scan self-check).
+        self.by_call: dict[str, int] = {}
         self.carried: dict[str, str] = {}      # key -> where it was found
         self.families: set[tuple[str, str]] = set()
         self.constants: set[str] = set()
@@ -137,14 +166,27 @@ class SourceScan:
 
     def _scan_call(self, rel: str, call: ast.Call) -> None:
         name = _call_name(call)
-        if name == '_t' and call.args:
+        on_object = isinstance(call.func, ast.Attribute)
+        positions = _KEY_ARGS.get(name) or (
+            _TRANSLATOR_KEY_ARGS.get(name) if on_object else None)
+        if positions:
             kwargs = {k.arg for k in call.keywords if k.arg}
             splat = any(k.arg is None for k in call.keywords)
-            for key in _strings_in(call.args[0]):
-                self.t_calls.append((rel, call.lineno, key, kwargs, splat))
-        elif name == '_deck_show_status' and call.args:
-            for key in _strings_in(call.args[0]):
-                self.carried[key] = f'{rel}:{call.lineno}'
+            for pos in positions:
+                if pos < len(call.args):
+                    for key in _strings_in(call.args[pos]):
+                        self.t_calls.append((rel, call.lineno, key, kwargs, splat))
+                        self.by_call[name] = self.by_call.get(name, 0) + 1
+        elif name == 'bind_items' and on_object and len(call.args) >= 2:
+            for key in _key_items(call.args[1]):
+                # The items are plain strings: no arguments to format.
+                self.t_calls.append((rel, call.lineno, key, set(), False))
+                self.by_call[name] = self.by_call.get(name, 0) + 1
+        elif name in _KEY_TAKING_HELPERS:
+            pos = _KEY_TAKING_HELPERS[name]
+            if pos < len(call.args):
+                for key in _strings_in(call.args[pos]):
+                    self.carried[key] = f'{rel}:{call.lineno}'
         elif (name == 'setProperty' and len(call.args) == 2
               and _strings_in(call.args[0]) == ['_lang_title_key']):
             for key in _strings_in(call.args[1]):
@@ -201,6 +243,7 @@ def _dynamic_keys() -> set[str]:
     keys |= {f'csv_mode_{m}' for m in MeasurementLog.SLICE_MODES}
     keys |= {f'theme_{t}' for t in sax_theme.THEME_ORDER}
     keys |= {k for k in EN if k.startswith('instr_long_')}
+    keys |= {f'drone_voice_{vid}' for vid, _n, _p in DRONE_PRESETS + DRONE_SYNTH_VOICES}
     return keys
 
 
@@ -281,8 +324,16 @@ def test_scan_finds_the_call_sites(scan: SourceScan) -> None:
     assert {'sax_intonation_gui.py', 'sax_export.py', 'sax_crash.py'} <= {
         c[0] for c in scan.t_calls}
     for key in ('deck_status_empty', 'range_mode_note_griff',
-                'setup_output_group', 'data_device', 'welcome_title'):
+                'data_device', 'welcome_title', 'deck_unavailable',
+                'metro_unavailable'):
         assert key in scan.carried, f'carrier pattern for {key} not found'
+    # Each Translator entry point is seen, with a key known to go through it.
+    asked = {c[2] for c in scan.t_calls}
+    for key in ('setup_output_group', 'filter_fast', 'setup_output_default',
+                'audio_banner_disconnect', 'audio_toast_switch'):
+        assert key in asked, f'translator pattern for {key} not found'
+    for call in ('_t', 't', 'msg', 'bind', 'bind_item', 'bind_items'):
+        assert scan.by_call.get(call, 0) > 0, f'no keys found through {call}()'
     assert scan.tab_keys == ['tuner', 'metro', 'deck', 'setup']
 
 
@@ -350,6 +401,18 @@ def test_theme_family_is_complete(lang: str) -> None:
         assert table.get(f'theme_{name}', '').strip(), name
     declared = {k for k in table if k.startswith('theme_')}
     assert declared == {f'theme_{n}' for n in sax_theme.THEME_ORDER}
+
+
+@pytest.mark.parametrize('lang', LANGS)
+def test_drone_voice_family_is_complete(lang: str) -> None:
+    """Every drone preset and synth voice has a name; the full GM voices keep
+    their standard General MIDI names and have none."""
+    table = sax_i18n.STRINGS[lang]
+    named = {vid for vid, _n, _p in DRONE_PRESETS + DRONE_SYNTH_VOICES}
+    for vid in named:
+        assert table.get(f'drone_voice_{vid}', '').strip(), vid
+    declared = {k for k in table if k.startswith('drone_voice_')}
+    assert declared == {f'drone_voice_{vid}' for vid in named}
 
 
 @pytest.mark.parametrize('lang', LANGS)
