@@ -482,7 +482,7 @@ class MainWindow(QMainWindow):
         the new range now covers no longer count towards it."""
         session = self._session
         self._strays.forget_where(session.in_range)
-        session.seed_expected_notes()
+        session.reseed_expected_notes()
         self._tuner_tab.refresh_table()
 
     def _on_autotune_applied(self) -> None:

@@ -115,3 +115,17 @@ def test_a_custom_instrument_without_a_range_counts_every_note_as_in_range(make_
         app.play(Tone(note=note, seconds=1.0))
     assert len(app.table.rows()) == 3
     assert app.audio.notice is None
+
+
+def test_narrowing_the_range_drops_the_blank_rows_at_once(make_app):
+    """No restart needed: the rows run C4..C6 right after the edit, and a note
+    I played below the new range keeps its row."""
+    app = make_app(config=on("eb_alto"))
+    app.launch()
+    app.play(Tone(note="C#3", timbre="sax", seconds=1.0))    # fingered Bb3
+    assert app.settings.edit_range("C4", "C6")
+
+    listed = [r.fingered for r in app.table.rows(played_only=False)]
+    assert listed[0] == "A#/Bb3"                 # played, so kept
+    assert listed[1:2] == ["C4"] and listed[-1] == "C6"
+    assert len(listed) == 1 + 25

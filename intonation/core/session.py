@@ -159,6 +159,18 @@ class SessionModel(QObject):
             if sounding in SAX_MIDI and sounding not in self.stats:
                 self.stats[sounding] = NoteStats()
 
+    def reseed_expected_notes(self) -> None:
+        """Make the blank rows match the keyed range again after it was
+        edited: blank rows outside it go, missing ones are added. Rows with
+        measurements stay wherever they are."""
+        transp = self.transposition
+        lo, hi = self.keyed_range()
+        stale = [m for m, st in self.stats.items()
+                 if st.n == 0 and not lo <= m - transp <= hi]
+        for sounding in stale:
+            del self.stats[sounding]
+        self.seed_expected_notes()
+
     def rederive_stats(self, a4: float) -> None:
         """Re-grade every reading in the table against ``a4``. Cents are a
         function of frequency and A4; the frequencies behind the current
