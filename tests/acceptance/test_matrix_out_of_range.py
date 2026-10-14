@@ -50,3 +50,13 @@ def test_altissimo_kept_by_the_filter_has_a_column_in_the_matrix(make_app):
     assert [r.fingered for r in app.table.rows()] == ["C5", "D7"]
     assert app.table.caption == app.text(
         "table_matrix_title_outside", played=1, total=ALTO_GUIDE_CELLS, outside=1)
+
+
+def test_the_caption_reads_in_german(make_app):
+    app = make_app(config=on("eb_alto", last_lang="de", **MATRIX))
+    app.launch()
+    for note in ("D#4", "C3"):                   # fingered C5, A3
+        app.play(Tone(note=note, timbre="sax", seconds=1.0))
+    assert app.table.caption == app.text(
+        "table_matrix_title_outside", played=1, total=ALTO_GUIDE_CELLS, outside=1)
+    assert "außerhalb des Rasters" in app.table.caption

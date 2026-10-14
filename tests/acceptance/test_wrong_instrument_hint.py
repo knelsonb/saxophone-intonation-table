@@ -197,3 +197,16 @@ def test_widening_the_range_from_setup_forgets_the_strays_it_now_covers(make_app
     for note in ("A1", "B1"):                   # fingered F#2, G#2
         app.play(Tone(note=note, seconds=1.0))
     assert app.audio.notice is None
+
+
+def test_the_hint_and_its_action_read_in_german(make_app):
+    """The action carries the same label as the SETUP button that opens the
+    same editor."""
+    app = make_app(config=on("eb_alto", last_lang="de"))
+    app.launch()
+    for note in BASS_LINE[:3]:
+        app.play(Tone(note=note, seconds=1.0))
+    assert app.audio.notice == app.text("wrong_instrument_banner_body",
+                                        instrument=app.text("instr_long_eb_alto"))
+    assert "Tonumfang" in app.audio.notice
+    assert app.audio.notice_action == app.text("setup_range_edit") == "Tonumfang bearbeiten …"

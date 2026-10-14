@@ -237,7 +237,9 @@ class InstrumentController:
         dlg = RangeEditorDialog(
             self._parent, self._t, key, name,
             cur_lo, cur_hi, baked_lo, baked_hi, has_baked,
-            display=display, transp=transp)
+            display=display, transp=transp,
+            baked_extended=(instruments.baked_extended_range(key)
+                            if has_baked else None))
         if dlg.exec() == QDialog.DialogCode.Accepted:
             # Range bounds changed but the *instrument key* did NOT,
             # so MainWindow should re-seed expected notes + refresh

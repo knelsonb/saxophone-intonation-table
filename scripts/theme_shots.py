@@ -91,7 +91,9 @@ def main() -> int:
                 win, win._t, key, _si.display_name(key, win.lang),
                 cur_lo, cur_hi, baked_lo, baked_hi, _si.has_baked_range(key),
                 display=win._session.display,
-                transp=_si.transp_map().get(key, 0))
+                transp=_si.transp_map().get(key, 0),
+                baked_extended=(_si.baked_extended_range(key)
+                                if _si.has_baked_range(key) else None))
             rdlg.resize(560, 380)
             _grab(rdlg, f"{theme}-rangedlg")
             # Drive it INVALID (lo > hi) to capture the warn/validation styling.

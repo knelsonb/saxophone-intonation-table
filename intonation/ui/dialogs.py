@@ -730,18 +730,25 @@ class RangeEditorDialog(QDialog):
     def __init__(self, parent, t, instrument_key: str,
                  display_name: str, current_lo: int, current_hi: int,
                  baked_lo: int, baked_hi: int, has_baked: bool,
-                 display: str = 'griff', transp: int = 0):
+                 display: str = 'griff', transp: int = 0,
+                 baked_extended: tuple[int, int] | None = None):
         """``current_lo`` / ``current_hi`` / ``baked_lo`` / ``baked_hi``
         are ALWAYS fingered MIDI (canonical disk format). The dialog
         renders them as sounding MIDI when ``display == 'klingend'`` by
         adding ``transp`` semitones, and reverses the offset on save —
         the JSON on disk never changes format regardless of which user
         opens the editor.
+
+        ``baked_extended`` is the instrument's baked extended range
+        (fingered), when it has one. The dialog then shows which played
+        notes count as in range: the edited range widens that tier, so the
+        line follows the fields.
         """
         super().__init__(parent)
         self._t = t
         self._key = instrument_key
         self._baked = (baked_lo, baked_hi)  # canonical fingered MIDI
+        self._baked_extended = baked_extended
         self._has_baked = has_baked
         self._display = 'klingend' if display == 'klingend' else 'griff'
         self._transp = int(transp) if self._display == 'klingend' else 0
@@ -820,6 +827,16 @@ class RangeEditorDialog(QDialog):
         self._preview_lbl.setStyleSheet('font-size:12px;')
         self._preview_lbl.setWordWrap(True)
         layout.addWidget(self._preview_lbl)
+
+        # The range edited here is the guide rows. Whether a played note is
+        # out of range (filter, chart greying, wrong-instrument hint) is
+        # judged on the wider extended tier, which the player could not see
+        # anywhere before; it is shown here, read-only.
+        self._extended_lbl = QLabel('')
+        self._extended_lbl.setStyleSheet('font-size:11px;')
+        self._extended_lbl.setWordWrap(True)
+        self._extended_lbl.setVisible(baked_extended is not None)
+        layout.addWidget(self._extended_lbl)
 
         self._error_lbl = QLabel('')
         self._error_lbl.setObjectName('errorLabel')   # red, overrides dialog rule
@@ -931,6 +948,7 @@ class RangeEditorDialog(QDialog):
             self._error_lbl.setText(self._t('range_invalid'))
             self._error_lbl.setVisible(True)
             self._preview_lbl.setText('')
+            self._extended_lbl.setText('')
             self._btn_save.setEnabled(False)
             return
         # A name still marked unparseable keeps its message: the spins alone
@@ -947,6 +965,14 @@ class RangeEditorDialog(QDialog):
             'range_preview_fmt',
             lo_name=midi_note_name(lo), hi_name=midi_note_name(hi),
             semis=semis, octs=octs))
+        if self._baked_extended is not None:
+            # The same union instruments.extended_range() forms on save, in
+            # the display mode of the fields.
+            ext_lo = min(lo, self._baked_extended[0] + self._transp)
+            ext_hi = max(hi, self._baked_extended[1] + self._transp)
+            self._extended_lbl.setText(self._t(
+                'range_extended_note',
+                lo_name=midi_note_name(ext_lo), hi_name=midi_note_name(ext_hi)))
 
     def _on_restore(self) -> None:
         # Baked is canonical fingered; render in current display mode.

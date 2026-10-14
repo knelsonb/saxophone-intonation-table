@@ -245,6 +245,7 @@
       "pipes_unavailable",
       "range_cancel",
       "range_editor_title",
+      "range_extended_note",
       "range_hi_label",
       "range_hi_label_sounding",
       "range_invalid",
@@ -494,6 +495,10 @@
       ],
       "range_editor_title": [
         "name"
+      ],
+      "range_extended_note": [
+        "hi_name",
+        "lo_name"
       ],
       "range_out_of_midi": [
         "hi",
@@ -841,6 +846,7 @@
       "pipes_unavailable",
       "range_cancel",
       "range_editor_title",
+      "range_extended_note",
       "range_hi_label",
       "range_hi_label_sounding",
       "range_invalid",
@@ -1090,6 +1096,10 @@
       ],
       "range_editor_title": [
         "name"
+      ],
+      "range_extended_note": [
+        "hi_name",
+        "lo_name"
       ],
       "range_out_of_midi": [
         "hi",
