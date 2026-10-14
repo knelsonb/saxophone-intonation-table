@@ -1,82 +1,402 @@
 # =============================================================================
-# sax_table.py — TableController
+# sax_table.py — the intonation table: a model over the session's statistics
 #
-# Extracted from sax_intonation_gui.py as a MainWindow controller. The
-# controller owns the intonation table's two view modes (single-column
-# list and octave-by-pitch-class matrix), the per-cell paint pipeline,
-# and the 300 ms QTimer-driven refresh cycle.
+# IntonationTableModel presents the SessionModel's per-note statistics in one
+# of two layouts:
+#   'single' — one row per note (played notes and the instrument's range,
+#              minus notes still below the minimum count), six columns:
+#              fingered, sounding, mean, spread, N and a cents bar;
+#   'matrix' — piano-roll: 12 chromatic rows × one column per octave, each
+#              cell a payload dict a delegate paints (MatrixCellDelegate).
+# It is rebuilt from the session on every refresh (the 300 ms tick of the
+# TUNER tab), so the table always shows the session as it is now; rows and
+# cells change in place, so the view keeps its scroll position.
 #
-# Design notes:
-#   * The instrument, display mode, A4, the per-note statistics and the
-#     note played last are read from the SessionModel on every refresh
-#     tick, so the table always shows the session as it is now.
-#   * Cell QTableWidgetItem objects are allocated ONCE per layout change
-#     in configure_for_mode().  The refresh() body methods read
-#     self._cells[(r, c)] and mutate the already-existing item via
-#     setText / setData / setBackground / setForeground.  Allocating
-#     fresh items every 300 ms tick would cost up to 84 objects (12 pitch
-#     classes × 7 octaves in matrix mode), about 16,800 Qt allocations
-#     per minute under a held practice session; reusing them makes the
-#     refresh hot path allocation-free.
-#   * The QTimer ownership stays on MainWindow.  The window's
-#     _refresh_table delegates to TableController.refresh() after
-#     deciding the layout mode — keeping the timer wiring local to
-#     MainWindow preserves Qt signal lifetimes and the resizeEvent
-#     debounce path.
-#   * No behavioural change vs. the inlined implementation — colors,
-#     formatting, NaN guards, header labels, min-N gating, OOR
-#     handling, and the active-cell highlight are preserved verbatim.
+# TableController sets the view up for a layout (delegates, header sizing,
+# row height) and writes the caption above the table.
+#
+# The roles the view and the harness read:
+#   DisplayRole        single-layout cell text;
+#   ForegroundRole     the mean column's band colour (dim when unplayed);
+#   BackgroundRole     the row of the note played last;
+#   UserRole           single layout, bar column: {'cents', 'freq'};
+#                      matrix layout: the cell payload (see MatrixCellDelegate).
 # =============================================================================
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor
-from PyQt6.QtWidgets import (
-    QHeaderView,
-    QStyledItemDelegate,
-    QTableWidgetItem,
-)
+from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt
+from PyQt6.QtGui import QBrush, QColor
+from PyQt6.QtWidgets import QHeaderView, QStyledItemDelegate
 
-import sax_instruments
 from sax_pitch import CHROMA, format_cents, midi_note_name
 from sax_theme import cents_band
 from sax_widgets import MatrixCellDelegate
 
-# Text colour of the mean column for each cents_band() result.
-_BAND_COLOR = {'in': '#3a9e5f', 'close': '#c8a020', 'off': '#c03030'}
-
-# Matrix geometry. The window's width-driven layout choice uses the same
-# numbers, so a matrix it picks always fits two octave columns.
-MATRIX_COL_WIDTH = 112    # min usable width per octave column (px)
-MATRIX_HEADER_W = 64      # row-header width (note names)
-MATRIX_ROW_HEIGHT = 60    # tall enough for: names + mean+std + bar + N
-
 if TYPE_CHECKING:
-    from PyQt6.QtWidgets import QLabel, QTableWidget
+    from PyQt6.QtWidgets import QLabel, QTableView
 
     from sax_config import AppConfig
     from sax_session import SessionModel
     from sax_translator import Translator
 
+# Text colour of the mean column for each cents_band() result.
+_BAND_COLOR = {'in': '#3a9e5f', 'close': '#c8a020', 'off': '#c03030'}
+_DIM_COLOR = '#555'
+_ACTIVE_ROW_COLOR = '#2c5a8a'
+
+# Matrix geometry. The TUNER tab's width-driven layout choice uses the same
+# numbers, so a matrix it picks always fits two octave columns.
+MATRIX_COL_WIDTH = 112    # min usable width per octave column (px)
+MATRIX_HEADER_W = 64      # row-header width (note names)
+MATRIX_ROW_HEIGHT = 60    # tall enough for: names + mean+std + bar + N
+SINGLE_ROW_HEIGHT = 28
+
+SINGLE_COLUMNS = 6
+MEAN_COLUMN = 2
+BAR_COLUMN = 5
+
+_CENTER = int(Qt.AlignmentFlag.AlignCenter)
+_BRUSHES: dict[str, QBrush] = {}
+
+
+def _brush(colour: str) -> QBrush:
+    """One shared brush per colour: data() is asked for it on every paint."""
+    brush = _BRUSHES.get(colour)
+    if brush is None:
+        brush = _BRUSHES[colour] = QBrush(QColor(colour))
+    return brush
+
+
+def _note_freq(a4: float, midi: int) -> float:
+    """Nominal frequency of ``midi`` at ``a4``: sets the cents precision."""
+    return a4 * (2.0 ** ((midi - 69) / 12.0))
+
+
+class _Row:
+    """One single-layout row, as painted. Rows compare equal when they look
+    the same, so a refresh repaints only what changed."""
+    __slots__ = ('midi', 'texts', 'played', 'colour', 'bar', 'active')
+
+    def __init__(self, midi, texts, played, colour, bar, active):
+        self.midi = midi
+        self.texts = texts
+        self.played = played
+        self.colour = colour
+        self.bar = bar
+        self.active = active
+
+    def __eq__(self, other) -> bool:
+        return (isinstance(other, _Row)
+                and (self.midi, self.texts, self.colour, self.bar, self.active)
+                == (other.midi, other.texts, other.colour, other.bar, other.active))
+
+
+def _changed_span(old: list, new: list) -> Optional[tuple[int, int]]:
+    """(first, last) index where ``new`` differs from ``old`` (compared up
+    to the shorter length), or None when they agree."""
+    changed = [i for i, (a, b) in enumerate(zip(old, new)) if a != b]
+    return (changed[0], changed[-1]) if changed else None
+
+
+class IntonationTableModel(QAbstractTableModel):
+    """The session's statistics as a table; see the module comment."""
+
+    def __init__(self, *, cfg: 'AppConfig', session: 'SessionModel',
+                 tr: 'Translator', sample_rate: Callable[[], int],
+                 parent=None) -> None:
+        super().__init__(parent)
+        self._cfg = cfg
+        self._session = session
+        self._t = tr.t
+        self._sample_rate = sample_rate
+        self._layout: Optional[str] = None
+        self._rows: list[_Row] = []
+        self._headers: list[str] = []
+        self._row_headers = [c.split('/')[0] for c in CHROMA]
+        # Matrix: the octave span the columns are laid out for, and one
+        # payload per (row, column).
+        self._lo_oct = 0
+        self._hi_oct = -1
+        self._cells: list[list[dict]] = []
+        # The line above the table, written with every fill.
+        self.caption = ''
+
+    # ── Layout ───────────────────────────────────────────────────────────────
+    @property
+    def layout(self) -> Optional[str]:
+        """'single', 'matrix', or None before the first set_layout()."""
+        return self._layout
+
+    def set_layout(self, layout: str) -> None:
+        """Switch layout (or lay the matrix out again for the live octave
+        span) and fill it from the session."""
+        self.beginResetModel()
+        self._layout = layout
+        self._rows = []
+        self._cells = []
+        if layout == 'matrix':
+            self._lo_oct, self._hi_oct = self.octave_range()
+            self._fill_matrix()
+        else:
+            self._rows = self._single_rows()
+        self.endResetModel()
+
+    def painted_octave_span(self) -> tuple[int, int]:
+        """(lo_octave, hi_octave) the matrix columns are laid out for. Column
+        ``c`` shows octave ``lo_octave + c``. Code that maps a clicked column
+        back to a note must use this span, which is the one on screen,
+        rather than the live range."""
+        return (self._lo_oct, self._hi_oct)
+
+    def octave_range(self) -> tuple[int, int]:
+        """(lo_octave, hi_octave) inclusive the matrix should show now: the
+        instrument's fingered range and, when out-of-range notes are allowed,
+        every played note outside it (overtones, altissimo, accidentals), so
+        nothing is truncated.
+
+        Half-step-beyond rule: a range starting on a C gets the octave below
+        (to show the B a half step lower); one ending on a B gets the octave
+        above. cfg.matrix_extra_octaves adds context on both sides."""
+        session = self._session
+        transp = session.transposition
+        lo_f, hi_f = session.fingered_range()
+        griff = session.display == 'griff'
+        lo_midi, hi_midi = (lo_f, hi_f) if griff else (lo_f + transp, hi_f + transp)
+        played = [m for m, st in session.stats.items() if st.n > 0]
+        if played and self._cfg.allow_out_of_range:
+            if griff:
+                played = [m - transp for m in played]
+            lo_midi = min(lo_midi, min(played))
+            hi_midi = max(hi_midi, max(played))
+        lo_oct = lo_midi // 12 - 1
+        hi_oct = hi_midi // 12 - 1
+        if lo_midi % 12 == 0:      # low note is C → show B in the column below
+            lo_oct -= 1
+        if hi_midi % 12 == 11:     # high note is B → show C in the column above
+            hi_oct += 1
+        extra = self._cfg.matrix_extra_octaves
+        # MIDI octave -1 is no use for any real instrument.
+        return (max(0, lo_oct - extra), hi_oct + extra)
+
+    # ── Refresh ──────────────────────────────────────────────────────────────
+    def refresh(self) -> None:
+        """Repaint from the session: only the rows or matrix rows that look
+        different are reported as changed. The matrix is laid out again first
+        when its live octave span moved (display toggle, instrument or range
+        change, a note played outside the span)."""
+        if self._layout is None:
+            return
+        headers = list(self._headers)
+        if self._layout == 'matrix':
+            if self.octave_range() != self.painted_octave_span():
+                self.set_layout('matrix')
+                return
+            old_cells = self._cells
+            self._fill_matrix()
+            span = _changed_span(old_cells, self._cells)
+            if span is not None:
+                self.dataChanged.emit(self.index(span[0], 0),
+                                      self.index(span[1], self.columnCount() - 1))
+        else:
+            old = self._rows
+            rows = self._single_rows()
+            if len(rows) > len(old):
+                self.beginInsertRows(QModelIndex(), len(old), len(rows) - 1)
+                self._rows = rows
+                self.endInsertRows()
+            elif len(rows) < len(old):
+                self.beginRemoveRows(QModelIndex(), len(rows), len(old) - 1)
+                self._rows = rows
+                self.endRemoveRows()
+            else:
+                self._rows = rows
+            span = _changed_span(old, rows)
+            if span is not None:
+                self.dataChanged.emit(self.index(span[0], 0),
+                                      self.index(span[1], SINGLE_COLUMNS - 1))
+        if self._headers != headers and self.columnCount():
+            self.headerDataChanged.emit(Qt.Orientation.Horizontal, 0,
+                                        self.columnCount() - 1)
+
+    def _single_rows(self) -> list[_Row]:
+        t = self._t
+        session = self._session
+        transp = session.transposition
+        griff = session.display == 'griff'
+        names = [t('col_fingered'), t('col_sounding')]
+        if not griff:
+            names.reverse()
+        self._headers = names + [t('col_mean'), t('col_std'), t('col_n'),
+                                 t('col_tendency')]
+        # Rows with 1..min_n-1 readings are below the threshold and hidden as
+        # noise; unplayed (seeded) rows stay so the range shows as a guide.
+        min_n = self._cfg.min_n_visible
+        items = [(m, s) for m, s in sorted(session.stats.items())
+                 if s.n == 0 or s.n >= min_n]
+        active = session.active_midi()
+        sr = self._sample_rate()
+        a4 = session.a4
+        rows = []
+        played_n = total = 0
+        for midi_kl, st in items:
+            kl_name = midi_note_name(midi_kl)
+            gr_name = midi_note_name(midi_kl - transp)
+            played = st.n > 0
+            freq = _note_freq(a4, midi_kl)
+            total += st.n
+            if played:
+                played_n += 1
+                mean_str = format_cents(st.mean, freq, sr)
+                colour = _BAND_COLOR[cents_band(st.mean)]
+            else:
+                mean_str = '–'
+                colour = _DIM_COLOR
+            std_str = ('±' + format_cents(st.std, freq, sr).lstrip('+-')
+                       if st.n > 1 else '–')
+            first, second = (gr_name, kl_name) if griff else (kl_name, gr_name)
+            rows.append(_Row(
+                midi_kl,
+                (first, second, mean_str, std_str, str(st.n) if played else '–', ''),
+                played, colour,
+                {'cents': st.mean, 'freq': freq} if played else None,
+                active == midi_kl))
+        if not items or played_n == 0:
+            self.caption = t('table_empty_hint')
+        else:
+            self.caption = t('table_summary', notes=played_n, total=total)
+        return rows
+
+    def _fill_matrix(self) -> None:
+        t = self._t
+        session = self._session
+        transp = session.transposition
+        griff = session.display == 'griff'
+        lo_f, hi_f = session.fingered_range()
+        octaves = range(self._lo_oct, self._hi_oct + 1)
+        # Fingered display labels octaves relative to the instrument's middle
+        # octave (-1, 0, +1): saxophone players read "low Bb" as Bb3 in SPN,
+        # which feels mis-octaved against an absolute scale. Sounding display
+        # keeps absolute octave numbers because sounding pitch IS absolute.
+        if griff:
+            mid = (self._lo_oct + self._hi_oct) // 2
+            self._headers = [t('matrix_oct_rel_label', n=o - mid) for o in octaves]
+        else:
+            self._headers = [t('matrix_oct_label', n=o) for o in octaves]
+        stats = session.stats
+        active = session.active_midi()
+        a4 = session.a4
+        # A cell with 1..min_n-1 readings is shown as not yet played, as the
+        # single layout hides such a row.
+        min_n = self._cfg.min_n_visible
+        played_n = in_range_cells = 0
+        cells = []
+        for r in range(12):
+            row = []
+            for o in octaves:
+                midi_visible = (o + 1) * 12 + r
+                if griff:
+                    midi_fingered, midi_sounding = midi_visible, midi_visible + transp
+                else:
+                    midi_fingered, midi_sounding = midi_visible - transp, midi_visible
+                in_range = lo_f <= midi_fingered <= hi_f
+                in_range_cells += in_range
+                st = stats.get(midi_sounding)
+                has_data = st is not None and st.n > 0 and st.n >= min_n
+                played_n += has_data
+                row.append({
+                    'mean':          st.mean if has_data else None,
+                    'std':           st.std if has_data else None,
+                    'n':             st.n if st is not None else 0,
+                    'in_range':      in_range,
+                    'active':        active == midi_sounding,
+                    'fingered_name': midi_note_name(midi_fingered),
+                    'sounding_name': midi_note_name(midi_sounding),
+                    'freq':          _note_freq(a4, midi_sounding),
+                })
+            cells.append(row)
+        self._cells = cells
+        if in_range_cells == 0:
+            self.caption = t('table_empty_hint')
+        else:
+            self.caption = t('table_matrix_title', played=played_n, total=in_range_cells)
+
+    # ── Reading back ─────────────────────────────────────────────────────────
+    def midi_at(self, row: int, col: int) -> Optional[int]:
+        """The sounding note shown at (row, col), or None. A matrix column
+        maps through the octave span on screen."""
+        if self._layout == 'matrix':
+            octave = self._lo_oct + col
+            if not (0 <= row < 12 and col >= 0 and octave <= self._hi_oct):
+                return None
+            midi_visible = (octave + 1) * 12 + row
+            if self._session.display == 'griff':
+                return midi_visible + self._session.transposition
+            return midi_visible
+        if 0 <= row < len(self._rows):
+            return self._rows[row].midi
+        return None
+
+    # ── QAbstractTableModel ──────────────────────────────────────────────────
+    def rowCount(self, parent=QModelIndex()) -> int:
+        if parent.isValid():
+            return 0
+        return 12 if self._layout == 'matrix' else len(self._rows)
+
+    def columnCount(self, parent=QModelIndex()) -> int:
+        if parent.isValid() or self._layout is None:
+            return 0
+        if self._layout == 'matrix':
+            return max(0, self._hi_oct - self._lo_oct + 1)
+        return SINGLE_COLUMNS
+
+    def flags(self, index):
+        return Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+
+    def headerData(self, section: int, orientation, role=Qt.ItemDataRole.DisplayRole):
+        if role != Qt.ItemDataRole.DisplayRole:
+            return None
+        if orientation == Qt.Orientation.Horizontal:
+            return self._headers[section] if 0 <= section < len(self._headers) else None
+        if self._layout == 'matrix' and 0 <= section < 12:
+            return self._row_headers[section]
+        return None
+
+    def data(self, index, role=Qt.ItemDataRole.DisplayRole) -> Any:
+        if not index.isValid():
+            return None
+        r, c = index.row(), index.column()
+        if self._layout == 'matrix':
+            if (role == Qt.ItemDataRole.UserRole and r < len(self._cells)
+                    and c < len(self._cells[r])):
+                return self._cells[r][c]
+            return None
+        if r >= len(self._rows):
+            return None
+        row = self._rows[r]
+        if role == Qt.ItemDataRole.DisplayRole:
+            return row.texts[c]
+        if role == Qt.ItemDataRole.TextAlignmentRole:
+            return _CENTER
+        if role == Qt.ItemDataRole.ForegroundRole:
+            # The mean carries the band colour; an unplayed row is dim.
+            if c == MEAN_COLUMN or not row.played:
+                return _brush(row.colour)
+            return None
+        if role == Qt.ItemDataRole.BackgroundRole:
+            return _brush(_ACTIVE_ROW_COLOR) if row.active else None
+        if role == Qt.ItemDataRole.UserRole and c == BAR_COLUMN:
+            return row.bar
+        return None
+
 
 class TableController:
-    """Owns the intonation table's two view modes (single-column list and
-    octave-by-pitch-class matrix), the per-cell paint pipeline, and the
-    QTimer-driven 300ms refresh cycle.
-
-    Cell items are allocated ONCE per layout change in
-    configure_for_mode() — subsequent refresh ticks only mutate the
-    already-existing QTableWidgetItem instances via setText/setData/
-    setBackground.  Allocating fresh items on every 300ms tick would cost
-    up to 84 QTableWidgetItem objects (12 rows × 7 octaves in matrix
-    mode), about 16,800 Qt object allocations per minute under a held
-    practice session.
-    """
+    """Sets the table view up for a layout (delegates, header sizing, row
+    height) over an IntonationTableModel, and writes the caption."""
 
     def __init__(self, *,
-                 table: 'QTableWidget',
+                 table: 'QTableView',
                  caption: 'QLabel',
                  bar_delegate: QStyledItemDelegate,
                  cfg: 'AppConfig',
@@ -86,386 +406,64 @@ class TableController:
         self._table = table
         self._caption = caption
         self._bar_delegate = bar_delegate
-        self._cfg = cfg
-        self._session = session
-        self._t = tr.t
-        self._sample_rate = sample_rate
-        # Cell cache: (row, col) -> QTableWidgetItem.  Populated in
-        # configure_for_mode(); read and mutated by refresh().
-        self._cells: dict[tuple[int, int], QTableWidgetItem] = {}
-        # Current view mode tag so refresh() knows which body to run.
-        # None until the first configure_for_mode() call — refresh()
-        # bails silently in that window so a stray pre-configure tick
-        # never crashes.
-        self._current_mode: str | None = None
-        # Matrix mode also caches the octave span configure_for_mode() laid
-        # the columns out for. refresh() compares it with the live span on
-        # every tick and reconfigures when they differ (display toggle,
-        # instrument or range change, a played note outside the span), so
-        # the paint and the right-click mapping always use the painted span.
-        self._matrix_lo_oct: int = 0
-        self._matrix_hi_oct: int = -1
+        self.model = IntonationTableModel(cfg=cfg, session=session, tr=tr,
+                                          sample_rate=sample_rate, parent=table)
+        table.setModel(self.model)
         # Delegates swapped in by configure_for_mode: the plain one for the
         # single layout's text columns, the painted cell for the matrix.
         self._default_delegate = QStyledItemDelegate(table)
-        self._matrix_delegate = MatrixCellDelegate(
-            table, sample_rate_getter=sample_rate)
+        self._matrix_delegate = MatrixCellDelegate(table, sample_rate_getter=sample_rate)
+        # The octave span the matrix columns were last sized for.
+        self._sized_span = (0, -1)
 
-    # -------------------------------------------------------------------------
-    # Public surface
-    # -------------------------------------------------------------------------
+    @property
+    def mode(self) -> Optional[str]:
+        """The layout shown: 'single', 'matrix', or None before the first
+        configure_for_mode()."""
+        return self.model.layout
+
     def configure_for_mode(self, mode: str) -> None:
-        """Swap the table between 'single' and 'matrix' layouts.
-
-        Clears the cell cache, calls setRowCount / setColumnCount, then
-        allocates one QTableWidgetItem per (row, col) cell and parks it
-        in self._cells.  Subsequent refresh() calls mutate those cached
-        items in place — no further QTableWidgetItem allocations on the
-        300 ms hot path.
-        """
-        # Drop stale items before reconfiguring.  Without this, a
-        # single→matrix switch would leave the old single-mode items
-        # parented to the table after setRowCount/setColumnCount churn.
-        self._cells.clear()
-        self._table.clear()
-
-        if mode == 'matrix':
-            lo_oct, hi_oct = self._matrix_octave_range()
-            self._matrix_lo_oct = lo_oct
-            self._matrix_hi_oct = hi_oct
-            n_oct = hi_oct - lo_oct + 1
-            self._table.setColumnCount(n_oct)
-            self._table.setRowCount(12)
-            self._table.verticalHeader().setVisible(True)
-            self._table.verticalHeader().setDefaultSectionSize(
-                MATRIX_ROW_HEIGHT)
-            # Fixed column widths — playable notes always render at full
-            # cell size. If the columns don't all fit, Qt's horizontal
-            # scrollbar takes over instead of the cells getting squished.
-            hh = self._table.horizontalHeader()
-            hh.setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
-            hh.setDefaultSectionSize(MATRIX_COL_WIDTH)
-            for c in range(n_oct):
-                self._table.setColumnWidth(c, MATRIX_COL_WIDTH)
-            self._table.setHorizontalScrollBarPolicy(
-                Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-            self._table.setItemDelegateForColumn(5, self._default_delegate)
-            self._table.setItemDelegate(self._matrix_delegate)
-            # Allocate cell items ONCE — refresh ticks reuse them.
-            for r in range(12):
-                for c in range(n_oct):
-                    item = QTableWidgetItem('')
-                    self._table.setItem(r, c, item)
-                    self._cells[(r, c)] = item
-        else:
-            self._table.setColumnCount(6)
-            self._table.verticalHeader().setVisible(False)
-            self._table.verticalHeader().setDefaultSectionSize(28)
-            self._table.horizontalHeader().setSectionResizeMode(
-                QHeaderView.ResizeMode.Stretch)
-            self._table.setHorizontalHeaderLabels(self._table_headers())
-            # Restore the default per-table delegate, then the bar
-            # delegate for the tendency column.
-            self._table.setItemDelegate(self._default_delegate)
-            self._table.setItemDelegateForColumn(5, self._bar_delegate)
-            # Row count for single-mode is determined per-refresh by the
-            # filtered stats list — _refresh_single() calls setRowCount
-            # and grows the cell cache to match.  Cache starts empty.
-
-        self._current_mode = mode
+        """Lay the table out for 'single' or 'matrix' and fill it."""
+        self.model.set_layout(mode)
+        self._configure_view(mode)
+        self._caption.setText(self.model.caption)
 
     def refresh(self) -> None:
-        """Re-paint all cells from the current stats dict.  Bails
-        silently if configure_for_mode() has not been called yet — a
-        stray pre-configure tick must never crash."""
-        if self._current_mode is None:
+        """Repaint from the session (laying the matrix out again when its
+        span moved). Before the first configure_for_mode() it does nothing."""
+        if self.model.layout is None:
             return
-        if self._current_mode == 'matrix':
-            if self._matrix_octave_range() != self.painted_octave_span():
-                self.configure_for_mode('matrix')
-            self._refresh_matrix()
-        else:
-            self._refresh_single()
+        self.model.refresh()
+        if self.model.layout == 'matrix' and self.painted_octave_span() != self._sized_span:
+            self._configure_view('matrix')
+        self._caption.setText(self.model.caption)
 
     def painted_octave_span(self) -> tuple[int, int]:
-        """(lo_octave, hi_octave) the matrix columns are currently laid out
-        for. Column ``c`` shows octave ``lo_octave + c``. Code that maps a
-        clicked column back to a note must use this span, which is the one
-        on screen, rather than the live range."""
-        return (self._matrix_lo_oct, self._matrix_hi_oct)
+        return self.model.painted_octave_span()
 
-    # -------------------------------------------------------------------------
-    # Matrix range helpers — public on the controller so MainWindow's
-    # context-menu code (which maps a click position to a sounding MIDI)
-    # can ask the controller for the current low octave without re-
-    # implementing the half-step-beyond logic.
-    # -------------------------------------------------------------------------
     def _matrix_octave_range(self) -> tuple[int, int]:
-        """(lo_octave, hi_octave) inclusive to display for the current
-        instrument.  Spans the instrument's nominal fingered range AND
-        any actually-played notes outside it — overtones, altissimo, and
-        accidentals get their own cells so nothing gets truncated.
+        return self.model.octave_range()
 
-        Half-step-beyond rule: if the low note is exactly a C (the start
-        of its octave) we pad one column below so the B a half-step
-        lower is visible; if the high note is exactly a B (the end of
-        its octave) we pad one column above so the C a half-step higher
-        is visible.  Extra context octaves beyond that are configurable
-        via cfg.matrix_extra_octaves."""
-        instrument = self._session.instrument
-        display = self._session.display
-        transp = sax_instruments.transp_map().get(instrument, 0)
-        lo_f, hi_f = sax_instruments.fingered_range(instrument)
-        if display == 'griff':
-            lo_midi, hi_midi = lo_f, hi_f
+    def _configure_view(self, mode: str) -> None:
+        table = self._table
+        header = table.horizontalHeader()
+        if mode == 'matrix':
+            table.verticalHeader().setVisible(True)
+            table.verticalHeader().setDefaultSectionSize(MATRIX_ROW_HEIGHT)
+            # Fixed column widths: playable notes always render at full cell
+            # size; when the columns don't all fit, the horizontal scrollbar
+            # takes over instead of squeezing the cells.
+            header.setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
+            header.setDefaultSectionSize(MATRIX_COL_WIDTH)
+            for c in range(self.model.columnCount()):
+                table.setColumnWidth(c, MATRIX_COL_WIDTH)
+            table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            table.setItemDelegateForColumn(BAR_COLUMN, self._default_delegate)
+            table.setItemDelegate(self._matrix_delegate)
+            self._sized_span = self.painted_octave_span()
         else:
-            lo_midi, hi_midi = lo_f + transp, hi_f + transp
-        # Played-note expansion (only when OOR is allowed).
-        played = [m for m, st in self._session.stats.items() if st.n > 0]
-        if played and self._cfg.allow_out_of_range:
-            if display == 'griff':
-                played = [m - transp for m in played]
-            lo_midi = min(lo_midi, min(played))
-            hi_midi = max(hi_midi, max(played))
-        lo_oct = lo_midi // 12 - 1
-        hi_oct = hi_midi // 12 - 1
-        # Half-step-beyond rule.
-        if lo_midi % 12 == 0:      # low note is C → show B in the column below
-            lo_oct -= 1
-        if hi_midi % 12 == 11:     # high note is B → show C in the column above
-            hi_oct += 1
-        # Configurable extra context on each side.
-        extra = self._cfg.matrix_extra_octaves
-        lo_oct -= extra
-        hi_oct += extra
-        # Clamp to non-negative octaves (MIDI octave -1 not useful for
-        # any real instrument in this app).
-        lo_oct = max(0, lo_oct)
-        return (lo_oct, hi_oct)
-
-    # -------------------------------------------------------------------------
-    # Internal helpers
-    # -------------------------------------------------------------------------
-    def _table_headers(self) -> list[str]:
-        return [self._t('col_fingered'), self._t('col_sounding'),
-                self._t('col_mean'), self._t('col_std'),
-                self._t('col_n'), self._t('col_tendency')]
-
-    def _ensure_single_cells(self, n_rows: int) -> None:
-        """Grow / shrink the single-mode cell cache to n_rows × 6.
-        Items are allocated once and reused; rows removed by the user's
-        min-N filter drop their cached items so we don't leak Qt
-        objects across long sessions."""
-        # Grow if needed.
-        for r in range(n_rows):
-            for c in range(6):
-                if (r, c) not in self._cells:
-                    item = QTableWidgetItem('')
-                    self._table.setItem(r, c, item)
-                    self._cells[(r, c)] = item
-        # Drop any cached cells past the new row count.  setRowCount
-        # has already removed them from the table widget; we just need
-        # to evict them from our dict so a future grow re-allocates.
-        stale = [k for k in self._cells if k[0] >= n_rows]
-        for k in stale:
-            del self._cells[k]
-
-    # -------------------------------------------------------------------------
-    # Single-column body
-    # -------------------------------------------------------------------------
-    def _refresh_single(self) -> None:
-        instrument = self._session.instrument
-        display = self._session.display
-        transp = sax_instruments.transp_map().get(instrument, 0)
-        disp_griff = (display == 'griff')
-
-        if disp_griff:
-            hdrs = [self._t('col_fingered'), self._t('col_sounding')]
-        else:
-            hdrs = [self._t('col_sounding'), self._t('col_fingered')]
-        self._table.setHorizontalHeaderLabels(
-            hdrs + [self._t('col_mean'), self._t('col_std'),
-                    self._t('col_n'), self._t('col_tendency')])
-
-        raw_items = sorted(self._session.stats.items())
-
-        # Min-N filter: rows with 1..min_n-1 measurements are below
-        # threshold and hidden as noise. N=0 seeded blanks still show so
-        # the instrument range stays visible as a guide.
-        min_n = self._cfg.min_n_visible
-        items = [(m, s) for (m, s) in raw_items
-                 if s.n == 0 or s.n >= min_n]
-
-        self._table.setRowCount(len(items))
-        # Ensure the cell cache matches the new row count BEFORE we
-        # start mutating cells (no per-row allocations on the hot path).
-        self._ensure_single_cells(len(items))
-
-        played_n = 0
-        active_midi = self._session.active_midi()
-        sr_now = self._sample_rate()
-        a4 = self._session.a4
-        for row, (midi_kl, st) in enumerate(items):
-            midi_gr = midi_kl - transp
-            kl_name = midi_note_name(midi_kl)
-            gr_name = midi_note_name(midi_gr)
-            n1, n2  = (gr_name, kl_name) if disp_griff else (kl_name, gr_name)
-            mean    = st.mean
-            has_data = st.n > 0
-            if has_data:
-                played_n += 1
-
-            col = QColor(_BAND_COLOR[cents_band(mean)])
-            dim_col = QColor('#555')
-
-            # Nominal frequency for this MIDI: drives the precision floor.
-            note_freq = a4 * (2.0 ** ((midi_kl - 69) / 12.0))
-            mean_str = format_cents(mean, note_freq, sr_now) if has_data else '–'
-            if st.n > 1:
-                std_str = '±' + format_cents(st.std, note_freq, sr_now).lstrip('+-')
-            else:
-                std_str = '–'
-
-            is_active = (active_midi == midi_kl)
-            values = [
-                n1, n2,
-                mean_str,
-                std_str,
-                str(st.n) if has_data else '–',
-                '',
-            ]
-            for c, val in enumerate(values):
-                item = self._cells[(row, c)]
-                item.setText(val)
-                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                # Foreground colour rules mirror the original verbatim.
-                if c == 2:
-                    item.setForeground(col if has_data else dim_col)
-                elif not has_data:
-                    item.setForeground(dim_col)
-                else:
-                    # Restore default foreground when a previously-empty
-                    # row gets data on a later tick (otherwise the dim
-                    # gray would stick from an earlier paint).
-                    item.setData(Qt.ItemDataRole.ForegroundRole, None)
-                if c == 5 and has_data:
-                    item.setData(Qt.ItemDataRole.UserRole,
-                                 {'cents': mean, 'freq': note_freq})
-                elif c == 5:
-                    # Clear stale bar data so the delegate paints empty.
-                    item.setData(Qt.ItemDataRole.UserRole, None)
-                if is_active:
-                    item.setBackground(QColor('#2c5a8a'))
-                else:
-                    # Clear any prior active-tint so a row that lost the
-                    # highlight returns to default background colors.
-                    item.setData(Qt.ItemDataRole.BackgroundRole, None)
-
-        total = sum(s.n for _, s in items)
-        if not items or played_n == 0:
-            label = self._t('table_empty_hint')
-        else:
-            label = self._t('table_summary', notes=played_n, total=total)
-        self._caption.setText(label)
-
-    # -------------------------------------------------------------------------
-    # Matrix body
-    # -------------------------------------------------------------------------
-    def _refresh_matrix(self) -> None:
-        instrument = self._session.instrument
-        display = self._session.display
-        transp = sax_instruments.transp_map().get(instrument, 0)
-        disp_griff = (display == 'griff')
-        lo_f, hi_f = sax_instruments.fingered_range(instrument)
-        # Use the span cached by configure_for_mode so the cell layout and
-        # the per-cell math line up. refresh() has already reconfigured if
-        # the live span moved away from it.
-        lo_oct = self._matrix_lo_oct
-        hi_oct = self._matrix_hi_oct
-        if hi_oct < lo_oct:
-            # Defensive: never configured for matrix; bail.
-            return
-        octaves = list(range(lo_oct, hi_oct + 1))
-
-        # Fingered (griff) mode uses RELATIVE octave labels (-1, 0, +1)
-        # centered on the instrument's middle octave — saxophone players
-        # read "low Bb" as Bb3 in SPN, which feels mis-octaved against an
-        # absolute scale. Concert (klingend) mode keeps absolute octave
-        # numbers because sounding pitch IS absolute.
-        if disp_griff:
-            mid_oct = (lo_oct + hi_oct) // 2
-            header_strings = [
-                self._t('matrix_oct_rel_label', n=(o - mid_oct))
-                for o in octaves
-            ]
-        else:
-            header_strings = [
-                self._t('matrix_oct_label', n=o) for o in octaves
-            ]
-        self._table.setHorizontalHeaderLabels(header_strings)
-        # Row labels: pitch class only (octave lives in the column header).
-        self._table.setVerticalHeaderLabels(
-            [c.split('/')[0] for c in CHROMA])
-
-        stats_by_midi = dict(self._session.stats)
-        active_midi = self._session.active_midi()
-        a4 = self._session.a4
-
-        played_n = 0
-        in_range_cells = 0
-        for r in range(12):
-            for c, oct_ in enumerate(octaves):
-                midi_visible = (oct_ + 1) * 12 + r
-                if disp_griff:
-                    midi_fingered = midi_visible
-                    midi_sounding = midi_visible + transp
-                else:
-                    midi_sounding = midi_visible
-                    midi_fingered = midi_visible - transp
-                in_range = lo_f <= midi_fingered <= hi_f
-                if in_range:
-                    in_range_cells += 1
-
-                st = stats_by_midi.get(midi_sounding)
-                # Apply min-N gate so single-blip cells don't render with
-                # arbitrary cents readings. Same rule as single-column:
-                # a cell with 1..min_n-1 hits is treated as if it has no
-                # data yet.
-                min_n = self._cfg.min_n_visible
-                has_data = (st is not None and st.n > 0
-                            and st.n >= min_n)
-                if has_data:
-                    played_n += 1
-                # MatrixCellDelegate reads this dict and paints all six
-                # data fields the single-column view shows per row:
-                # fingered name, sounding name, mean, std, N, bar.
-                # Nominal frequency at A4 drives the precision floor.
-                note_freq = a4 * (
-                    2.0 ** ((midi_sounding - 69) / 12.0))
-                payload = {
-                    'mean':          st.mean if has_data else None,
-                    'std':           st.std if has_data else None,
-                    'n':             st.n if st is not None else 0,
-                    'in_range':      in_range,
-                    'active':        (active_midi == midi_sounding),
-                    'fingered_name': midi_note_name(midi_fingered),
-                    'sounding_name': midi_note_name(midi_sounding),
-                    'freq':          note_freq,
-                }
-                # Reuse the cached item — no allocation on the hot path.
-                item = self._cells.get((r, c))
-                if item is None:
-                    # Defensive: cache miss (would happen only if the
-                    # octave range drifted out from under us).  Allocate
-                    # once and park it; future ticks will reuse.
-                    item = QTableWidgetItem('')
-                    self._table.setItem(r, c, item)
-                    self._cells[(r, c)] = item
-                item.setData(Qt.ItemDataRole.UserRole, payload)
-
-        if in_range_cells == 0:
-            label = self._t('table_empty_hint')
-        else:
-            label = self._t('table_matrix_title',
-                             played=played_n, total=in_range_cells)
-        self._caption.setText(label)
+            table.verticalHeader().setVisible(False)
+            table.verticalHeader().setDefaultSectionSize(SINGLE_ROW_HEIGHT)
+            header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+            table.setItemDelegate(self._default_delegate)
+            table.setItemDelegateForColumn(BAR_COLUMN, self._bar_delegate)

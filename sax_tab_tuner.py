@@ -35,7 +35,7 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
     QSpinBox,
     QSplitter,
-    QTableWidget,
+    QTableView,
     QVBoxLayout,
     QWidget,
 )
@@ -184,13 +184,12 @@ class TunerTab(QWidget):
         self._caption.setWordWrap(True)
         box.addWidget(self._caption)
 
-        table = self._table = QTableWidget()
-        table.setColumnCount(6)
+        table = self._table = QTableView()
         table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         table.verticalHeader().setVisible(False)
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         table.setAlternatingRowColors(True)
-        table.setObjectName('matrix')   # themed via QTableWidget#matrix
+        table.setObjectName('matrix')   # themed via QTableView#matrix
         box.addWidget(table)
         self._bar_delegate = CentBarDelegate(table, sample_rate_getter=self._sample_rate)
         table.setItemDelegateForColumn(5, self._bar_delegate)
@@ -262,7 +261,7 @@ class TunerTab(QWidget):
         """Choose the layout for the width the table has now (the choice
         depends on the live viewport), then repaint."""
         desired = self._desired_layout_mode()
-        if desired != self._layout_mode or self._table_ctrl._current_mode is None:
+        if desired != self._layout_mode or self._table_ctrl.mode is None:
             self._layout_mode = desired
             self._table_ctrl.configure_for_mode(desired)
         self._table_ctrl.refresh()
@@ -295,37 +294,21 @@ class TunerTab(QWidget):
     def _on_context_menu(self, pos) -> None:
         """Right-click a played note: offer to discard its readings."""
         table = self._table
-        row = table.rowAt(pos.y())
-        if row < 0:
+        index = table.indexAt(pos)
+        if not index.isValid():
             return
         session = self._session
         transp = session.transposition
+        # The note the clicked row (or matrix cell, through the octave span
+        # on screen) shows.
+        midi_kl = self._table_ctrl.model.midi_at(index.row(), index.column())
+        if midi_kl is None:
+            return
         if self._layout_mode == 'matrix':
-            # Row = chroma index (0..11), column = octave within the span the
-            # columns were painted for.
-            col = table.columnAt(pos.x())
-            if col < 0:
-                return
-            lo_oct, hi_oct = self._table_ctrl.painted_octave_span()
-            octave = lo_oct + col
-            if octave > hi_oct:
-                return
-            midi_visible = (octave + 1) * 12 + row
-            midi_kl = midi_visible + transp if session.display == 'griff' else midi_visible
             # Only offer the action if this cell actually holds played data.
             st = session.stats.get(midi_kl)
             if st is None or st.n == 0:
                 return
-        else:
-            # Rows are the sorted stats after the table's min-N filter (rows
-            # with 1..min_n-1 readings are hidden), so index the same
-            # filtered list or the row maps to another note.
-            min_n = self._cfg.min_n_visible
-            keys = sorted(k for k, st in session.stats.items()
-                          if st.n == 0 or st.n >= min_n)
-            if row >= len(keys):
-                return
-            midi_kl = keys[row]
 
         t = self._tr.t
         note = f"{midi_note_name(midi_kl - transp)} / {midi_note_name(midi_kl)}"

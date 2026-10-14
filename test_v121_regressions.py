@@ -187,7 +187,7 @@ def test_matrix_span_follows_display_and_played_notes(tmp_path):
         lo, hi = ctrl.painted_octave_span()
         out["played_live"] = list(ctrl._matrix_octave_range())
         out["played_painted"] = [lo, hi]
-        out["columns"] = win._tuner_tab._table.columnCount()
+        out["columns"] = win._tuner_tab._table.model().columnCount()
 
         # Right-click a played cell: the menu must name that note.
         captured = []
@@ -580,8 +580,9 @@ def test_bar_delegate_and_table_use_shared_thresholds(tmp_path):
         win._session.stats.clear()
         win._session.stats[69] = st
         win._tuner_tab.refresh_table()
-        out["mean_text"] = win._tuner_tab._table.item(0, 2).text()
-        out["mean_color"] = win._tuner_tab._table.item(0, 2).foreground().color().name()
+        mean_cell = win._tuner_tab._table.model().index(0, 2)
+        out["mean_text"] = mean_cell.data()
+        out["mean_color"] = mean_cell.data(Qt.ItemDataRole.ForegroundRole).color().name()
     ''')
     assert "warn" in out["bars"]["8.0"] and "bad" not in out["bars"]["8.0"]
     assert "bad" in out["bars"]["15.0"]

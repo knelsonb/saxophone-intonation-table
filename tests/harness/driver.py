@@ -45,9 +45,10 @@ the list below is the contract the rewrite must keep or update here:
       ``_btn_csv`` ``_btn_chart`` ``_btn_import`` ``_btn_custom``;
   TUNER tab (``_tuner_tab``, sax_tab_tuner.TunerTab)
     * tuner: ``_tuner`` (``note`` ``cents`` ``freq`` ``active``) and
-      ``_status_lbl``; table: ``_table`` (QTableWidget, single layout: columns
-      fingered/sounding/mean/std/N/bar, mean cell foreground = band colour;
-      matrix layout: cell UserRole payload dicts), ``_caption``,
+      ``_status_lbl``; table: ``_table`` (a QTableView over
+      sax_table.IntonationTableModel; single layout: DisplayRole columns
+      fingered/sounding/mean/std/N/bar, mean cell ForegroundRole brush = band
+      colour; matrix layout: cell UserRole payload dicts), ``_caption``,
       ``layout_mode``, ``refresh_table()``, signal
       ``_table.customContextMenuRequested``; ``_min_n_spin``, ``_cb_oor``;
     * state: ``_session`` (sax_session.SessionModel: ``instrument``
@@ -130,7 +131,7 @@ DATA_FILES = {
     "history": "log.jsonl",
 }
 
-# Table band colours (sax_table._refresh_single) -> harness band names.
+# Table band colours (sax_table, the mean column's ForegroundRole) -> harness band names.
 _BAND_BY_COLOUR = {"#3a9e5f": "green", "#c8a020": "amber", "#c03030": "red"}
 
 # `_lang_title_key` property of the app's own form dialogs -> harness kind.
@@ -601,29 +602,28 @@ class AppDriver:
 
     # =================================================================== table
     def table_rows(self, played_only: bool = True) -> list[Row]:
+        from PyQt6.QtCore import Qt
         self.settle()
         w = self.win
-        t = w._tuner_tab._table
+        m = w._tuner_tab._table.model()
         rows: list[Row] = []
         if w._tuner_tab.layout_mode == "single":
             griff = (w._session.display == "griff")
-            for r in range(t.rowCount()):
-                cells = [t.item(r, c).text() if t.item(r, c) else "" for c in range(6)]
+            for r in range(m.rowCount()):
+                cells = [m.index(r, c).data() or "" for c in range(6)]
                 fingered, sounding = (cells[0], cells[1]) if griff else (cells[1], cells[0])
                 n = int(cells[4]) if cells[4].isdigit() else 0
                 band = None
                 if n:
-                    colour = t.item(r, 2).foreground().color().name().lower()
-                    band = _BAND_BY_COLOUR.get(colour)
+                    brush = m.index(r, 2).data(Qt.ItemDataRole.ForegroundRole)
+                    band = _BAND_BY_COLOUR.get(brush.color().name().lower())
                 rows.append(Row(fingered, sounding, _parse_cents(cells[2]),
                                 _parse_cents(cells[3]), n, band))
         else:
-            from PyQt6.QtCore import Qt
             theme = sys.modules["sax_theme"]
-            for r in range(t.rowCount()):
-                for c in range(t.columnCount()):
-                    item = t.item(r, c)
-                    pay = item.data(Qt.ItemDataRole.UserRole) if item else None
+            for r in range(m.rowCount()):
+                for c in range(m.columnCount()):
+                    pay = m.index(r, c).data(Qt.ItemDataRole.UserRole)
                     if not isinstance(pay, dict) or not pay.get("n") or pay.get("mean") is None:
                         continue
                     mean = pay["mean"]
@@ -652,46 +652,47 @@ class AppDriver:
         t = w._tuner_tab._table
         if w._tuner_tab.layout_mode == "single":
             rows = self.table_rows(played_only=False)
-            index = next((i for i, r in enumerate(rows)
-                          if r.is_named(name) and r.n > 0), None)
-            if index is None:
+            row = next((i for i, r in enumerate(rows)
+                        if r.is_named(name) and r.n > 0), None)
+            if row is None:
                 raise HarnessError(f"no played row named {name!r} in the table")
-            item = t.item(index, 0)
+            index = t.model().index(row, 0)
         else:
-            item = self._matrix_cell(name)
-        t.scrollToItem(item)
-        pos = t.visualRect(t.indexFromItem(item)).center()
+            index = self._matrix_cell(name)
+        t.scrollTo(index)
+        pos = t.visualRect(index).center()
         with self.dialogs.scope():
             self.dialogs.expect_menu(self.t("ctx_discard"))
             self.dialogs.expect("question", "Yes" if confirm else "No", optional=True)
             t.customContextMenuRequested.emit(pos)
 
     def _matrix_cell(self, name: str):
-        """The matrix cell showing played data for ``name`` (fingered or
-        sounding spelling). Uses the cell UserRole payload dicts painted by
-        the table controller; a cell below the minimum count has no mean and
-        is not offered, as nothing is shown in it."""
+        """The model index of the matrix cell showing played data for
+        ``name`` (fingered or sounding spelling). Uses the cell UserRole
+        payload dicts the table model paints from; a cell below the minimum
+        count has no mean and is not offered, as nothing is shown in it."""
         from PyQt6.QtCore import Qt
         self.settle()
-        t = self.win._tuner_tab._table
-        for r in range(t.rowCount()):
-            for c in range(t.columnCount()):
-                item = t.item(r, c)
-                pay = item.data(Qt.ItemDataRole.UserRole) if item else None
+        m = self.win._tuner_tab._table.model()
+        for r in range(m.rowCount()):
+            for c in range(m.columnCount()):
+                index = m.index(r, c)
+                pay = index.data(Qt.ItemDataRole.UserRole)
                 if not isinstance(pay, dict) or not pay.get("n") or pay.get("mean") is None:
                     continue
                 if any(name in note_spellings(pay[k])
                        for k in ("fingered_name", "sounding_name")):
-                    return item
+                    return index
         raise HarnessError(f"no played cell named {name!r} in the matrix")
 
     def table_columns(self) -> list[str]:
         """Column header labels as displayed (``_table`` horizontal header):
         the six list columns, or one octave label per matrix column."""
+        from PyQt6.QtCore import Qt
         self.settle()
-        t = self.win._tuner_tab._table
-        return [t.horizontalHeaderItem(c).text() if t.horizontalHeaderItem(c) else ""
-                for c in range(t.columnCount())]
+        m = self.win._tuner_tab._table.model()
+        return [m.headerData(c, Qt.Orientation.Horizontal) or ""
+                for c in range(m.columnCount())]
 
     def stats_total_n(self) -> int:
         return sum(s.n for s in self.win._session.stats.values())

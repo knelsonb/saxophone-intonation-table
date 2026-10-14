@@ -684,7 +684,7 @@ class MatrixCellDelegate(QStyledItemDelegate):
     note label (so the player still knows what note that row+column
     represents) on a darker background.
 
-    Data layout per cell (set on the QTableWidgetItem):
+    Data layout per cell (the table model's UserRole, see sax_table):
         ItemDataRole.UserRole → dict {
             'mean':          float | None,
             'std':           float | None,

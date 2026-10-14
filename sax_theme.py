@@ -305,13 +305,13 @@ def build_app_qss(p: ThemePalette) -> str:
         QPushButton#chrome:disabled{{background:{p.alt_bg};color:{p.text_dim};}}
         /* intonation matrix table — was an inline dark sheet that ignored the
            theme (its empty viewport stayed black in light mode) */
-        QTableWidget#matrix{{background:{p.base_bg};color:{p.text};
+        QTableView#matrix{{background:{p.base_bg};color:{p.text};
                    gridline-color:{p.panel_border};font-size:14px;border:none;}}
-        QTableWidget#matrix::item{{padding:5px 8px;}}
-        QTableWidget#matrix::item:alternate{{background:{p.tab_hover_bg};}}
-        QTableWidget#matrix::item:selected{{background:{p.accent_muted};
+        QTableView#matrix::item{{padding:5px 8px;}}
+        QTableView#matrix::item:alternate{{background:{p.tab_hover_bg};}}
+        QTableView#matrix::item:selected{{background:{p.accent_muted};
                    color:{p.text_bright};}}
-        QTableWidget#matrix QHeaderView::section{{background:{p.alt_bg};
+        QTableView#matrix QHeaderView::section{{background:{p.alt_bg};
                    color:{p.text_dim};font-size:12px;padding:6px;border:none;
                    border-bottom:1px solid {p.input_border};}}
         /* min-N spinbox (input chrome) + dim 12px labels */
