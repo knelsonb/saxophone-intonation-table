@@ -2066,6 +2066,7 @@ class MainWindow(QMainWindow):
             self._pipes_ctrl = PitchPipesController(
                 self._engine.mixer, self._output_rate(),
                 a4=float(self._engine.a4),
+                engine=self._engine,   # held pads are D3 duck consumers
                 on_state_changed=self._on_pipes_state_changed)
 
         from PyQt6.QtWidgets import QGridLayout

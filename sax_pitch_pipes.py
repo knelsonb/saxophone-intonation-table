@@ -8,8 +8,11 @@ it, tap again to release; several can sound at once.
 Unlike the metronome click (unpitched), a sustained pipe IS a pitched output —
 so each :class:`PitchPipeSource` reports ``active_midi`` (audible-tail aware,
 like the drone) and therefore participates in the D3 mic-coordination
-vote-exclude + duck the moment it sounds. Pure numpy, no Qt / no sounddevice,
-so the frequency math and the sources are unit-testable directly on a Mixer.
+vote-exclude the moment it sounds. Given the engine, the controller also
+attaches each pad as a duck consumer, so mic bleed of a pad is ducked like
+the drone's, and a player holding the pad's note in unison is measured. Pure
+numpy, no Qt / no sounddevice, so the frequency math and the sources are
+unit-testable directly on a Mixer.
 """
 
 from __future__ import annotations
@@ -19,6 +22,7 @@ from typing import Callable, Dict, List, Optional
 
 import numpy as np
 
+from sax_mixer import GainGlide
 from sax_pitch import A4_DEFAULT, midi_to_freq
 
 # Default chromatic octave: C4 (MIDI 60) .. B4 (MIDI 71).
@@ -85,6 +89,8 @@ class PitchPipeSource:
         self._env_target = 1.0
         self._done = False  # True once a release has fully faded out
         self._set_rate_steps()
+        # The D3 duck (engine coordination); open unless mic bleed is heard.
+        self._duck = GainGlide(int(max_block), self.samplerate, initial=1.0)
         self._max_block = 0
         self._alloc(max_block)
 
@@ -103,6 +109,7 @@ class PitchPipeSource:
         self._ramp = np.arange(self._max_block, dtype=np.float32)
         self._work = np.zeros(self._max_block, dtype=np.float32)
         self._env_work = np.zeros(self._max_block, dtype=np.float32)
+        self._duck.reformat(self._max_block, self.samplerate)
 
     def on_format_changed(self, samplerate: int, max_block: int) -> None:
         """Keep sounding, at the same pitch, on a stream with another rate or
@@ -110,11 +117,16 @@ class PitchPipeSource:
         samplerate, max_block = int(samplerate), int(max_block)
         if samplerate <= 0 or max_block < 1:
             return
-        if samplerate != self.samplerate:
+        rate_changed = samplerate != self.samplerate
+        if rate_changed:
             self.samplerate = samplerate
             self._set_rate_steps()
-        if max_block != self._max_block:
+        if rate_changed or max_block != self._max_block:
             self._alloc(max_block)
+
+    def set_duck_target(self, level: float) -> None:
+        """Engine D3 hook: per-hop duck gain target (in [duck_depth, 1.0])."""
+        self._duck.set_target(level)
 
     def set_a4(self, a4: float) -> None:
         """Retune to a new concert pitch while sounding. The phase is
@@ -187,6 +199,9 @@ class PitchPipeSource:
             if abs(self._env - self._env_target) <= max(self._atk_step, self._rel_step):
                 self._env = self._env_target
 
+        # The duck only costs a pass over the block while it is engaged.
+        if self._duck.gain != 1.0 or self._duck.target != 1.0:
+            self._duck.apply(work, n)
         tgt += work
         self._phase = (self._phase + self._dphi * n) % (2.0 * math.pi)
 
@@ -202,9 +217,12 @@ class PitchPipesController:
     """
 
     def __init__(self, mixer, samplerate: int, *, a4: float = A4_DEFAULT,
-                 max_block: Optional[int] = None,
+                 max_block: Optional[int] = None, engine=None,
                  on_state_changed: Optional[Callable[[], None]] = None):
         self._mixer = mixer
+        # Duck wiring, as for the drone: a sounding pad is attached as a duck
+        # consumer (engine.attach_duck_consumer) and detached once it is gone.
+        self._engine = engine
         self._samplerate = int(samplerate)
         self._a4 = float(a4)
         self._max_block = int(max_block) if max_block else int(
@@ -247,11 +265,19 @@ class PitchPipesController:
         sr, mb = self._format()
         new = PitchPipeSource(midi, sr, mb, a4=self._a4)
         if src is not None:
-            self._mixer.unregister(src)
+            self._drop(src)
         self._pads[midi] = new
         self._mixer.register(new)
+        if self._engine is not None:
+            self._engine.attach_duck_consumer(new)
         self._emit()
         return True
+
+    def _drop(self, src: PitchPipeSource) -> None:
+        """Take a pad out of the mix and out of the duck."""
+        self._mixer.unregister(src)
+        if self._engine is not None:
+            self._engine.detach_duck_consumer(src)
 
     def release(self, midi: int) -> None:
         src = self._pads.get(int(midi))
@@ -275,7 +301,7 @@ class PitchPipesController:
         if not self._pads:
             return
         for src in self._pads.values():
-            self._mixer.unregister(src)
+            self._drop(src)
         self._pads.clear()
         self._emit()
 
@@ -295,5 +321,4 @@ class PitchPipesController:
         """Unregister pads whose release tail has fully faded."""
         done = [m for m, s in self._pads.items() if s.finished]
         for m in done:
-            self._mixer.unregister(self._pads[m])
-            del self._pads[m]
+            self._drop(self._pads.pop(m))

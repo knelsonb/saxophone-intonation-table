@@ -665,15 +665,17 @@ class AudioEngine:
         # The coordinator is PURE policy (sax_coordination); the engine is its
         # CONSUMER. Each detection hop the analysis consumer runs one coordination
         # step: vote-exclude the output's sounding MIDIs from the incumbent
-        # lock, and push the ducked gain target to the attached duck consumer
-        # (the drone source). Inert until something pitched is sounding —
+        # lock, and push the ducked gain target to the attached duck consumers
+        # (the drone and held pitch pads). Inert until something pitched is sounding —
         # get_sounding_output_midis() is empty, so it excludes nothing and the
         # duck stays fully open — so it changes nothing until a drone or
         # pitch pipe plays.
         self.coordinator = OutputCoordinator(samplerate=DEFAULT_SAMPLE_RATE)
-        # The source whose gain the duck drives (drone). Attached by the
-        # DroneController on enable; duck-typed (anything with set_duck_target).
-        self._duck_consumer = None
+        # The sources whose gain the duck drives: the drone and held pitch
+        # pads, attached by their controllers while they sound; duck-typed
+        # (anything with set_duck_target). Swapped whole, so the analysis
+        # consumer iterates a stable tuple without a lock.
+        self._duck_consumers: tuple = ()
         # Handle for the engine-managed test tone, so
         # start/stop_test_tone are idempotent and don't leak sources.
         self._test_tone_handle = None
@@ -1389,18 +1391,22 @@ class AudioEngine:
         return self.mixer.sounding_midis()
 
     def attach_duck_consumer(self, consumer) -> None:
-        """Register the source whose gain the D3 duck drives (the drone).
-        Duck-typed: ``consumer`` need only expose ``set_duck_target(level)``.
-        The DroneController calls this on enable; ``detach_duck_consumer`` on
-        disable. A bare attribute store — atomic under the GIL, no lock."""
-        self._duck_consumer = consumer
+        """Add a source whose gain the D3 duck drives (the drone, a pitch
+        pad). Duck-typed: ``consumer`` need only expose
+        ``set_duck_target(level)``. Its controller calls this when it starts
+        sounding and ``detach_duck_consumer`` when it stops."""
+        if consumer not in self._duck_consumers:
+            self._duck_consumers = self._duck_consumers + (consumer,)
 
     def detach_duck_consumer(self, consumer=None) -> None:
-        """Drop the duck consumer (drone disabled / stopped). With no arg, or
-        when ``consumer`` matches the current one, clears it; otherwise no-op
-        (so a stale detach can't unhook a newer consumer)."""
-        if consumer is None or consumer is self._duck_consumer:
-            self._duck_consumer = None
+        """Drop one duck consumer, or all of them with no argument. Detaching
+        one that is not attached is a no-op, so a stale detach can't unhook
+        another consumer."""
+        if consumer is None:
+            self._duck_consumers = ()
+        elif consumer in self._duck_consumers:
+            self._duck_consumers = tuple(
+                c for c in self._duck_consumers if c is not consumer)
 
     def coordination_step(self, detected_midi: Optional[int],
                           level: Optional[float] = None) -> frozenset[int]:
@@ -1416,9 +1422,9 @@ class AudioEngine:
         ``detected_midi`` (no mic audio needed) and asserts the duck/vote
         behaviour.
 
-        Pushes the (already-ramped) duck level to the attached duck consumer
-        (the drone) via ``set_duck_target``; the consumer's own GainGlide does
-        the per-sample de-zipper. Inert when nothing pitched sounds: the
+        Pushes the (already-ramped) duck level to every attached duck consumer
+        (the drone, held pitch pads) via ``set_duck_target``; each consumer's
+        own GainGlide does the per-sample de-zipper. Inert when nothing pitched sounds: the
         coordinator excludes nothing and the duck target stays 1.0.
 
         Must be called OUTSIDE ``self._lock`` — it briefly takes the mixer lock
@@ -1427,8 +1433,7 @@ class AudioEngine:
         decision = self.coordinator.update(detected_midi,
                                            self.get_sounding_output_midis(),
                                            level)
-        consumer = self._duck_consumer
-        if consumer is not None:
+        for consumer in self._duck_consumers:
             try:
                 consumer.set_duck_target(decision.duck_level)
             except Exception:
@@ -2317,7 +2322,7 @@ class AudioEngine:
             # before any gain change. Without a duck consumer the duck changes
             # nothing audible and proves nothing, so no level is passed.
             level = None
-            if midi is not None and self._duck_consumer is not None:
+            if midi is not None and self._duck_consumers:
                 tail = ring.window[-ring.hop:]
                 level = math.sqrt(float(np.dot(tail, tail)) / tail.size)
             return self.coordination_step(midi, level)
