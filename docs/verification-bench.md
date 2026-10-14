@@ -60,7 +60,7 @@ bench sections map onto them:
 ### 3. Resilience — survives a device switch mid-session
 | § | Scenario | Verified |
 |---|----------|----------|
-| 11 | output device swapped while the metronome runs (Option-B `resync`) | drift-free grid on **each** side of the switch + a prompt re-attack on the new stream |
+| 11 | output device swapped while the metronome runs (`Mixer.set_format`) | drift-free grid on **each** side of the switch + the first click on the new stream one beat after the last click on the old one |
 
 ### 4. Self-verification — the bench has *teeth* (it can turn red)
 | § | What | Why |
@@ -150,10 +150,11 @@ hold (`format_cents`; locked by `test_format_cents.py`).
   the player a drone reference they can hold a note against. (Surfaced in the SETUP
   voice picker as "Pure Sine"; the 5-voice Android catalog `DRONE_PRESETS` is left
   untouched — it's a desktop-only synthesised voice, `DRONE_SYNTH_VOICES`.)
-- **Device-switch resync re-attacks; it does not phase-preserve.** A switch has an
-  unknown silent gap, so `resync()` re-anchors the next beat at the start of the
-  new clock and continues the beat *index*/accent — it does not preserve a
-  sub-beat phase across silence no one hears (§11; `sax_metronome` resync).
+- **A device switch keeps the beat.** The reopen restarts the mixer clock
+  (`Mixer.set_format`); the pending beat keeps its distance in time, so the next
+  click comes one beat after the last one heard, and the beat *index*/accent
+  continues. The silent gap of the switch itself is not counted: the beat is
+  kept in stream time (§11; `sax_metronome`).
 - **`detect_tone(sr=…)` configures the whole pipeline.** Building §14 surfaced (and
   fixed) a latent harness incoherence: the `sr` kwarg set tone-generation but not
   the engine's detection rate, so it only behaved at the 44.1 k default. It now
