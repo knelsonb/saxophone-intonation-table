@@ -78,10 +78,10 @@ def test_the_chart_greys_only_notes_beyond_the_extended_range(make_app):
 
 
 def test_an_edited_range_moves_the_guide_rows_but_keeps_altissimo_in_range(make_app):
-    """Narrowing the alto to C4..C6 in the range editor changes the blank rows
-    (seen after a restart: narrowing in place leaves the old blank rows, a
-    separate known issue); altissimo is still a note the alto reaches, so the
-    filter keeps it."""
+    """Narrowing the alto to C4..C6 in the range editor changes the blank rows,
+    also after a restart (the rows right after the edit are covered by
+    test_narrowing_the_range_drops_the_blank_rows_at_once); altissimo is still
+    a note the alto reaches, so the filter keeps it."""
     app = make_app(config=on("eb_alto", **FILTER_ON))
     app.launch()
     assert app.settings.edit_range("C4", "C6")
