@@ -152,6 +152,16 @@ def test_register_brings_a_late_source_to_the_current_format():
     assert src.formats == [(96000, 2048)]
 
 
+def test_schedule_now_places_the_event_at_the_current_clock():
+    m = Mixer(max_block=128)
+    out = np.zeros(128, dtype=np.float32)
+    m.render(out, 100)
+    fired = []
+    assert m.schedule_now(fired.append) == 100
+    m.render(out, 128)
+    assert fired == [0], "it fires at the start of the next render"
+
+
 def test_mixer_without_a_format_leaves_sources_alone():
     """samplerate 0 means no output format yet: sources keep their own rate."""
     m = Mixer(max_block=256)

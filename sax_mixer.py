@@ -303,21 +303,35 @@ class Mixer:
             if abs_sample < self._clock:
                 self.dropped_events += 1
                 return False
-            seq = self._event_seq
-            self._event_seq += 1
-            # Insert keeping the list sorted ascending. The pending set is
-            # tiny (a handful of upcoming clicks), so a linear insert is
-            # cheaper than a heap and keeps fire order trivially correct.
-            entry = (abs_sample, seq, event)
-            lo, hi = 0, len(self._events)
-            while lo < hi:
-                mid = (lo + hi) // 2
-                if self._events[mid][:2] < entry[:2]:
-                    lo = mid + 1
-                else:
-                    hi = mid
-            self._events.insert(lo, entry)
+            self._insert(abs_sample, event)
         return True
+
+    def schedule_now(self, event: Event) -> int:
+        """Schedule ``event`` at the current clock (the first sample of the
+        next render) and return that sample. Reading the clock and inserting
+        happen under one lock, so a caller on another thread cannot place the
+        event by a clock that an output reopen has just restarted."""
+        with self._lock:
+            abs_sample = self._clock
+            self._insert(abs_sample, event)
+        return abs_sample
+
+    def _insert(self, abs_sample: int, event: Event) -> None:
+        """Add an event to the sorted schedule. Callers hold ``_lock``."""
+        seq = self._event_seq
+        self._event_seq += 1
+        # Insert keeping the list sorted ascending. The pending set is
+        # tiny (a handful of upcoming clicks), so a linear insert is
+        # cheaper than a heap and keeps fire order trivially correct.
+        entry = (abs_sample, seq, event)
+        lo, hi = 0, len(self._events)
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if self._events[mid][:2] < entry[:2]:
+                lo = mid + 1
+            else:
+                hi = mid
+        self._events.insert(lo, entry)
 
     def pending_events(self) -> int:
         """Count of not-yet-fired scheduled events. Diagnostics / tests."""

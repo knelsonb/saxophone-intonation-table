@@ -18,6 +18,7 @@ unit-testable directly on a Mixer.
 from __future__ import annotations
 
 import math
+import threading
 from typing import Callable, Dict, List, Optional
 
 import numpy as np
@@ -88,6 +89,10 @@ class PitchPipeSource:
         self._env = 0.0
         self._env_target = 1.0
         self._done = False  # True once a release has fully faded out
+        # Serialises an A4 change (GUI) against a rate change (audio-control
+        # thread): both recompute the steps from freq and rate. render()
+        # never takes it.
+        self._ctl = threading.Lock()
         self._set_rate_steps()
         # The D3 duck (engine coordination); open unless mic bleed is heard.
         self._duck = GainGlide(int(max_block), self.samplerate, initial=1.0)
@@ -117,12 +122,13 @@ class PitchPipeSource:
         samplerate, max_block = int(samplerate), int(max_block)
         if samplerate <= 0 or max_block < 1:
             return
-        rate_changed = samplerate != self.samplerate
-        if rate_changed:
-            self.samplerate = samplerate
-            self._set_rate_steps()
-        if rate_changed or max_block != self._max_block:
-            self._alloc(max_block)
+        with self._ctl:
+            rate_changed = samplerate != self.samplerate
+            if rate_changed:
+                self.samplerate = samplerate
+                self._set_rate_steps()
+            if rate_changed or max_block != self._max_block:
+                self._alloc(max_block)
 
     def set_duck_target(self, level: float) -> None:
         """Engine D3 hook: per-hop duck gain target (in [duck_depth, 1.0])."""
@@ -131,8 +137,9 @@ class PitchPipeSource:
     def set_a4(self, a4: float) -> None:
         """Retune to a new concert pitch while sounding. The phase is
         continuous, so a held pad glides to the new pitch without a click."""
-        self.freq = midi_to_freq(self._midi, a4)
-        self._set_rate_steps()
+        with self._ctl:
+            self.freq = midi_to_freq(self._midi, a4)
+            self._set_rate_steps()
 
     # -- control ------------------------------------------------------------
     @property

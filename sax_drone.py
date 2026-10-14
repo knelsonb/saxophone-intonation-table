@@ -29,6 +29,7 @@ installed.
 from __future__ import annotations
 
 import math
+import threading
 from typing import Callable, List, Optional, Tuple
 
 import numpy as np
@@ -211,6 +212,11 @@ class DroneSource:
         self._note: Optional[int] = None      # currently note-on MIDI, or None
         self._sounding: Optional[int] = None   # audible MIDI incl. tail, or None
         self._silent_blocks = 0
+        # Serialises the control side: the GUI's note / voice / A4 changes
+        # against a format change on the audio-control thread, which swaps
+        # the synth. render() never takes it (no render runs during a format
+        # change).
+        self._ctl = threading.RLock()
 
         self._syn, self._sfid = self._new_synth(self.samplerate)
         self._half32 = np.float32(0.5)
@@ -257,19 +263,28 @@ class DroneSource:
         if samplerate <= 0 or max_block < 1:
             return
         rate_changed = samplerate != self.samplerate
+        syn = sfid = None
         if rate_changed:
+            # Loading the SoundFont is slow: do it before taking the lock.
             syn, sfid = self._new_synth(samplerate)
-            if self._note is not None:
-                syn.noteon(0, self._note, 100)
-            old = self._syn
-            self._syn, self._sfid = syn, sfid
-            self.samplerate = samplerate
+        old = None
+        with self._ctl:
+            if syn is not None:
+                # Bring in what changed while it loaded, then swap.
+                syn.program_select(0, sfid, 0, self._program)
+                syn.set_tuning(0, _a4_to_tuning_semitones(self._a4))
+                if self._note is not None:
+                    syn.noteon(0, self._note, 100)
+                old = self._syn
+                self._syn, self._sfid = syn, sfid
+                self.samplerate = samplerate
+            if rate_changed or max_block != self._max_block:
+                self._alloc(max_block)
+        if old is not None:
             try:
                 old.sounds_off()
             except Exception:
                 pass
-        if rate_changed or max_block != self._max_block:
-            self._alloc(max_block)
 
     # -- control ------------------------------------------------------------
     def set_volume(self, volume: float) -> None:
@@ -281,19 +296,21 @@ class DroneSource:
         # for a program outside the GM range [0,127]; clamp. The controller's
         # resolve_drone_voice already yields a valid program — this guards
         # direct / API callers.
-        self._program = max(0, min(127, int(gm_program)))
-        self._syn.program_select(0, self._sfid, 0, self._program)
-        if self._note is not None:           # re-voice a sounding note
-            self._retrigger()
+        with self._ctl:
+            self._program = max(0, min(127, int(gm_program)))
+            self._syn.program_select(0, self._sfid, 0, self._program)
+            if self._note is not None:           # re-voice a sounding note
+                self._retrigger()
 
     def set_a4(self, a4: float) -> None:
         a4 = float(a4)
         if not math.isfinite(a4) or a4 <= 0.0:
             return            # a4 <= 0 -> _a4_to_tuning_semitones' log2 domain error
-        self._a4 = a4
-        self._syn.set_tuning(0, _a4_to_tuning_semitones(self._a4))
-        if self._note is not None:
-            self._retrigger()
+        with self._ctl:
+            self._a4 = a4
+            self._syn.set_tuning(0, _a4_to_tuning_semitones(self._a4))
+            if self._note is not None:
+                self._retrigger()
 
     def set_duck_target(self, level: float) -> None:
         """Engine D3 hook: per-hop duck gain target (in [duck_depth, 1.0])."""
@@ -301,17 +318,19 @@ class DroneSource:
 
     def note_on(self, midi: int, velocity: int = 100) -> None:
         midi = max(0, min(127, int(midi)))
-        if self._note is not None:
-            self._syn.noteoff(0, self._note)
-        self._note = midi
-        self._syn.noteon(0, midi, int(velocity))
-        self._sounding = midi
-        self._silent_blocks = 0
+        with self._ctl:
+            if self._note is not None:
+                self._syn.noteoff(0, self._note)
+            self._note = midi
+            self._syn.noteon(0, midi, int(velocity))
+            self._sounding = midi
+            self._silent_blocks = 0
 
     def note_off(self) -> None:
-        if self._note is not None:
-            self._syn.noteoff(0, self._note)
-            self._note = None
+        with self._ctl:
+            if self._note is not None:
+                self._syn.noteoff(0, self._note)
+                self._note = None
         # _sounding stays set until the release tail fades (audible-tail rule).
 
     def silence(self) -> None:
@@ -321,18 +340,19 @@ class DroneSource:
         drain the tail (output stopped): otherwise active_midi (== _sounding)
         would stick non-None and the D3 coordinator would vote-exclude that MIDI
         forever."""
-        if self._note is not None:
+        with self._ctl:
+            if self._note is not None:
+                try:
+                    self._syn.noteoff(0, self._note)
+                except Exception:
+                    pass
+                self._note = None
             try:
-                self._syn.noteoff(0, self._note)
+                self._syn.sounds_off()
             except Exception:
                 pass
-            self._note = None
-        try:
-            self._syn.sounds_off()
-        except Exception:
-            pass
-        self._sounding = None
-        self._silent_blocks = 0
+            self._sounding = None
+            self._silent_blocks = 0
 
     def _retrigger(self) -> None:
         note = self._note
@@ -352,12 +372,13 @@ class DroneSource:
         return self._duck.gain
 
     def close(self) -> None:
-        try:
-            self._syn.sounds_off()
-        except Exception:
-            pass
-        self._note = None
-        self._sounding = None
+        with self._ctl:
+            try:
+                self._syn.sounds_off()
+            except Exception:
+                pass
+            self._note = None
+            self._sounding = None
 
     # -- MixerSource render -------------------------------------------------
     def render(self, out: np.ndarray, frames: int, t0: int) -> None:
@@ -463,6 +484,9 @@ class SineDroneSource:
         self._note: Optional[int] = None      # currently note-on MIDI, or None
         self._sounding: Optional[int] = None   # audible MIDI incl. tail, or None
         self._silent_blocks = 0
+        # Serialises pitch changes (GUI) against a rate change (audio-control
+        # thread): both rewrite _inc from the rate. render() never takes it.
+        self._ctl = threading.Lock()
         self._alloc(self._max_block)
 
     def _alloc(self, max_block: int) -> None:
@@ -485,14 +509,15 @@ class SineDroneSource:
         samplerate, max_block = int(samplerate), int(max_block)
         if samplerate <= 0 or max_block < 1:
             return
-        rate_changed = samplerate != self.samplerate
-        if rate_changed:
-            # Radians per sample scale inversely with the rate; this also
-            # keeps a releasing tail (no note) at its pitch.
-            self._inc *= self.samplerate / samplerate
-            self.samplerate = samplerate
-        if rate_changed or max_block != self._max_block:
-            self._alloc(max_block)
+        with self._ctl:
+            rate_changed = samplerate != self.samplerate
+            if rate_changed:
+                # Radians per sample scale inversely with the rate; this also
+                # keeps a releasing tail (no note) at its pitch.
+                self._inc *= self.samplerate / samplerate
+                self.samplerate = samplerate
+            if rate_changed or max_block != self._max_block:
+                self._alloc(max_block)
 
     # -- control ------------------------------------------------------------
     def set_volume(self, volume: float) -> None:
@@ -509,9 +534,10 @@ class SineDroneSource:
         a4 = float(a4)
         if not math.isfinite(a4) or a4 <= 0.0:
             return                 # match DroneSource.set_a4 + the engine
-        self._a4 = a4
-        if self._note is not None:
-            self._set_freq(self._note)   # phase stays continuous -> click-free
+        with self._ctl:
+            self._a4 = a4
+            if self._note is not None:
+                self._set_freq(self._note)   # phase stays continuous -> click-free
 
     def set_duck_target(self, level: float) -> None:
         """Engine D3 hook: per-hop duck gain target (in [duck_depth, 1.0])."""
@@ -523,8 +549,9 @@ class SineDroneSource:
 
     def note_on(self, midi: int, velocity: int = 100) -> None:
         midi = max(0, min(127, int(midi)))
-        self._note = midi
-        self._set_freq(midi)
+        with self._ctl:
+            self._note = midi
+            self._set_freq(midi)
         self._env.set_target(1.0)        # ramp up (click-free attack)
         self._sounding = midi
         self._silent_blocks = 0

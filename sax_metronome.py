@@ -397,11 +397,13 @@ class MetronomeController:
         self._run_gen += 1
         self._click.arm()              # clear any pending stop before re-register
         self._mixer.register(self._click)
-        self._anchor = int(self._mixer.clock)
         self._anchor_beat = 0
         self._anchor_bpm = float(self.bpm)
         self._beat = -1            # fresh run: no beat has fired yet
-        self._schedule_beat(0)
+        # Beat 0 goes at the mixer's clock as it reads now, under the mixer's
+        # lock: a start that races an output reopen still lands on the new
+        # stream's clock (the reopen moves it), never on the old one's.
+        self._anchor = self._mixer.schedule_now(self._beat_event(0))
         self._emit()
 
     def stop(self) -> None:
@@ -425,6 +427,19 @@ class MetronomeController:
 
     def _schedule_beat(self, beat_index: int) -> None:
         onset = self._onset(beat_index)
+        event = self._beat_event(beat_index)
+        if not self._mixer.schedule(onset, event):
+            # Onset already in the past (e.g. a start/clock race or render
+            # starvation). Re-anchor to the live clock and retry once so the
+            # beat chain self-heals rather than stalling silently.
+            self._anchor = int(self._mixer.clock) + 1
+            self._anchor_beat = beat_index
+            self._anchor_bpm = float(self.bpm)
+            self._mixer.schedule(self._onset(beat_index), event)
+
+    def _beat_event(self, beat_index: int):
+        """The mixer event that sounds beat ``beat_index`` and schedules the
+        next one."""
         accent = self.is_accent(beat_index)
 
         def event(offset: int, bi: int = beat_index, ac: bool = accent,
@@ -445,14 +460,7 @@ class MetronomeController:
             self._click.trigger(ac, offset)
             self._schedule_next(bi)
 
-        if not self._mixer.schedule(onset, event):
-            # Onset already in the past (e.g. a start/clock race or render
-            # starvation). Re-anchor to the live clock and retry once so the
-            # beat chain self-heals rather than stalling silently.
-            self._anchor = int(self._mixer.clock) + 1
-            self._anchor_beat = beat_index
-            self._anchor_bpm = float(self.bpm)
-            self._mixer.schedule(self._onset(beat_index), event)
+        return event
 
     def _schedule_next(self, prev_beat_index: int) -> None:
         if not self._running:
