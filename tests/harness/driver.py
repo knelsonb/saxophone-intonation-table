@@ -55,10 +55,9 @@ the list below is the contract the rewrite must keep or update here:
   Banners
     * ``_audio_banner`` (``_msg``, ``_btn_retry``), ``_audio_chip`` (``_name``),
       ``_info_banner`` (``_msg``, ``_btn_action``); ``_engine.mixer.active_sources()``.
-  METRO tab
-    * ``_metro_slider`` ``_metro_ts_btns`` ``_btn_metro_start`` ``_metro_ctrl``
-      ``_metro_bpm`` ``_metro_time_sig`` ``_metro_status`` ``_metro_vol_slider``
-      ``_btn_metro_tap``.
+  METRO tab (``_metro_tab``, sax_tab_metro.MetroTab)
+    * ``_slider`` ``_ts_btns`` ``_btn_start`` ``controller`` ``bpm``
+      ``time_sig`` ``_status`` ``_vol_slider`` ``_btn_tap``.
   Drone / pitch pipes
     * SETUP's ``_voice_combo`` (see below) ``_drone_semitone_nudge()`` ``_drone_semitones``
       ``_btn_drone_on`` ``_drone_ctrl`` ``_drone_status``; ``_btn_pipes``
@@ -798,32 +797,32 @@ class AppDriver:
     def metro_start(self, bpm: Optional[int], time_sig: Optional[str]) -> None:
         w = self.win
         if bpm is not None:
-            w._metro_slider.setValue(int(bpm))
+            w._metro_tab._slider.setValue(int(bpm))
         if time_sig is not None:
-            if time_sig not in w._metro_ts_btns:
+            if time_sig not in w._metro_tab._ts_btns:
                 raise HarnessError(f"time signature {time_sig!r} not offered")
-            w._metro_ts_btns[time_sig].click()
-        if not w._btn_metro_start.isChecked():
-            w._btn_metro_start.click()
+            w._metro_tab._ts_btns[time_sig].click()
+        if not w._metro_tab._btn_start.isChecked():
+            w._metro_tab._btn_start.click()
 
     def metro_stop(self) -> None:
-        if self.win._btn_metro_start.isChecked():
-            self.win._btn_metro_start.click()
+        if self.win._metro_tab._btn_start.isChecked():
+            self.win._metro_tab._btn_start.click()
 
     def metro_state(self) -> MetronomeState:
         w = self.win
-        ctrl = w._metro_ctrl
-        status = w._metro_status.text() if not w._metro_status.isHidden() else None
+        ctrl = w._metro_tab.controller
+        status = w._metro_tab._status.text() if not w._metro_tab._status.isHidden() else None
         return MetronomeState(
             running=bool(ctrl is not None and ctrl.is_running()),
-            bpm=int(w._metro_bpm), time_sig=str(w._metro_time_sig),
-            volume=w._metro_vol_slider.value() / 100.0, unavailable_text=status)
+            bpm=int(w._metro_tab.bpm), time_sig=str(w._metro_tab.time_sig),
+            volume=w._metro_tab._vol_slider.value() / 100.0, unavailable_text=status)
 
     def metro_set_volume(self, percent: int) -> None:
-        self.win._metro_vol_slider.setValue(int(percent))
+        self.win._metro_tab._vol_slider.setValue(int(percent))
 
     def metro_tap(self) -> None:
-        self.win._btn_metro_tap.click()
+        self.win._metro_tab._btn_tap.click()
 
     # ===================================================================== drone
     def drone_on(self, note: str, voice: Optional[str]) -> None:

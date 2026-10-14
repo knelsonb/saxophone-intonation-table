@@ -91,7 +91,6 @@ from sax_instruments import (
     transp_map,
 )
 from sax_intonation_log import MeasurementLog
-from sax_metronome import MetronomeController
 from sax_output_status import show_with_reason
 from sax_output_users import OutputUsers
 from sax_paths import AppPaths
@@ -108,6 +107,7 @@ from sax_pitch import (  # noqa: F401  (re-exported for older importers)
 from sax_pitch_pipes import PitchPipesController
 from sax_session import RunTracker, SessionModel
 from sax_session_state import SessionStateController
+from sax_tab_metro import MetroTab
 from sax_tab_setup import SetupTab
 from sax_table import TableController
 from sax_translator import Translator
@@ -736,7 +736,10 @@ class MainWindow(QMainWindow):
         self._tabs.setDocumentMode(True)
         self._tab_keys = ['tuner', 'metro', 'deck', 'setup']
         self._tabs.addTab(splitter, '')
-        self._tabs.addTab(self._build_metro_tab(), '')
+        self._metro_tab = MetroTab(tr=tr, cfg=self._cfg, engine=self._engine,
+                                   output_users=self._output_users)
+        self._metro_tab.running_changed.connect(self.set_metro_running)
+        self._tabs.addTab(self._metro_tab, '')
         self._tabs.addTab(self._build_deck_tab(), '')
         self._setup_tab = SetupTab(
             tr=tr, cfg=self._cfg, store=self._store, engine=self._engine,
@@ -851,9 +854,7 @@ class MainWindow(QMainWindow):
         # faded: a fade would only play when the output is back, over the
         # source started afresh.
         self._setup_tab.park_output()
-        if self._metro_ctrl.is_running():
-            self._metro_ctrl.stop()
-            users.park('metro', self._metro_ctrl.start, self._metro_revert_start)
+        self._metro_tab.park_output()
         if self._drone_ctrl.is_enabled():
             self._drone_ctrl.set_enabled(False)
             users.park('drone', self._drone_on, self._drone_revert_toggle)
@@ -966,244 +967,6 @@ class MainWindow(QMainWindow):
         key = self._cfg.last_active_tab
         if key in self._tab_keys:
             self._tabs.setCurrentIndex(self._tab_keys.index(key))
-
-    # ── METRO tab ─────────────────────────────────────────────────────────────
-    # These mirror Android useMetronome (BPM_MIN/MAX, the four presets).
-    # sax_metronome.py holds the authoritative constants; keep these in step.
-    METRO_TIME_SIGS = ('2/4', '3/4', '4/4', '6/8')
-    METRO_BPM_MIN = 30
-    METRO_BPM_MAX = 300
-
-    def _build_metro_tab(self) -> QWidget:
-        """The metronome panel. Audio is driven by MetronomeController
-        (sax_metronome.py). Start surfaces an inline 'not available' status
-        when no output stream can open, rather than claiming to play — the
-        same honesty discipline as the test-tone button. The GUI-facing
-        controller API is: bpm/time_sig/volume/running,
-        set_bpm/nudge_bpm/set_time_sig/set_volume, register_tap()->Optional[int],
-        start/stop/toggle/is_running, on_state_changed."""
-        # Local UI state, seeded from persisted config (the metronome
-        # fields, read defensively).
-        self._metro_bpm = self._clamp_bpm(self._cfg.last_bpm)
-        self._metro_time_sig = self._cfg.last_time_sig
-        if self._metro_time_sig not in self.METRO_TIME_SIGS:
-            self._metro_time_sig = '4/4'
-        self._metro_running = False
-        # The metronome controller (sax_metronome.py). on_state_changed is the
-        # zero-arg callback that re-syncs this panel from controller state
-        # (the controller is the single source of truth for run/bpm/sig).
-        self._metro_ctrl = MetronomeController(
-            self._engine.mixer, self._output_rate(),
-            bpm=self._metro_bpm,
-            time_sig=self._metro_time_sig,
-            volume=self._cfg.click_volume,
-            on_state_changed=self._on_metro_state_changed)
-
-        tr = self._tr
-        w = QWidget()
-        outer = QVBoxLayout(w)
-        outer.setContentsMargins(24, 20, 24, 20)
-        outer.setSpacing(16)
-        outer.setAlignment(Qt.AlignmentFlag.AlignTop)
-
-        # Big BPM readout.
-        self._metro_bpm_lbl = QLabel(str(self._metro_bpm))
-        self._metro_bpm_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._metro_bpm_lbl.setObjectName('bpmReadout')   # themed accent number
-        outer.addWidget(self._metro_bpm_lbl)
-        unit = QLabel()
-        tr.bind(unit.setText, 'metro_bpm')
-        unit.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        unit.setObjectName('bpmUnit')
-        outer.addWidget(unit)
-
-        # BPM controls: −  [slider 30..300]  +   |  Tap.
-        bpm_row = QHBoxLayout()
-        btn_down = QToolButton()
-        btn_down.setText('−')
-        tr.bind(btn_down.setToolTip, 'metro_nudge_down_tip')
-        btn_down.clicked.connect(lambda: self._metro_nudge(-1))
-        btn_up = QToolButton()
-        btn_up.setText('+')
-        tr.bind(btn_up.setToolTip, 'metro_nudge_up_tip')
-        btn_up.clicked.connect(lambda: self._metro_nudge(1))
-        for b in (btn_down, btn_up):
-            b.setCursor(Qt.CursorShape.PointingHandCursor)
-            b.setObjectName('stepperLg')   # themed via QToolButton#stepperLg
-        self._metro_slider = QSlider(Qt.Orientation.Horizontal)
-        tr.bind(self._metro_slider.setAccessibleName, 'metro_bpm')
-        self._metro_slider.setRange(self.METRO_BPM_MIN, self.METRO_BPM_MAX)
-        self._metro_slider.setValue(self._metro_bpm)
-        self._metro_slider.valueChanged.connect(self._on_metro_slider)
-        self._btn_metro_tap = QPushButton()
-        tr.bind(self._btn_metro_tap.setText, 'metro_tap')
-        tr.bind(self._btn_metro_tap.setToolTip, 'metro_tap_tip')
-        self._btn_metro_tap.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._btn_metro_tap.clicked.connect(self._on_metro_tap)
-        self._btn_metro_tap.setObjectName('chrome')   # themed via QPushButton#chrome
-        bpm_row.addWidget(btn_down)
-        bpm_row.addWidget(self._metro_slider, 1)
-        bpm_row.addWidget(btn_up)
-        bpm_row.addSpacing(12)
-        bpm_row.addWidget(self._btn_metro_tap)
-        outer.addLayout(bpm_row)
-
-        # Time-signature selector (exclusive).
-        ts_grp = QGroupBox()
-        tr.bind(ts_grp.setTitle, 'metro_timesig')
-        ts_l = QHBoxLayout(ts_grp)
-        ts_l.setContentsMargins(12, 8, 12, 8)
-        self._metro_ts_btns: dict = {}
-        for ts in self.METRO_TIME_SIGS:
-            b = QPushButton(ts)
-            b.setCheckable(True)
-            b.setChecked(ts == self._metro_time_sig)
-            b.setCursor(Qt.CursorShape.PointingHandCursor)
-            b.clicked.connect(lambda _checked, t=ts: self._on_metro_timesig(t))
-            b.setObjectName('chip')   # themed via QPushButton#chip
-            self._metro_ts_btns[ts] = b
-            ts_l.addWidget(b)
-        outer.addWidget(ts_grp)
-
-        # Click volume.
-        vol_grp = QGroupBox()
-        tr.bind(vol_grp.setTitle, 'metro_volume')
-        vol_l = QHBoxLayout(vol_grp)
-        vol_l.setContentsMargins(12, 8, 12, 8)
-        self._metro_vol_slider = QSlider(Qt.Orientation.Horizontal)
-        tr.bind(self._metro_vol_slider.setAccessibleName, 'metro_volume')
-        self._metro_vol_slider.setRange(0, 100)
-        vol0 = int(round(self._cfg.click_volume * 100))
-        self._metro_vol_slider.setValue(max(0, min(100, vol0)))
-        self._metro_vol_slider.valueChanged.connect(self._on_metro_volume)
-        self._metro_vol_lbl = QLabel(f'{self._metro_vol_slider.value()}%')
-        self._metro_vol_lbl.setObjectName('dimLabel')
-        self._metro_vol_lbl.setMinimumWidth(44)
-        vol_l.addWidget(self._metro_vol_slider, 1)
-        vol_l.addWidget(self._metro_vol_lbl)
-        outer.addWidget(vol_grp)
-
-        # Start / stop (the run toggle; green→red on run).
-        self._btn_metro_start = QPushButton()
-        tr.bind(self._btn_metro_start.setText, 'metro_start')
-        self._btn_metro_start.setCheckable(True)
-        self._btn_metro_start.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._btn_metro_start.toggled.connect(self._on_metro_toggle)
-        self._btn_metro_start.setStyleSheet(
-            'QPushButton{background:#1a6b3a;color:#fff;border:none;'
-            'border-radius:6px;padding:12px;font-size:16px;font-weight:bold;}'
-            'QPushButton:hover{background:#218a4b;}'
-            'QPushButton:checked{background:#c0392b;}')
-        outer.addWidget(self._btn_metro_start)
-
-        # Inline status — shown only when an audio action can't run yet, so the
-        # controls never silently lie.
-        self._metro_status = QLabel('')
-        self._metro_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._metro_status.setWordWrap(True)
-        self._metro_status.setObjectName('errorLabel')   # themed via QLabel#errorLabel
-        self._metro_status.setVisible(False)
-        outer.addWidget(self._metro_status)
-        outer.addStretch()
-        return w
-
-    def _clamp_bpm(self, v: int) -> int:
-        return max(self.METRO_BPM_MIN, min(self.METRO_BPM_MAX, int(v)))
-
-    def _set_metro_bpm(self, bpm: int, *, from_slider: bool = False) -> None:
-        bpm = self._clamp_bpm(bpm)
-        self._metro_bpm = bpm
-        self._metro_bpm_lbl.setText(str(bpm))
-        if not from_slider and self._metro_slider.value() != bpm:
-            blocked = self._metro_slider.blockSignals(True)
-            self._metro_slider.setValue(bpm)
-            self._metro_slider.blockSignals(blocked)
-        self._cfg.last_bpm = bpm
-        self._metro_ctrl.set_bpm(bpm)
-
-    def _metro_nudge(self, delta: int) -> None:
-        self._set_metro_bpm(self._metro_bpm + delta)
-
-    def _on_metro_slider(self, value: int) -> None:
-        self._set_metro_bpm(value, from_slider=True)
-
-    def _on_metro_timesig(self, ts: str) -> None:
-        self._metro_time_sig = ts
-        for key, btn in self._metro_ts_btns.items():
-            blocked = btn.blockSignals(True)
-            btn.setChecked(key == ts)
-            btn.blockSignals(blocked)
-        self._cfg.last_time_sig = ts
-        self._metro_ctrl.set_time_sig(ts)
-
-    def _on_metro_volume(self, value: int) -> None:
-        self._metro_vol_lbl.setText(f'{value}%')
-        vol = value / 100.0
-        self._cfg.click_volume = vol
-        self._metro_ctrl.set_volume(vol)
-
-    def _on_metro_tap(self) -> None:
-        self._metro_status.setVisible(False)
-        # The controller updates its own bpm and fires on_state_changed, which
-        # re-syncs the readout here — no manual set needed.
-        self._metro_ctrl.register_tap()
-
-    def _metro_revert_start(self, status=None) -> None:
-        """Un-check the Start button (without re-firing the toggle) and show
-        the unavailable status — used whenever the metronome can't actually
-        sound, so the button never claims to be running."""
-        blocked = self._btn_metro_start.blockSignals(True)
-        self._btn_metro_start.setChecked(False)
-        self._btn_metro_start.blockSignals(blocked)
-        self._tr.bind(self._btn_metro_start.setText, 'metro_start')
-        show_with_reason(self._tr, self._metro_status, 'metro_unavailable', status)
-        self._metro_status.setVisible(True)
-
-    def _on_metro_toggle(self, on: bool) -> None:
-        if not on:
-            self._output_users.drop('metro')
-            self._metro_ctrl.stop()   # fires on_state_changed
-            return
-        self._metro_status.setVisible(False)
-        # The metronome sounds through the output mixer: it starts once an
-        # output runs (so 'running' is never shown with nothing to hear), or
-        # reverts with the reason if none can open. Starting it on an output
-        # that already runs leaves the stream (and anything sounding) alone.
-        self._output_users.want('metro', self._metro_ctrl.start,
-                                self._metro_revert_start)
-
-    def _on_metro_state_changed(self) -> None:
-        """Zero-arg slot for MetronomeController.on_state_changed (GUI thread),
-        fired on every bpm/time-sig/volume/running change. The controller is
-        the single source of truth: pull state from it and sync the panel so
-        the run dot, Start/Stop label, BPM readout, and time-sig can't drift."""
-        ctrl = self._metro_ctrl
-        running = bool(ctrl.is_running())
-        self._metro_running = running
-        blocked = self._btn_metro_start.blockSignals(True)
-        self._btn_metro_start.setChecked(running)
-        self._btn_metro_start.blockSignals(blocked)
-        self._tr.bind(self._btn_metro_start.setText,
-                      'metro_stop' if running else 'metro_start')
-        self.set_metro_running(running)
-        # Sync BPM (e.g. tap-tempo changed it inside the controller) + persist.
-        bpm = self._clamp_bpm(int(ctrl.bpm))
-        if bpm != self._metro_bpm:
-            self._metro_bpm = bpm
-            self._metro_bpm_lbl.setText(str(bpm))
-            b2 = self._metro_slider.blockSignals(True)
-            self._metro_slider.setValue(bpm)
-            self._metro_slider.blockSignals(b2)
-            self._cfg.last_bpm = bpm
-        # Sync time-signature + persist.
-        ts = str(ctrl.time_sig)
-        if ts in self._metro_ts_btns and ts != self._metro_time_sig:
-            self._metro_time_sig = ts
-            for k, b in self._metro_ts_btns.items():
-                bb = b.blockSignals(True)
-                b.setChecked(k == ts)
-                b.blockSignals(bb)
-            self._cfg.last_time_sig = ts
 
     # ── Tape deck ─────────────────────────────────────────────────────────────
     # As in the Android useDeck hook: record the MIC to a single take, play it back
@@ -2422,7 +2185,7 @@ class MainWindow(QMainWindow):
         steps = (
             lambda: self._output_users.drop_prefix(''),
             self._setup_tab.shut_down,
-            self._metro_ctrl.stop,
+            self._metro_tab.shut_down,
             self._drone_ctrl.shutdown,
             self._stop_pitch_pipes,
             # The deck disarms the input tap and unregisters its playback;

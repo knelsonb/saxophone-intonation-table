@@ -310,29 +310,31 @@ def main() -> int:
     # the pure-UI controls respond and the audio actions don't lie.
     win._tabs.setCurrentIndex(win._tab_keys.index("metro"))
     app.processEvents()
-    start_bpm = win._metro_bpm
-    win._metro_nudge(5)
-    check(win._metro_bpm == start_bpm + 5 and win._metro_slider.value() == win._metro_bpm,
-          f"BPM nudge/slider out of sync: {win._metro_bpm} / {win._metro_slider.value()}")
-    win._metro_nudge(-100000)
-    check(win._metro_bpm == win.METRO_BPM_MIN,
-          f"BPM did not clamp to min: {win._metro_bpm}")
-    win._metro_nudge(100000)
-    check(win._metro_bpm == win.METRO_BPM_MAX,
-          f"BPM did not clamp to max: {win._metro_bpm}")
-    win._on_metro_timesig("6/8")
-    checked = [t for t, b in win._metro_ts_btns.items() if b.isChecked()]
+    start_bpm = win._metro_tab.bpm
+    win._metro_tab.nudge(5)
+    import sax_tab_metro as _metro
+    _mt = win._metro_tab
+    check(_mt.bpm == start_bpm + 5 and _mt._slider.value() == _mt.bpm,
+          f"BPM nudge/slider out of sync: {_mt.bpm} / {_mt._slider.value()}")
+    win._metro_tab.nudge(-100000)
+    check(win._metro_tab.bpm == _metro.BPM_MIN,
+          f"BPM did not clamp to min: {win._metro_tab.bpm}")
+    win._metro_tab.nudge(100000)
+    check(win._metro_tab.bpm == _metro.BPM_MAX,
+          f"BPM did not clamp to max: {win._metro_tab.bpm}")
+    win._metro_tab.set_time_sig("6/8")
+    checked = [t for t, b in win._metro_tab._ts_btns.items() if b.isChecked()]
     check(checked == ["6/8"],
           f"time-signature selection not exclusive: {checked}")
     # Start with no audible output (headless has no output stream): must NOT
     # claim running — button reverts, inline status shown, green dot stays
     # hidden (the honesty discipline holds whether the controller is absent or
     # simply can't open an output device).
-    win._btn_metro_start.setChecked(True)
+    win._metro_tab._btn_start.setChecked(True)
     app.processEvents()
-    check(not win._btn_metro_start.isChecked(),
+    check(not win._metro_tab._btn_start.isChecked(),
           "metro start button stayed checked with no audible output (button lies)")
-    check(win._metro_status.isVisible(),
+    check(win._metro_tab._status.isVisible(),
           "metro 'unavailable' status not shown when start could not sound")
     check(win._metro_dot.isHidden(),
           "metro green dot shown despite no running metronome")
@@ -604,7 +606,7 @@ def main() -> int:
         "SETUP A4": _setup._a4_combo,
         "SETUP mic gain": _setup._mic_gain_combo,
         "SETUP nickname": _setup._nick_edit,
-        "METRO BPM slider": win._metro_slider,
+        "METRO BPM slider": win._metro_tab._slider,
     }
     for _name, _w in _textless.items():
         check(_acc_name(_w) != "",
@@ -613,8 +615,8 @@ def main() -> int:
     _buttons = {
         "SETUP test tone": _setup._btn_test_tone,
         "SETUP range editor": _setup._btn_range,
-        "METRO start": win._btn_metro_start,
-        "METRO tap": win._btn_metro_tap,
+        "METRO start": win._metro_tab._btn_start,
+        "METRO tap": win._metro_tab._btn_tap,
         "drone on": win._btn_drone_on,
         "DECK record": win._btn_deck_record,
         "DECK stop": win._btn_deck_stop,
