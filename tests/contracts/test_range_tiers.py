@@ -121,3 +121,11 @@ def test_baked_ranges_match_golden(monkeypatch):
         for key, transp in si.transp_map().items()
     }
     assert_golden(table, 'expected/baked_ranges.json')
+
+
+def test_the_chart_without_per_note_flags_greys_on_the_extended_tier(overrides):
+    """The chart's lookup for callers that pass no in-range flag per note."""
+    from intonation.export.chart import _make_in_range_fn
+    overrides({})
+    in_range = _make_in_range_fn('eb_alto')
+    assert [in_range(m) for m in (57, 58, 101, 102)] == [False, True, True, False]
