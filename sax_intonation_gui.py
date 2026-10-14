@@ -1115,20 +1115,31 @@ class MainWindow(QMainWindow):
     # ── Output state ──────────────────────────────────────────────────────────
     def _on_output_status(self, status) -> None:
         """The output stream changed state (engine signal, GUI thread)."""
-        if status.state == OutputState.DISCONNECTED:
+        users = self._output_users
+        if status.state in (OutputState.DISCONNECTED, OutputState.FAILED):
+            # The stream is gone (unplugged, or a reopen failed): whatever
+            # was sounding is switched off and parked; on_status below starts
+            # it again or tells it why it cannot.
             self._park_output_users()
-            self._output_notice = self._t('audio_output_disconnected',
-                                          name=status.device or '?')
-            self._info_banner.show_message(self._output_notice)
         elif status.state == OutputState.RUNNING and self._output_notice:
             self._info_banner.hide_if_showing(self._output_notice)
             self._output_notice = ''
-        self._output_users.on_status(status)
+        users.on_status(status)
+        if status.state == OutputState.DISCONNECTED or (
+                status.state == OutputState.FAILED and users.any_parked()):
+            # Something waits for the output to come back: say which one.
+            if status.device:
+                self._output_notice = self._t('audio_output_disconnected',
+                                              name=status.device)
+            else:
+                self._output_notice = self._t('output_err_none')
+            self._info_banner.show_message(self._output_notice)
 
     def _park_output_users(self) -> None:
-        """The output was unplugged: switch off everything that was sounding,
-        so no toggle claims to play into nothing, and park it to come back on
-        when the output is back."""
+        """The output is gone (unplugged, or a reopen failed): switch off
+        everything that was sounding, so no toggle claims to play into
+        nothing, and park it to come back on when the output is back (or be
+        told why it cannot)."""
         users = self._output_users
         # Nothing renders now, so sources are dropped at once rather than
         # faded: a fade would only play when the output is back, over the

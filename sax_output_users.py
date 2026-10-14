@@ -8,8 +8,9 @@ the answer comes later, as an ``OutputStatus`` from the engine
 (``on_status``):
 
 * RUNNING: every waiting user starts.
-* FAILED: every waiting user is told why, so its toggle can go back off and
-  say what to do.
+* FAILED: every user that asked is told why, so its toggle can go back off
+  and say what to do. Parked users are told too, unless the output failed
+  because the device is missing: they keep waiting for it to come back.
 * DISCONNECTED: the window stops whatever was sounding and parks it here with
   ``park``. Parked users start again when the output runs again, which the
   engine brings about itself once the device is plugged back in.
@@ -32,8 +33,8 @@ class OutputUsers:
                  request_open: Callable[[], None]) -> None:
         self._is_running = is_running
         self._request_open = request_open
-        # key -> (start, fail), in the order they asked.
-        self._waiting: dict[str, tuple[Start, Fail]] = {}
+        # key -> (start, fail, parked), in the order they asked.
+        self._waiting: dict[str, tuple[Start, Fail, bool]] = {}
         # An open was requested and its answer has not arrived yet.
         self._open_pending = False
 
@@ -43,7 +44,7 @@ class OutputUsers:
             self._waiting.pop(key, None)
             start()
             return
-        self._waiting[key] = (start, fail)
+        self._waiting[key] = (start, fail, False)
         if not self._open_pending:
             self._open_pending = True
             self._request_open()
@@ -51,7 +52,7 @@ class OutputUsers:
     def park(self, key: str, start: Start, fail: Fail) -> None:
         """Wait for the output without asking for it to be opened (it was
         unplugged; it reopens when it is back)."""
-        self._waiting[key] = (start, fail)
+        self._waiting[key] = (start, fail, True)
 
     def drop(self, key: str) -> None:
         """The player switched ``key`` off before the output came."""
@@ -64,15 +65,25 @@ class OutputUsers:
     def waiting(self, key: str) -> bool:
         return key in self._waiting
 
+    def any_parked(self) -> bool:
+        return any(parked for _s, _f, parked in self._waiting.values())
+
     def on_status(self, status) -> None:
         """Act on an OutputStatus (duck-typed: ``status.state.value``)."""
         state = getattr(getattr(status, "state", None), "value", "")
         self._open_pending = False
         if state == "running":
             users, self._waiting = list(self._waiting.values()), {}
-            for start, _fail in users:
+            for start, _fail, _parked in users:
                 start()
         elif state == "failed":
-            users, self._waiting = list(self._waiting.values()), {}
-            for _start, fail in users:
+            error = getattr(getattr(status, "error", None), "value", "")
+            missing = error in ("no_device", "device_disconnected")
+            failed = []
+            for key, (_start, fail, parked) in list(self._waiting.items()):
+                if parked and missing:
+                    continue        # still waiting for the device to return
+                del self._waiting[key]
+                failed.append(fail)
+            for fail in failed:
                 fail(status)
