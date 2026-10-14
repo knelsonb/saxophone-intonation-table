@@ -127,7 +127,7 @@ from sax_widgets import (  # noqa: F401  (MatrixCellDelegate re-exported)
 )
 
 APP_NAME = 'Intonation Analyzer'
-APP_VERSION = '1.3.0'
+APP_VERSION = '1.4.0'
 
 # Mic-gain SETUP control: the offered dB steps + the dB→linear conversion the
 # engine expects. Module-level so the combo, the startup sync, and any test all
