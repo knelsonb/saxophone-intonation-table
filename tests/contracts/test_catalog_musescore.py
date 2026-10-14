@@ -136,8 +136,8 @@ def test_every_exception_names_a_mapped_catalog_key() -> None:
             assert key in MUSESCORE_ID, f'{key}: exception for an unmapped key'
             assert isinstance(reason, str) and reason.strip(), f'{key}: no reason'
             assert len(value) == 2 and value[0] <= value[1], key
-    for key, (_lo, _hi) in KNOWN_TRANSPOSITION_DIVERGENCES.items():
-        assert key in MUSESCORE_ID
+    for key, (_pair, reason) in KNOWN_TRANSPOSITION_DIVERGENCES.items():
+        assert key in MUSESCORE_ID and reason.strip(), key
 
 
 def test_every_catalog_key_is_mapped_or_hand_set() -> None:
