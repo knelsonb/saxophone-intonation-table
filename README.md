@@ -130,7 +130,7 @@ The second command installs the SoundFont synthesizer for the drone voices. `--n
 #### 6. Run the program
 
 ```bash
-python sax_intonation_gui.py
+python -m intonation
 ```
 
 #### Shortcut (activate + run in one command)
@@ -138,7 +138,7 @@ python sax_intonation_gui.py
 This assumes you cloned into your home folder:
 
 ```bash
-cd ~/saxophone-intonation-table && source ~/sax-venv/bin/activate && python sax_intonation_gui.py
+cd ~/saxophone-intonation-table && source ~/sax-venv/bin/activate && python -m intonation
 ```
 
 ---
@@ -160,7 +160,7 @@ Either install [Git for Windows](https://git-scm.com/download/win) and run, in a
 git clone https://github.com/knelsonb/saxophone-intonation-table.git
 ```
 
-or, on the GitHub page, choose **Code › Download ZIP** and extract the ZIP. The program consists of `sax_intonation_gui.py` plus about twenty `sax_*.py` modules and the `assets` folder; keep them together in one folder.
+or, on the GitHub page, choose **Code › Download ZIP** and extract the ZIP. The program consists of the `intonation` folder (the Python package), `main.py` and the `assets` folder; keep them together in one folder.
 
 #### 3. Open Command Prompt in the program folder
 
@@ -195,7 +195,7 @@ pip install --no-deps "tinysoundfont~=0.3.7"
 #### 7. Run the program
 
 ```cmd
-python sax_intonation_gui.py
+python -m intonation
 ```
 
 ---
@@ -212,7 +212,7 @@ python3 -m venv ~/sax-venv
 source ~/sax-venv/bin/activate
 pip install -r requirements.txt
 pip install --no-deps "tinysoundfont~=0.3.7"
-python sax_intonation_gui.py
+python -m intonation
 ```
 
 On the first start macOS asks whether Terminal may use the microphone; allow it. On Intel Macs `tinysoundfont` has no prebuilt package and is compiled with the command line tools during the install.
@@ -286,6 +286,33 @@ python -c "import sounddevice; print(sounddevice.query_devices())"
 | `reportlab` | PDF export |
 | `tinysoundfont` | SoundFont synthesizer for the drone voices (installed separately, see above) |
 | GeneralUser GS SoundFont | General MIDI instrument sounds for the drone, bundled in `assets/` |
+
+---
+
+### Development
+
+Run from the repository root, in the activated virtual environment:
+
+```bash
+python -m intonation          # start the app (python main.py does the same)
+pip install "pytest~=9.0"
+python -m pytest -q           # the full test suite; on a Linux machine without a display,
+                              # prefix it with QT_QPA_PLATFORM=offscreen
+```
+
+The code lives in the `intonation` package:
+
+| Folder | Contents |
+|---|---|
+| `core/` | Pitch maths, YIN pitch detection, the note detector, per-note statistics, the measuring session |
+| `catalog/` | Instrument catalogue: families, transpositions, fingered ranges |
+| `persistence/` | Data folder, settings, measurement history, atomic file writes |
+| `i18n/` | German and English UI strings and the translator |
+| `audio/` | Audio engine, output mixer, and the metronome, drone, pitch-pipe and tape-deck sources |
+| `export/` | TXT, PDF, CSV and chart export |
+| `ui/` | Main window, toolbar, tabs, widgets and dialogs |
+
+Version 2.0 moved the code into this package. The old module names (`sax_config`, `sax_intonation_gui`, …) still import for one release and raise a `DeprecationWarning`; `python sax_intonation_gui.py` still starts the app.
 
 ---
 
@@ -423,7 +450,7 @@ Der zweite Befehl installiert den SoundFont-Synthesizer für die Bordun-Klänge.
 #### 6. Programm starten
 
 ```bash
-python sax_intonation_gui.py
+python -m intonation
 ```
 
 #### Kurzform (Aktivieren + Starten in einem Befehl)
@@ -431,7 +458,7 @@ python sax_intonation_gui.py
 Setzt voraus, dass der Code im Home-Ordner liegt:
 
 ```bash
-cd ~/saxophone-intonation-table && source ~/sax-venv/bin/activate && python sax_intonation_gui.py
+cd ~/saxophone-intonation-table && source ~/sax-venv/bin/activate && python -m intonation
 ```
 
 ---
@@ -453,7 +480,7 @@ Entweder [Git for Windows](https://git-scm.com/download/win) installieren und in
 git clone https://github.com/knelsonb/saxophone-intonation-table.git
 ```
 
-oder auf der GitHub-Seite **Code › Download ZIP** wählen und das ZIP entpacken. Das Programm besteht aus `sax_intonation_gui.py`, rund zwanzig `sax_*.py`-Modulen und dem Ordner `assets`; alles zusammen in einem Ordner lassen.
+oder auf der GitHub-Seite **Code › Download ZIP** wählen und das ZIP entpacken. Das Programm besteht aus dem Ordner `intonation` (dem Python-Paket), `main.py` und dem Ordner `assets`; alles zusammen in einem Ordner lassen.
 
 #### 3. Eingabeaufforderung im Programmordner öffnen
 
@@ -488,7 +515,7 @@ pip install --no-deps "tinysoundfont~=0.3.7"
 #### 7. Programm starten
 
 ```cmd
-python sax_intonation_gui.py
+python -m intonation
 ```
 
 ---
@@ -505,7 +532,7 @@ python3 -m venv ~/sax-venv
 source ~/sax-venv/bin/activate
 pip install -r requirements.txt
 pip install --no-deps "tinysoundfont~=0.3.7"
-python sax_intonation_gui.py
+python -m intonation
 ```
 
 Beim ersten Start fragt macOS, ob das Terminal das Mikrofon nutzen darf; erlauben. Auf Intel-Macs gibt es für `tinysoundfont` kein vorgebautes Paket; es wird bei der Installation mit den Befehlszeilenwerkzeugen kompiliert.
@@ -579,6 +606,33 @@ python -c "import sounddevice; print(sounddevice.query_devices())"
 | `reportlab` | PDF-Export |
 | `tinysoundfont` | SoundFont-Synthesizer für die Bordun-Klänge (separat installiert, siehe oben) |
 | GeneralUser-GS-SoundFont | General-MIDI-Instrumentenklänge für den Bordun, mitgeliefert in `assets/` |
+
+---
+
+### Entwicklung
+
+Im Hauptordner des Repositorys, bei aktivierter virtueller Umgebung:
+
+```bash
+python -m intonation          # Programm starten (python main.py tut dasselbe)
+pip install "pytest~=9.0"
+python -m pytest -q           # die vollständige Testsuite; unter Linux ohne Bildschirm
+                              # QT_QPA_PLATFORM=offscreen voranstellen
+```
+
+Der Code liegt im Paket `intonation`:
+
+| Ordner | Inhalt |
+|---|---|
+| `core/` | Tonhöhenrechnung, YIN-Tonhöhenerkennung, Notenerkennung, Statistik je Ton, die Messsitzung |
+| `catalog/` | Instrumentenkatalog: Familien, Transpositionen, gegriffene Tonumfänge |
+| `persistence/` | Datenordner, Einstellungen, Messdatenverlauf, atomares Schreiben von Dateien |
+| `i18n/` | Deutsche und englische Oberflächentexte und der Übersetzer |
+| `audio/` | Audio-Engine, Ausgangsmischer sowie Metronom, Bordun, Stimmpfeifen und Tonbandgerät |
+| `export/` | TXT-, PDF-, CSV- und Diagramm-Export |
+| `ui/` | Hauptfenster, Werkzeugleiste, Reiter, Bedienelemente und Dialoge |
+
+Version 2.0 hat den Code in dieses Paket verschoben. Die alten Modulnamen (`sax_config`, `sax_intonation_gui`, …) lassen sich noch eine Version lang importieren und lösen dabei eine `DeprecationWarning` aus; `python sax_intonation_gui.py` startet das Programm weiterhin.
 
 ---
 

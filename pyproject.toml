@@ -1,6 +1,7 @@
 # Project metadata and tool configuration. The app runs from a source checkout
-# (`python main.py`) or from the PyInstaller release binaries; it
-# is not packaged as an installable wheel, so there is no [build-system] table.
+# (`python -m intonation` or `python main.py`) or from the PyInstaller release
+# binaries; it is not packaged as an installable wheel, so there is no
+# [build-system] table.
 
 [project]
 name = "saxophone-intonation-table"
@@ -29,7 +30,15 @@ dev = [
     "Pillow~=10.0",
 ]
 
+# The app is the `intonation` package. The repo root also holds the launcher,
+# test helpers and the pre-2.0 sax_* shims, so automatic discovery would find
+# several top-level modules; name the package for any tool that reads this
+# (setuptools is also pip's fallback backend for `pip install .`).
+[tool.setuptools.packages.find]
+include = ["intonation*"]
+
 [tool.pytest.ini_options]
+# The root unit tests, tests/acceptance, tests/contracts and tests/golden.
 testpaths = ["."]
 python_files = ["test_*.py"]
 addopts = "-ra"
@@ -48,3 +57,4 @@ select = ["E", "F", "I"]
 
 [tool.ruff.lint.isort]
 combine-as-imports = true
+known-first-party = ["intonation"]
