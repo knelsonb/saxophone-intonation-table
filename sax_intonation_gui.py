@@ -29,26 +29,17 @@ from pathlib import Path
 from PyQt6.QtCore import QLocale, Qt, QTimer
 from PyQt6.QtGui import QColor, QIcon
 from PyQt6.QtWidgets import (
-    QAbstractItemView,
     QApplication,
-    QCheckBox,
     QComboBox,
     QDialog,
     QFileDialog,
     QGroupBox,
     QHBoxLayout,
-    QHeaderView,
-    QLabel,
     QLineEdit,
     QMainWindow,
-    QMenu,
     QMessageBox,
     QPushButton,
-    QSizePolicy,
-    QSpinBox,
-    QSplitter,
     QTabBar,
-    QTableWidget,
     QTabWidget,
     QToolButton,
     QVBoxLayout,
@@ -105,7 +96,7 @@ from sax_session_state import SessionStateController
 from sax_tab_deck import DeckTab
 from sax_tab_metro import MetroTab
 from sax_tab_setup import SetupTab
-from sax_table import TableController
+from sax_tab_tuner import TunerTab
 from sax_translator import Translator
 from sax_widgets import (  # noqa: F401  (MatrixCellDelegate re-exported)
     AudioChip,
@@ -138,10 +129,6 @@ class MainWindow(QMainWindow):
         # affects fresh installs and first-launches.
         instrument = 'bb_tenor'
         display = 'griff'
-        self._layout_mode: str = 'single'   # 'single' | 'matrix'
-        # Built after _build_ui; selecting the start-up instrument at the end
-        # of _build_ui asks for a table refresh before it exists.
-        self._table_ctrl: TableController | None = None
         # Cumulative count of distinct note emissions since launch (each
         # _on_note increments). Diagnostics readout consumes this; the
         # table-level note count comes from the session's stats.
@@ -247,7 +234,7 @@ class MainWindow(QMainWindow):
             self, self._cfg,
             session=self._session,
             translator=self._tr,
-            splitter=self._splitter,
+            splitter=self._tuner_tab.splitter,
             apply_a4=self._apply_a4,
             keep_saved_instrument=keep_saved_instrument,
         )
@@ -261,22 +248,6 @@ class MainWindow(QMainWindow):
             instrument_label=self._instr_label,
             sample_rate=self._engine_sample_rate,
             add_lang_toggle=self._add_dialog_lang_toggle,
-        )
-        # Intonation-table refresh + matrix paint
-        # pipeline lives on TableController.  The QTimer that drives the
-        # 300 ms refresh stays wired to MainWindow._refresh_table (just
-        # below) so resizeEvent's deferred refresh path also works
-        # unchanged.  The controller's configure_for_mode() allocates the
-        # QTableWidgetItem instances once per layout change and they are
-        # reused across refresh ticks.
-        self._table_ctrl = TableController(
-            table=self._table,
-            caption=self._table_lbl,
-            bar_delegate=self._bar_delegate,
-            cfg=self._cfg,
-            session=self._session,
-            tr=self._tr,
-            sample_rate=self._engine_sample_rate,
         )
         # Family/instrument selection, nickname editing,
         # per-instrument range editor, custom-instrument registration, and
@@ -307,10 +278,10 @@ class MainWindow(QMainWindow):
             cfg=self._cfg,
             store=self._store,
             tr=self._tr,
+            chip=self._audio_chip,
             info_banner=self._info_banner,
             audio_banner=self._audio_banner,
-            get_lang=lambda: self.lang,
-            on_active_device_changed=None,
+            tuner_tab=self._tuner_tab,
         )
 
         # Start the engine AFTER the UI exists so a startup PortAudio
@@ -346,9 +317,7 @@ class MainWindow(QMainWindow):
         if not self._cfg.welcome_shown and not self._store.unreadable:
             self._show_welcome_dialog()
 
-        self._refresh_timer = QTimer(self)
-        self._refresh_timer.timeout.connect(self._refresh_table)
-        self._refresh_timer.start(300)
+        self._tuner_tab.start_refreshing()
 
     # ── Übersetzungs-Helfer ──────────────────────────────────────────────────
     @property
@@ -565,162 +534,28 @@ class MainWindow(QMainWindow):
         toolbar_actions.addWidget(self._btn_csv)
         root.addWidget(toolbar_container)
 
-        # ── Splitter ──────────────────────────────────────────────────────────
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.setHandleWidth(6)
-
-        # Links: Tuner (+ optional spectrogram + diagnostics panel)
-        left = QWidget()
-        ll3 = QVBoxLayout(left)
-        ll3.setContentsMargins(0, 0, 6, 0)
+        # ── Banners ───────────────────────────────────────────────────────────
         # Recovery banner — appears only when the engine is in FAILED.
         # Hidden by default; show_for() makes it visible with the right copy.
         self._audio_banner = AudioRecoveryBanner(
             tr, self._retry_audio, self._open_audio_picker)
-        ll3.addWidget(self._audio_banner)
-        # Non-modal info banner for hot-plug and the
-        # wrong-instrument hint. Hidden by default; the GUI calls
-        # show_message() to surface it with an optional Switch action and
-        # an always-present Dismiss button.
+        # Non-modal info banner for hot-plug, the wrong-instrument hint and
+        # settings problems: an optional action and an always-present Dismiss.
         self._info_banner = InfoBanner(tr)
-        ll3.addWidget(self._info_banner)
 
-        self._tuner = TunerWidget()
-        # Tuner gets a fixed-ish vertical slot now that it shares the
-        # pane with optional panels. Expanding horizontally but only
-        # Preferred vertically lets the spectrogram claim leftover space
-        # when the panels are visible.
-        self._tuner.setSizePolicy(QSizePolicy.Policy.Expanding,
-                                   QSizePolicy.Policy.Preferred)
-        # Tuner takes its full minimum height (260px) at the top of the
-        # left pane. The spectrum analyzer + diagnostics panel sit below
-        # it and only consume space when diagnostics are enabled.
-        ll3.addWidget(self._tuner)
-        self._status_lbl = QLabel()
-        tr.bind(self._status_lbl.setText, 'no_signal')
-        self._status_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._status_lbl.setObjectName('dimLabel')   # themed via QLabel#dimLabel
-        ll3.addWidget(self._status_lbl)
-
-        # Drone controls live on the TUNER tab,
-        # directly under the readout — quick access while tuning against the
-        # drone. The 128-GM voice picker lives in SETUP; the compact 5-preset
-        # row + volume + semitone are here.
+        # ── TUNER tab ─────────────────────────────────────────────────────────
+        # The drone strip sits under the tuner readout; its full voice picker
+        # is in SETUP.
         self._drone_bar = DroneBar(tr=tr, cfg=self._cfg, engine=self._engine,
                                    session=self._session,
                                    output_users=self._output_users)
-        ll3.addWidget(self._drone_bar)
-
-        # v0.5.7: "Show spectrum analyzer & diagnostics" footer row.
-        # Lives directly below the tuner so the toggle is adjacent to
-        # the widgets it controls. Same handler, same persistence as
-        # the old toolbar-resident checkbox — only the parent moved.
-        diag_footer = QHBoxLayout()
-        diag_footer.setContentsMargins(4, 0, 4, 0)
-        self._cb_diag = QCheckBox()
-        tr.bind(self._cb_diag.setText, 'show_diagnostics')
-        self._cb_diag.setChecked(self._cfg.show_diagnostics)
-        tr.bind(self._cb_diag.setToolTip, 'show_diagnostics_tip')
-        self._cb_diag.toggled.connect(self._on_diagnostics_toggled)
-        diag_footer.addWidget(self._cb_diag)
-        diag_footer.addStretch()
-        ll3.addLayout(diag_footer)
-
-        # Spectrum analyzer + diagnostics panels. Always constructed so
-        # the toggle is just show/hide — keeps the timer threading
-        # consistent and avoids reconstruction cost when flipped
-        # repeatedly. Attribute name kept as _spectro to minimize churn
-        # against the rest of the file's references.
-        self._spectro_grp = QGroupBox()
-        tr.bind(self._spectro_grp.setTitle, 'spectro_title')
-        sg_l = QVBoxLayout(self._spectro_grp)
-        sg_l.setContentsMargins(6, 6, 6, 6)
-        self._spectro = SpectrumAnalyzerWidget(self._engine if AUDIO_OK else None)
-        sg_l.addWidget(self._spectro)
-        ll3.addWidget(self._spectro_grp, 1)
-
-        self._data_grp = QGroupBox()
-        tr.bind(self._data_grp.setTitle, 'data_panel_title')
-        dg_l = QVBoxLayout(self._data_grp)
-        dg_l.setContentsMargins(6, 6, 6, 6)
-        self._data_panel = DataPanelWidget(
-            self._engine if AUDIO_OK else None,
-            tr,
-            lambda: self._notes_count,
-            lambda: self._cfg,
-        )
-        dg_l.addWidget(self._data_panel)
-        ll3.addWidget(self._data_grp)
-
-        show_diag = self._cfg.show_diagnostics
-        self._spectro_grp.setVisible(show_diag)
-        self._data_grp.setVisible(show_diag)
-
-        # Rechts: Tabelle
-        right = QWidget()
-        rl = QVBoxLayout(right)
-        rl.setContentsMargins(6, 0, 0, 0)
-        # Written by the table controller on every refresh, and refreshed on
-        # a language switch, so it is not bound here.
-        self._table_lbl = QLabel(self._t('table_empty_hint'))
-        self._table_lbl.setStyleSheet('font-size:14px;font-weight:bold;padding:2px 0 6px 0;')
-        self._table_lbl.setWordWrap(True)
-        rl.addWidget(self._table_lbl)
-
-        self._table = QTableWidget()
-        self._table.setColumnCount(6)
-        self._table.setHorizontalHeaderLabels(self._table_headers())
-        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self._table.verticalHeader().setVisible(False)
-        self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self._table.setAlternatingRowColors(True)
-        self._table.setObjectName('matrix')   # themed via QTableWidget#matrix
-        rl.addWidget(self._table)
-        self._bar_delegate = CentBarDelegate(
-            self._table, sample_rate_getter=self._engine_sample_rate)
-        self._table.setItemDelegateForColumn(5, self._bar_delegate)
-        self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self._table.customContextMenuRequested.connect(self._on_table_context_menu)
-
-        # Min-N filter under the table: hide notes with fewer measurements
-        # than the threshold so single accidental blips don't pollute the
-        # view. Default 5 = "actually held". Mirrors the autotune
-        # min-n requirement.
-        min_n_row = QHBoxLayout()
-        min_n_row.setContentsMargins(0, 6, 0, 0)
-        self._min_n_lbl = QLabel()
-        tr.bind(self._min_n_lbl.setText, 'min_n_label')
-        self._min_n_lbl.setObjectName('dimLabel')      # themed via QLabel#dimLabel
-        self._min_n_spin = QSpinBox()
-        self._min_n_spin.setRange(0, 999)
-        self._min_n_spin.setValue(self._cfg.min_n_visible)
-        tr.bind(self._min_n_spin.setToolTip, 'min_n_tip')
-        self._min_n_spin.setMinimumWidth(70)
-        self._min_n_spin.setObjectName('minNspin')     # themed via QSpinBox#minNspin
-        self._min_n_spin.valueChanged.connect(self._on_min_n_changed)
-        min_n_row.addWidget(self._min_n_lbl)
-        min_n_row.addWidget(self._min_n_spin)
-        # v0.5.7: "Filter to instrument range" checkbox lives in this
-        # row alongside the min-N spinbox. Both controls gate what the
-        # table shows; co-locating them lets the user adjust scope in
-        # one place instead of hunting in the top toolbar. UI logic
-        # preserved verbatim: checked = filter ON, unchecked = show all
-        # (stored as the inverted cfg.allow_out_of_range).
-        self._cb_oor = QCheckBox()
-        tr.bind(self._cb_oor.setText, 'allow_oor')
-        self._cb_oor.setChecked(not self._cfg.allow_out_of_range)
-        tr.bind(self._cb_oor.setToolTip, 'allow_oor_tip')
-        self._cb_oor.toggled.connect(self._on_oor_toggled)
-        min_n_row.addSpacing(16)
-        min_n_row.addWidget(self._cb_oor)
-        min_n_row.addStretch()
-        rl.addLayout(min_n_row)
-
-        splitter.addWidget(left)
-        splitter.addWidget(right)
-        splitter.setSizes([420, 620])
-        # Held for closeEvent persistence and restore-on-launch (v0.5.5).
-        self._splitter = splitter
+        self._tuner_tab = TunerTab(
+            tr=tr, cfg=self._cfg, store=self._store, engine=self._engine,
+            session=self._session,
+            banners=(self._audio_banner, self._info_banner),
+            drone_bar=self._drone_bar,
+            sample_rate=self._engine_sample_rate,
+            notes_count=lambda: self._notes_count)
 
         # ── Navigation shell ──────────────────────────────────────────────────
         # The global toolbar (built above) stays ABOVE a QTabWidget. The
@@ -734,7 +569,7 @@ class MainWindow(QMainWindow):
         self._tabs = QTabWidget()
         self._tabs.setDocumentMode(True)
         self._tab_keys = ['tuner', 'metro', 'deck', 'setup']
-        self._tabs.addTab(splitter, '')
+        self._tabs.addTab(self._tuner_tab, '')
         self._metro_tab = MetroTab(tr=tr, cfg=self._cfg, engine=self._engine,
                                    output_users=self._output_users)
         self._metro_tab.running_changed.connect(self.set_metro_running)
@@ -959,11 +794,6 @@ class MainWindow(QMainWindow):
         if key in self._tab_keys:
             self._tabs.setCurrentIndex(self._tab_keys.index(key))
 
-    def _table_headers(self):
-        return [self._t('col_fingered'), self._t('col_sounding'),
-                self._t('col_mean'), self._t('col_std'),
-                self._t('col_n'), self._t('col_tendency')]
-
     def _make_btn(self, key, color, slot):
         b = QPushButton()
         self._tr.bind(b.setText, key)
@@ -994,7 +824,6 @@ class MainWindow(QMainWindow):
         self._fill_family_combo()
         self._select_family_for_instrument(self._session.instrument)
         self._populate_instrument_combo(select_key=self._session.instrument)
-        self._refresh_table()
 
     def _fill_family_combo(self) -> None:
         combo = self._family_combo
@@ -1059,76 +888,7 @@ class MainWindow(QMainWindow):
                                    midi_fingered=midi_gr,
                                    cents=cents, freq_hz=freq)
 
-        kl_name    = midi_note_name(midi_kl)
-        gr_name    = midi_note_name(midi_gr)
-        disp_name  = gr_name if session.display == 'griff' else kl_name
-        sr_now = self._engine_sample_rate()
-        self._tuner.sample_rate = sr_now
-        self._tuner.set_note(disp_name, freq, cents)
-        cents_str = format_cents(cents, freq, sr_now)
-        self._tr.bind(self._status_lbl.setText,
-                      'status_fmt', fingered=gr_name, sounding=kl_name,
-                      freq=freq, cents_str=cents_str, a4=session.a4)
-
-    # ── Tabelle ──────────────────────────────────────────────────────────────────────
-    # Two layout modes:
-    #   'single' — single-column-of-notes table (1 row per played note +
-    #              1 row per seeded expected note).
-    #   'matrix' — piano-roll: 12 chromatic rows × N octave columns, where
-    #              N covers the instrument's range padded ±1 octave. Cells
-    #              outside the instrument's range render greyed out.
-    # The mode is chosen automatically based on the available width.
-    _MATRIX_COL_WIDTH = 112    # min usable width per octave column (px)
-    _MATRIX_HEADER_W  = 64     # row-header width (note names)
-    _MATRIX_ROW_HEIGHT = 60    # tall enough for: names + mean+std + bar + N
-    # Hysteresis: enter matrix at the calculated threshold, drop back to
-    # single only when noticeably narrower. Prevents thrash near the edge.
-    _MATRIX_HYSTERESIS = 48    # px
-
-    def _refresh_table(self):
-        """QTimer entry point — fires every 300 ms.  Decides the layout
-        mode (single vs. matrix) here on MainWindow because the choice
-        depends on the live viewport width, then hands off to
-        TableController for the actual paint; the per-cell
-        paint pipeline and cell cache live on the controller."""
-        if self._table_ctrl is None:      # still inside _build_ui
-            return
-        desired = self._desired_layout_mode()
-        if desired != self._layout_mode or self._table_ctrl._current_mode is None:
-            self._layout_mode = desired
-            self._table_ctrl.configure_for_mode(desired)
-        self._table_ctrl.refresh()
-
-    def _desired_layout_mode(self) -> str:
-        """User-preference first; falls back to a width-driven auto pick.
-        In auto mode, matrix is used as long as the viewport can fit at
-        least two octave columns; below that, single-column for
-        readability. Matrix never truncates a playable note — wider
-        instruments overflow into a horizontal scrollbar instead of
-        dropping back to single."""
-        pref = self._cfg.layout_mode_preference
-        if pref == 'single':
-            return 'single'
-        if pref == 'matrix':
-            return 'matrix'
-        w = self._table.viewport().width()
-        if w <= 0:
-            w = self._table.width()
-        if w <= 0:
-            return 'single'
-        floor = self._MATRIX_HEADER_W + 2 * self._MATRIX_COL_WIDTH
-        if self._layout_mode == 'matrix':
-            return 'matrix' if w >= floor - self._MATRIX_HYSTERESIS else 'single'
-        return 'matrix' if w >= floor else 'single'
-
-    def resizeEvent(self, ev):
-        super().resizeEvent(ev)
-        # Defer the mode-decision one event-loop tick so the splitter has
-        # time to propagate the new viewport size into the table widget
-        # before _desired_layout_mode reads it. Without the singleShot,
-        # rapid window shrinks sometimes leave the table in matrix mode
-        # because viewport().width() still reflects the pre-resize size.
-        QTimer.singleShot(0, self._refresh_table)
+        self._tuner_tab.show_reading(midi_kl, freq, cents)
 
     # ── Instrument / Anzeige / A4 ─────────────────────────────────────────────
     # The family/instr/nickname slots, range editor,
@@ -1171,7 +931,7 @@ class MainWindow(QMainWindow):
         # out-of-range notes (overtones, accidentals) appear automatically
         # via the existing _on_note path.
         self._session.seed_expected_notes()
-        self._refresh_table()
+        self._tuner_tab.refresh_table()
 
     def _on_range_changed_external(self) -> None:
         """Called by InstrumentController after the per-instrument range
@@ -1179,7 +939,7 @@ class MainWindow(QMainWindow):
         so we do NOT reset the wrong-instrument detector — just re-seed
         expected notes against the new bounds and repaint."""
         self._session.seed_expected_notes()
-        self._refresh_table()
+        self._tuner_tab.refresh_table()
 
     def _on_a4_changed_external(self) -> None:
         """Called by InstrumentController after the autotune flow has
@@ -1187,7 +947,7 @@ class MainWindow(QMainWindow):
         again and repaint. The session already moved everything that
         follows A4 (combos, engine, drone, pipes, the history run)."""
         self._session.seed_expected_notes()
-        self._refresh_table()
+        self._tuner_tab.refresh_table()
 
     def _on_session_a4(self, a4: float) -> None:
         """The session's A4 changed (toolbar, SETUP, autotune or start-up
@@ -1198,12 +958,7 @@ class MainWindow(QMainWindow):
         self._engine.set_a4(a4)
 
     def _on_session_display(self, mode: str) -> None:
-        idx = self._disp_combo.findData(mode)
-        if idx >= 0 and idx != self._disp_combo.currentIndex():
-            blocked = self._disp_combo.blockSignals(True)
-            self._disp_combo.setCurrentIndex(idx)
-            self._disp_combo.blockSignals(blocked)
-        self._refresh_table()
+        show_data(self._disp_combo, mode)
 
     def _on_session_nickname(self, text: str) -> None:
         """Both nickname editors show the session's nickname. The one being
@@ -1217,21 +972,7 @@ class MainWindow(QMainWindow):
     def _on_session_recording(self, on: bool) -> None:
         self._update_record_btn_style()
         if on:
-            self._tr.bind(self._status_lbl.setText, 'no_signal')
-
-    def _on_oor_toggled(self, checked: bool) -> None:
-        """Persist the choice and refresh the table so the matrix can
-        shrink back to nominal range when the filter goes on.
-
-        UI semantic: `checked` means "filter to range ON" (restrict).
-        Internally we store the inverse as `allow_out_of_range`."""
-        self._cfg.allow_out_of_range = not checked
-        self._save_settings()
-        # Wave-1 bug #7: the docstring above promises a refresh; the
-        # v0.5.3 implementation forgot to actually call _refresh_table,
-        # so toggling "Filter to instrument range" only took effect on
-        # the next other refresh.
-        self._refresh_table()
+            self._tuner_tab.show_status('no_signal')
 
     # ── Audio-Geräteverwaltung (v0.5.4) ───────────────────────────────────
     def _engine_sample_rate(self) -> int:
@@ -1278,23 +1019,13 @@ class MainWindow(QMainWindow):
     def _on_interface_appeared(self, device: 'DeviceInfo') -> None:
         self._device_ctrl.on_interface_appeared(device)
 
-    def _on_diagnostics_toggled(self, checked: bool) -> None:
-        """Show or hide the spectrogram + diagnostics panels and persist
-        the choice. Widgets remain constructed either way so flipping
-        the toggle has no allocation cost on the audio thread."""
-        self._cfg.show_diagnostics = bool(checked)
-        self._save_settings()
-        self._spectro_grp.setVisible(bool(checked))
-        self._data_grp.setVisible(bool(checked))
-        self._refresh_table()
-
     def _on_layout_pref_changed(self, _idx: int) -> None:
         """User picked Auto / List / Grid. Persist and refresh the table."""
         pref = self._layout_combo.currentData()
         if pref in ('auto', 'single', 'matrix'):
             self._cfg.layout_mode_preference = pref
             self._save_settings()
-            self._refresh_table()
+            self._tuner_tab.refresh_table()
 
     def _apply_response(self, mode) -> None:
         """A Response (filter mode) pick from the toolbar or the SETUP combo:
@@ -1308,14 +1039,6 @@ class MainWindow(QMainWindow):
         self._save_settings()
         if AUDIO_OK:
             self._engine.set_filter_mode(mode)
-
-    def _on_min_n_changed(self, value: int) -> None:
-        """User adjusted the min-N filter. Persist + redraw the table.
-        The filter is purely a display gate — measurements are still
-        collected; rows just hide until they accumulate enough hits."""
-        self._cfg.min_n_visible = max(0, int(value))
-        self._save_settings()
-        self._refresh_table()
 
     def _on_add_custom(self) -> None:
         self._instr_ctrl.on_add_custom()
@@ -1400,7 +1123,7 @@ class MainWindow(QMainWindow):
         # Re-seed expected blank rows on top of the remapped data so the
         # instrument's range still shows even after a clean re-derive.
         self._session.seed_expected_notes()
-        self._refresh_table()
+        self._tuner_tab.refresh_table()
 
     # ── Start / Stop ──────────────────────────────────────────────────────────
     def _on_record_toggle(self):
@@ -1422,64 +1145,6 @@ class MainWindow(QMainWindow):
         self._tr.bind(self._btn_record.setText,
                       'btn_stop' if recording else 'btn_start')
 
-    # ── Tabellen-Kontextmenü ──────────────────────────────────────────────────
-    def _on_table_context_menu(self, pos):
-        row = self._table.rowAt(pos.y())
-        if row < 0:
-            return
-
-        session = self._session
-        transp = session.transposition
-        midi_kl: int | None = None
-
-        if self._layout_mode == 'matrix':
-            # Matrix mode: map (row, col) to the sounding MIDI for the
-            # clicked cell. Row = chroma index (0..11), col = octave within
-            # the span the columns were painted for.
-            col = self._table.columnAt(pos.x())
-            if col < 0:
-                return
-            lo_oct, hi_oct = self._table_ctrl.painted_octave_span()
-            oct_ = lo_oct + col
-            if oct_ > hi_oct:
-                return
-            midi_visible = (oct_ + 1) * 12 + row
-            if session.display == 'griff':
-                midi_kl = midi_visible + transp
-            else:
-                midi_kl = midi_visible
-            # Only offer the action if this cell actually holds played data.
-            st = session.stats.get(midi_kl)
-            if st is None or st.n == 0:
-                return
-        else:
-            # Single-column mode: rows are the sorted stats after the table's
-            # min-N filter (sax_table hides rows with 1..min_n-1 readings), so
-            # index the same filtered list or the row maps to another note.
-            min_n = self._cfg.min_n_visible
-            keys = sorted(k for k, st in session.stats.items()
-                          if st.n == 0 or st.n >= min_n)
-            if row >= len(keys):
-                return
-            midi_kl = keys[row]
-
-        midi_gr  = midi_kl - transp
-        note_str = f"{midi_note_name(midi_gr)} / {midi_note_name(midi_kl)}"
-
-        menu = QMenu(self)   # themed via the global QMenu rule in build_app_qss
-        action = menu.addAction(f"\U0001f5d1  {self._t('ctx_discard')}")
-        action.setData(midi_kl)
-
-        chosen = menu.exec(self._table.viewport().mapToGlobal(pos))
-        if chosen and chosen.data() == midi_kl:
-            if QMessageBox.question(
-                self, self._t('reset_title'),
-                self._t('ctx_discard_confirm', note=note_str),
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-            ) == QMessageBox.StandardButton.Yes:
-                session.discard(midi_kl)
-                self._refresh_table()
-
     # ── Reset ─────────────────────────────────────────────────────────────────
     def _on_reset(self):
         if QMessageBox.question(
@@ -1490,7 +1155,7 @@ class MainWindow(QMainWindow):
             # Reset implies "I might be switching instruments" — clear the
             # cached maker/model so the next export re-prompts.
             self._export.forget_instrument_info()
-            self._refresh_table()
+            self._tuner_tab.refresh_table()
 
     # ── Kammerton ermitteln ───────────────────────────────────────────────────
     def _on_autotune(self):
@@ -1582,8 +1247,8 @@ class MainWindow(QMainWindow):
             self._save_session_state()
         except Exception:
             pass
-        for timer in (self._device_poll, self._refresh_timer):
-            timer.stop()
+        self._device_poll.stop()
+        self._tuner_tab.stop_refreshing()
         self._shut_down_output_users()
         # Both streams close and the audio-control thread stops: nothing may
         # keep the microphone or the speaker open after the window is gone.

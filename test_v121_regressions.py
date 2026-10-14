@@ -169,13 +169,13 @@ def test_matrix_span_follows_display_and_played_notes(tmp_path):
         win.resize(1400, 900)
         win.show()
         app.processEvents()
-        ctrl = win._table_ctrl
-        win._refresh_table()
-        out["mode"] = win._layout_mode
+        ctrl = win._tuner_tab.table_controller
+        win._tuner_tab.refresh_table()
+        out["mode"] = win._tuner_tab.layout_mode
         out["griff_span"] = list(ctrl.painted_octave_span())
         # Display toggle: fingered -> sounding shifts tenor down 14 semitones.
         win._disp_combo.setCurrentIndex(1)
-        win._refresh_table()
+        win._tuner_tab.refresh_table()
         out["klingend_live"] = list(ctrl._matrix_octave_range())
         out["klingend_painted"] = list(ctrl.painted_octave_span())
         # A played note far below the range widens the live span.
@@ -183,31 +183,33 @@ def test_matrix_span_follows_display_and_played_notes(tmp_path):
         for _ in range(6):
             st.add(0.0, 55.0)
         win._session.stats[33] = st
-        win._refresh_table()
+        win._tuner_tab.refresh_table()
         lo, hi = ctrl.painted_octave_span()
         out["played_live"] = list(ctrl._matrix_octave_range())
         out["played_painted"] = [lo, hi]
-        out["columns"] = win._table.columnCount()
+        out["columns"] = win._tuner_tab._table.columnCount()
 
         # Right-click a played cell: the menu must name that note.
         captured = []
 
-        class _Menu(G.QMenu):
+        import sax_tab_tuner
+
+        class _Menu(sax_tab_tuner.QMenu):
             def exec(self, *a, **k):
                 captured.append(self.actions()[0].data())
                 return None
 
-        G.QMenu = _Menu
+        sax_tab_tuner.QMenu = _Menu
         midi = 50   # D3 sounding, inside the tenor's sounding range
         st2 = NoteStats()
         for _ in range(6):
             st2.add(0.0, 146.8)
         win._session.stats[midi] = st2
-        win._refresh_table()
+        win._tuner_tab.refresh_table()
         lo, _hi = ctrl.painted_octave_span()
         row, col = midi % 12, (midi // 12 - 1) - lo
-        rect = win._table.visualRect(win._table.model().index(row, col))
-        win._on_table_context_menu(rect.center())
+        rect = win._tuner_tab._table.visualRect(win._tuner_tab._table.model().index(row, col))
+        win._tuner_tab._on_context_menu(rect.center())
         out["menu_midi"] = captured[0] if captured else None
     ''', config={"layout_mode_preference": "matrix",
                  "last_instrument_key": "bb_tenor",
@@ -577,9 +579,9 @@ def test_bar_delegate_and_table_use_shared_thresholds(tmp_path):
             st.add(5.4, 440.0)
         win._session.stats.clear()
         win._session.stats[69] = st
-        win._refresh_table()
-        out["mean_text"] = win._table.item(0, 2).text()
-        out["mean_color"] = win._table.item(0, 2).foreground().color().name()
+        win._tuner_tab.refresh_table()
+        out["mean_text"] = win._tuner_tab._table.item(0, 2).text()
+        out["mean_color"] = win._tuner_tab._table.item(0, 2).foreground().color().name()
     ''')
     assert "warn" in out["bars"]["8.0"] and "bad" not in out["bars"]["8.0"]
     assert "bad" in out["bars"]["15.0"]
@@ -745,10 +747,10 @@ def test_diagnostics_timers_run_only_while_visible(tmp_path):
         win.show()
         app.processEvents()
         def state():
-            return [win._spectro._timer.isActive(),
-                    win._data_panel._timer.isActive()]
+            return [win._tuner_tab._spectro._timer.isActive(),
+                    win._tuner_tab._data_panel._timer.isActive()]
         out["hidden"] = state()
-        win._cb_diag.setChecked(True)
+        win._tuner_tab._cb_diag.setChecked(True)
         app.processEvents()
         out["shown"] = state()
         win._tabs.setCurrentIndex(win._tab_keys.index("setup"))
@@ -757,7 +759,7 @@ def test_diagnostics_timers_run_only_while_visible(tmp_path):
         win._tabs.setCurrentIndex(win._tab_keys.index("tuner"))
         app.processEvents()
         out["back"] = state()
-        win._cb_diag.setChecked(False)
+        win._tuner_tab._cb_diag.setChecked(False)
         app.processEvents()
         out["off"] = state()
     ''', config={"show_diagnostics": False})

@@ -94,8 +94,8 @@ def main() -> int:
           f"expected 4 tabs, got {win._tabs.count()}")
     check(win._tab_keys == ["tuner", "metro", "deck", "setup"],
           f"unexpected tab keys: {win._tab_keys}")
-    check(win._tabs.widget(0) is win._splitter,
-          "TUNER tab is not the existing splitter object (centerpiece churn)")
+    check(win._tabs.widget(0) is win._tuner_tab,
+          "TUNER tab page is not the tuner tab")
 
     # Status dots must be HIDDEN at launch — nothing is running/recording.
     check(win._metro_dot.isHidden(),
@@ -131,7 +131,7 @@ def main() -> int:
     check(win._session.active_midi() == 69,
           "detected note did not reach the readout "
           f"(active_midi={win._session.active_midi()})")
-    _st = win._status_lbl.text()
+    _st = win._tuner_tab._status_lbl.text()
     check("+7" in _st and "+7.3" not in _st,
           f"live readout must show INTEGER cents for a detected note: {_st!r}")
     win._session.set_recording(False)

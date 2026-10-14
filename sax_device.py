@@ -18,15 +18,10 @@
 #     are unchanged — only the slot *bodies* move here.
 #   * The AudioPickerDialog lives in sax_dialogs.  The controller just
 #     opens it.
-#   * The two banner widgets the controller talks to (AudioRecoveryBanner
-#     and InfoBanner) are passed in at construction so the controller
-#     does not have to reach into MainWindow's widget tree by name.
-#   * Live values that may change during a session (the current UI
-#     language) reach the controller through a getter callable.  An
-#     optional `on_active_device_changed` callback is fired after the
-#     write-back so MainWindow can do any downstream refresh it needs
-#     (window-title update, etc.) without the controller having to
-#     know about it.
+#   * What the controller shows on is passed in at construction — the audio
+#     chip, the two banners (AudioRecoveryBanner and InfoBanner) and the
+#     TUNER tab (status line, tuner sample rate) — so it never reaches into
+#     the window's widget tree.
 #   * The engine-state signal names the device the state is about, so a
 #     failure banner never depends on which device happens to be active
 #     when the (queued) slot runs.  The RUNNING branch still reads
@@ -40,7 +35,7 @@
 # =============================================================================
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable, Optional
+from typing import TYPE_CHECKING, Optional
 
 from PyQt6.QtWidgets import QDialog
 
@@ -54,10 +49,12 @@ from sax_audio_engine import (
 from sax_dialogs import AudioPickerDialog
 
 if TYPE_CHECKING:
-    from PyQt6.QtWidgets import QMainWindow
+    from PyQt6.QtWidgets import QWidget
 
     from sax_config import AppConfig, ConfigStore
+    from sax_tab_tuner import TunerTab
     from sax_translator import Translator
+    from sax_widgets import AudioChip, AudioRecoveryBanner, InfoBanner
 
 
 class DeviceController:
@@ -69,26 +66,25 @@ class DeviceController:
     (the connect() calls live in MainWindow.__init__ for grep-ability;
     the slot bodies live here)."""
 
-    def __init__(self, window: 'QMainWindow', *,
+    def __init__(self, parent: 'QWidget', *,
                  engine,
                  cfg: 'AppConfig',
                  store: 'ConfigStore',
                  tr: 'Translator',
-                 info_banner,
-                 audio_banner,
-                 get_lang: Callable[[], str],
-                 on_active_device_changed: Optional[Callable[[], None]] = None
-                 ) -> None:
-        self._w = window
+                 chip: 'AudioChip',
+                 info_banner: 'InfoBanner',
+                 audio_banner: 'AudioRecoveryBanner',
+                 tuner_tab: 'TunerTab') -> None:
+        self._parent = parent
         self._engine = engine
         self._cfg = cfg
         self._store = store
         self._tr = tr
         self._t = tr.t
+        self._chip = chip
         self._info_banner = info_banner
         self._audio_banner = audio_banner
-        self._get_lang = get_lang
-        self._on_active_device_changed = on_active_device_changed
+        self._tuner_tab = tuner_tab
         # AUDIO_OK only says sounddevice is importable; the engine's open()
         # can still fail at runtime and surface FAILED via state_changed.
         self._audio_ok = bool(AUDIO_OK)
@@ -116,11 +112,6 @@ class DeviceController:
         self._engine.set_preferred_hint(DeviceSelection(
             name=dev.name, host_api=dev.host_api,
             samplerate=int(self._engine.samplerate or 0)))
-        if self._on_active_device_changed is not None:
-            try:
-                self._on_active_device_changed()
-            except Exception:
-                pass
 
     # -------------------------------------------------------------------------
     # Picker open + retry + 1 Hz hot-plug poll
@@ -128,7 +119,7 @@ class DeviceController:
     def open_audio_picker(self) -> None:
         if not self._audio_ok:
             return
-        dlg = AudioPickerDialog(self._w, self._t, self._engine, self._cfg,
+        dlg = AudioPickerDialog(self._parent, self._t, self._engine, self._cfg,
                                 self._engine.get_active_device(), self._store)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             chosen = dlg.chosen()
@@ -172,17 +163,14 @@ class DeviceController:
         name = dev.name if dev else ''
         host = dev.host_api if dev else ''
         sr = int(self._engine.samplerate or 0)
-        w = self._w
-        w._audio_chip.update_from_state(state, name, host, sr)
-        if self._audio_banner is not None:
-            if state == AudioEngineState.FAILED:
-                # A device-less NO_DEVICE (nothing plugged in at all) must not
-                # borrow the name of a device used earlier.
-                failed = device or (
-                    name if err != AudioEngineError.NO_DEVICE else '')
-                self._audio_banner.show_for(err, failed, msg)
-            else:
-                self._audio_banner.hide()
+        self._chip.update_from_state(state, name, host, sr)
+        if state == AudioEngineState.FAILED:
+            # A device-less NO_DEVICE (nothing plugged in at all) must not
+            # borrow the name of a device used earlier.
+            failed = device or (name if err != AudioEngineError.NO_DEVICE else '')
+            self._audio_banner.show_for(err, failed, msg)
+        else:
+            self._audio_banner.hide()
         if state in (AudioEngineState.RUNNING, AudioEngineState.FAILED):
             picked, self._user_pick = self._user_pick, None
         else:
@@ -190,7 +178,7 @@ class DeviceController:
         if state == AudioEngineState.RUNNING and dev is not None:
             self._settle_device(dev, picked)
             if sr:
-                w._tuner.sample_rate = sr
+                self._tuner_tab.set_sample_rate(sr)
             # First-time-only notice if we wound up at a non-44.1k rate.
             if (sr and sr != 44100
                     and not self._cfg.audio_sr_notice_shown):
@@ -198,7 +186,7 @@ class DeviceController:
                 self._store.save(self._cfg)
                 # Surface as a passive status-bar line, not a modal, so a
                 # sample-rate disclosure never blocks the player.
-                self._tr.bind(w._status_lbl.setText, 'audio_sr_notice', sr=sr)
+                self._tuner_tab.show_status('audio_sr_notice', sr=sr)
 
     def _settle_device(self, dev: DeviceInfo,
                        picked: Optional[DeviceSelection]) -> None:
@@ -213,7 +201,7 @@ class DeviceController:
                     and (not saved_host or dev.host_api == saved_host))
         if chosen or is_saved or not saved:
             self.persist_active_device()
-        elif self._info_banner is not None:
+        else:
             self._info_banner.show_message(self._tr.msg(
                 'audio_using_fallback', name=dev.name, saved=saved))
 
@@ -240,8 +228,6 @@ class DeviceController:
         # null the device out, raising AttributeError on .name.
         dev = self._engine.get_active_device()
         if dev is not None and dev.name == device.name:
-            return
-        if self._info_banner is None:
             return
 
         def _do_switch() -> None:

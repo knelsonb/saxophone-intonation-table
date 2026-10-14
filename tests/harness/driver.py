@@ -33,21 +33,23 @@ the list below is the contract the rewrite must keep or update here:
       ``log.jsonl`` (this month's history; earlier months beside it as
       ``log-YYYY-MM.jsonl``); ``MeasurementLog.path`` is the live history file.
   Time
-    * QTimers on the window (``_device_poll``, ``_refresh_timer``,
-      ``_deck_pulse_timer``), the DECK tab's ``_pump_timer`` and the tuner widget's are
-      virtualised: ticked from the harness clock instead of real time.
+    * QTimers on the window (``_device_poll``, ``_deck_pulse_timer``), the
+      TUNER tab's ``_refresh_timer``, the DECK tab's ``_pump_timer`` and the
+      tuner widget's are virtualised: ticked from the harness clock instead
+      of real time.
   Toolbar widgets (window attributes)
     * ``_family_combo`` / ``_instr_combo`` (instrument), ``_disp_combo``
       (fingered / sounding), ``_a4_combo`` (430..450), ``_lang_combo``,
-      ``_filter_combo``, ``_nick_edit``, ``_min_n_spin``, ``_cb_oor``,
+      ``_filter_combo``, ``_nick_edit``,
       buttons ``_btn_autotune`` ``_btn_reset`` ``_btn_txt`` ``_btn_pdf``
       ``_btn_csv`` ``_btn_chart`` ``_btn_import`` ``_btn_custom``;
+  TUNER tab (``_tuner_tab``, sax_tab_tuner.TunerTab)
     * tuner: ``_tuner`` (``note`` ``cents`` ``freq`` ``active``) and
       ``_status_lbl``; table: ``_table`` (QTableWidget, single layout: columns
       fingered/sounding/mean/std/N/bar, mean cell foreground = band colour;
-      matrix layout: cell UserRole payload dicts), ``_table_lbl``,
-      ``_layout_mode``, ``_refresh_table()``, signal
-      ``_table.customContextMenuRequested``;
+      matrix layout: cell UserRole payload dicts), ``_caption``,
+      ``layout_mode``, ``refresh_table()``, signal
+      ``_table.customContextMenuRequested``; ``_min_n_spin``, ``_cb_oor``;
     * state: ``_session`` (sax_session.SessionModel: ``instrument``
       ``display`` ``a4`` ``stats``), ``lang``, ``_cfg``, ``_log``,
       ``_engine`` (``state`` ``last_error`` ``output_running`` ``samplerate``
@@ -320,11 +322,9 @@ class AppDriver:
         """
         from PyQt6.QtCore import QTimer
         w = self.win
-        timers = [getattr(w, a) for a in
-                  ("_device_poll", "_refresh_timer", "_deck_pulse_timer")
-                  if getattr(w, a, None) is not None]
-        timers.append(w._deck_tab._pump_timer)
-        timers += w._tuner.findChildren(QTimer)
+        timers = [w._device_poll, w._deck_pulse_timer,
+                  w._tuner_tab._refresh_timer, w._deck_tab._pump_timer]
+        timers += w._tuner_tab._tuner.findChildren(QTimer)
         for t in timers:
             self._timers[t] = [t.interval(), 0.0]
             t.setInterval(_FAR_MS)
@@ -351,7 +351,7 @@ class AppDriver:
         if self.win is None:
             return
         self.qapp.processEvents()
-        self.win._refresh_table()
+        self.win._tuner_tab.refresh_table()
         self.qapp.processEvents()
 
     def check(self) -> None:
@@ -603,9 +603,9 @@ class AppDriver:
     def table_rows(self, played_only: bool = True) -> list[Row]:
         self.settle()
         w = self.win
-        t = w._table
+        t = w._tuner_tab._table
         rows: list[Row] = []
-        if w._layout_mode == "single":
+        if w._tuner_tab.layout_mode == "single":
             griff = (w._session.display == "griff")
             for r in range(t.rowCount()):
                 cells = [t.item(r, c).text() if t.item(r, c) else "" for c in range(6)]
@@ -639,7 +639,7 @@ class AppDriver:
 
     def table_caption(self) -> str:
         self.settle()
-        return self.win._table_lbl.text()
+        return self.win._tuner_tab._caption.text()
 
     def table_reset(self, confirm: bool) -> None:
         with self.dialogs.scope():
@@ -649,8 +649,8 @@ class AppDriver:
 
     def table_discard(self, name: str, confirm: bool) -> None:
         w = self.win
-        t = w._table
-        if w._layout_mode == "single":
+        t = w._tuner_tab._table
+        if w._tuner_tab.layout_mode == "single":
             rows = self.table_rows(played_only=False)
             index = next((i for i, r in enumerate(rows)
                           if r.is_named(name) and r.n > 0), None)
@@ -673,7 +673,7 @@ class AppDriver:
         is not offered, as nothing is shown in it."""
         from PyQt6.QtCore import Qt
         self.settle()
-        t = self.win._table
+        t = self.win._tuner_tab._table
         for r in range(t.rowCount()):
             for c in range(t.columnCount()):
                 item = t.item(r, c)
@@ -689,7 +689,7 @@ class AppDriver:
         """Column header labels as displayed (``_table`` horizontal header):
         the six list columns, or one octave label per matrix column."""
         self.settle()
-        t = self.win._table
+        t = self.win._tuner_tab._table
         return [t.horizontalHeaderItem(c).text() if t.horizontalHeaderItem(c) else ""
                 for c in range(t.columnCount())]
 
@@ -699,9 +699,9 @@ class AppDriver:
     # =================================================================== tuner
     def tuner_reading(self) -> Reading:
         self.qapp.processEvents()
-        t = self.win._tuner
+        t = self.win._tuner_tab._tuner
         return Reading(note=t.note, cents=float(t.cents), freq=float(t.freq),
-                       active=bool(t.active), status_text=self.win._status_lbl.text())
+                       active=bool(t.active), status_text=self.win._tuner_tab._status_lbl.text())
 
     # ================================================================= autotune
     def autotune(self, accept: bool) -> AutotuneResult:
@@ -942,10 +942,10 @@ class AppDriver:
         self._combo_select(self.win._filter_combo, mode, "response mode")
 
     def set_min_n(self, n: int) -> None:
-        self.win._min_n_spin.setValue(int(n))
+        self.win._tuner_tab._min_n_spin.setValue(int(n))
 
     def set_filter_to_range(self, on: bool) -> None:
-        self.win._cb_oor.setChecked(bool(on))
+        self.win._tuner_tab._cb_oor.setChecked(bool(on))
 
     def set_nickname(self, text: str) -> None:
         self.win._nick_edit.setText(text)
@@ -1022,7 +1022,7 @@ class AppDriver:
             banner_visible=not w._audio_banner.isHidden(),
             banner_text=w._audio_banner._msg.text(),
             chip_text=w._audio_chip._name.text(),
-            status_text=w._status_lbl.text())
+            status_text=w._tuner_tab._status_lbl.text())
 
     def audio_retry(self) -> None:
         self.win._audio_banner._btn_retry.click()

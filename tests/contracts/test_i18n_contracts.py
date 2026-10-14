@@ -118,10 +118,11 @@ _KEY_CARRIERS = {'mode_note_key', '_row_keys'}
 # Translation calls: call name -> positions of the key arguments. ``_t`` may be
 # a plain name or an attribute; the Translator's methods are always called on
 # an object (``tr.bind(...)``), which keeps an unrelated function that happens
-# to be called ``t`` or ``bind`` out of the scan.
+# to be called ``t`` or ``bind`` out of the scan. ``show_status`` is the TUNER
+# tab's status line, which binds its key and arguments the same way.
 _KEY_ARGS = {'_t': (0,)}
 _TRANSLATOR_KEY_ARGS = {'t': (0,), 'msg': (0,), 'bind': (1,), 'bind_item': (2,),
-                        'bind_tab': (2, 3)}
+                        'bind_tab': (2, 3), 'show_status': (0,)}
 # Helpers that take a message key and show it (with a reason appended) later:
 # call name -> position of the key argument.
 _KEY_TAKING_HELPERS = {'_deck_show_status': 0, '_show_status': 0,
