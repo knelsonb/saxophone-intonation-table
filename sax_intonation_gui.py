@@ -36,7 +36,6 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
     QFileDialog,
-    QFormLayout,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
@@ -65,16 +64,13 @@ import sax_theme
 from sax_audio_engine import (
     AUDIO_OK,
     DEFAULT_SAMPLE_RATE,
-    FILTER_MODE_DEFAULT,
     FILTER_PRESETS,
     AudioEngine,
-    AudioEngineError,
     DeviceInfo,
     DeviceSelection,
     OutputState,
-    format_rates,
-    query_output_devices,
 )
+from sax_controls import db_to_linear, response_combo, show_data
 from sax_deck import DeckController
 from sax_device import DeviceController
 from sax_dialogs import (  # noqa: F401  (AudioPickerDialog, RangeEditorDialog,
@@ -84,7 +80,7 @@ from sax_dialogs import (  # noqa: F401  (AudioPickerDialog, RangeEditorDialog,
     _promote_vendor_prefix,
     add_lang_toggle,
 )
-from sax_drone import DRONE_FULL_GM, DRONE_PRESETS, DRONE_SYNTH_VOICES, DroneController
+from sax_drone import DRONE_PRESETS, DroneController
 from sax_export import ExportController
 from sax_i18n import STRINGS
 from sax_instrument_controller import InstrumentController
@@ -96,6 +92,7 @@ from sax_instruments import (
 )
 from sax_intonation_log import MeasurementLog
 from sax_metronome import MetronomeController
+from sax_output_status import show_with_reason
 from sax_output_users import OutputUsers
 from sax_paths import AppPaths
 from sax_pitch import (  # noqa: F401  (re-exported for older importers)
@@ -111,6 +108,7 @@ from sax_pitch import (  # noqa: F401  (re-exported for older importers)
 from sax_pitch_pipes import PitchPipesController
 from sax_session import RunTracker, SessionModel
 from sax_session_state import SessionStateController
+from sax_tab_setup import SetupTab
 from sax_table import TableController
 from sax_translator import Translator
 from sax_widgets import (  # noqa: F401  (MatrixCellDelegate re-exported)
@@ -127,17 +125,6 @@ from sax_widgets import (  # noqa: F401  (MatrixCellDelegate re-exported)
 
 APP_NAME = 'Intonation Analyzer'
 APP_VERSION = '1.4.0'
-
-# Mic-gain SETUP control: the offered dB steps + the dB→linear conversion the
-# engine expects. Module-level so the combo, the startup sync, and any test all
-# agree on one source.
-MIC_GAIN_DB_STEPS = (-12, -6, 0, 6, 12, 18, 24)
-
-
-def _db_to_linear(db: float) -> float:
-    """dB gain → linear multiplier (0 dB → 1.0)."""
-    return 10.0 ** (float(db) / 20.0)
-
 
 # =============================================================================
 # Haupt-Fenster
@@ -227,7 +214,7 @@ class MainWindow(QMainWindow):
 
         self._engine = AudioEngine()
         self._engine.set_filter_mode(self._cfg.filter_mode)
-        self._engine.set_mic_gain(_db_to_linear(self._cfg.mic_gain_db))
+        self._engine.set_mic_gain(db_to_linear(self._cfg.mic_gain_db))
         self._engine.set_prefer_wdmks(self._cfg.prefer_wdmks)
         # Persistence comes from config (welcome dialog), with the env var
         # SAX_INTONATION_LOG_PATH as a power-user override that always wins.
@@ -247,8 +234,6 @@ class MainWindow(QMainWindow):
         # Wired even without PortAudio: an output request then fails, and
         # the failure is what turns the asking toggle back off.
         self._engine.signals.output_state_changed.connect(self._on_output_status)
-        self._engine.signals.output_devices_changed.connect(
-            self._on_output_devices_changed)
         # Sound sources the player switched on, waiting for (or parked
         # until) the output runs. See sax_output_users.
         self._output_users = OutputUsers(
@@ -522,11 +507,10 @@ class MainWindow(QMainWindow):
         tr.bind(self._grp_filter.setTitle, 'grp_filter')
         fl = QHBoxLayout(self._grp_filter)
         fl.setContentsMargins(8, 4, 8, 4)
-        self._filter_combo = QComboBox()
+        self._filter_combo = response_combo(tr, self._engine.filter_mode)
         self._filter_combo.setMinimumWidth(100)
-        self._populate_filter_combo(self._filter_combo)
         self._filter_combo.currentIndexChanged.connect(
-            self._on_filter_mode_changed)
+            lambda _i: self._apply_response(self._filter_combo.currentData()))
         fl.addWidget(self._filter_combo)
 
         # Sprache
@@ -754,7 +738,19 @@ class MainWindow(QMainWindow):
         self._tabs.addTab(splitter, '')
         self._tabs.addTab(self._build_metro_tab(), '')
         self._tabs.addTab(self._build_deck_tab(), '')
-        self._tabs.addTab(self._build_setup_tab(), '')
+        self._setup_tab = SetupTab(
+            tr=tr, cfg=self._cfg, store=self._store, engine=self._engine,
+            session=self._session, output_users=self._output_users,
+            request_output_open=self._request_output_open,
+            apply_a4=self._apply_a4,
+            apply_response=self._apply_response,
+            apply_theme=self._apply_theme,
+            open_range_editor=self._open_range_editor,
+            nickname_committed=self._runs.nickname_committed)
+        self._setup_tab.drone_voice_picked.connect(self._on_drone_preset)
+        self._engine.signals.output_devices_changed.connect(
+            self._setup_tab.show_output_devices)
+        self._tabs.addTab(self._setup_tab, '')
         for i, key in enumerate(self._tab_keys):
             tr.bind_tab(self._tabs, i, f'nav_tab_{key}', f'nav_tab_{key}_tip')
         self._install_tab_indicators()
@@ -807,249 +803,6 @@ class MainWindow(QMainWindow):
         self._session.recording_changed.connect(self._on_session_recording)
 
     # ── Navigation shell helpers ─────────────────────────────────────────────
-    def _build_setup_tab(self) -> QWidget:
-        """SETUP tab: audio-OUTPUT controls (output-device picker, the
-        duplex-preference toggle, and a test-tone button that proves the
-        output path — a tone plays through the mixer while the tuner keeps
-        reading the mic), plus drone voice, theme, instrument, nickname,
-        concert pitch, response and mic-gain settings."""
-        tr = self._tr
-        w = QWidget()
-        outer = QVBoxLayout(w)
-        outer.setContentsMargins(18, 16, 18, 16)
-        outer.setSpacing(14)
-
-        # Audio output device + duplex preference.
-        out_grp = QGroupBox()
-        tr.bind(out_grp.setTitle, 'setup_output_group')
-        og = QFormLayout(out_grp)
-        og.setContentsMargins(12, 10, 12, 10)
-        og.setSpacing(8)
-        self._out_device_combo = QComboBox()
-        self._out_device_combo.setMinimumWidth(320)
-        tr.bind(self._out_device_combo.setAccessibleName, 'setup_output_device')
-        self._out_device_combo.currentIndexChanged.connect(
-            self._on_output_device_changed)
-        # Handle for the active test-tone source (None while silent).
-        self._test_tone_handle = None
-        # Cache of the output enumeration from the last combo population, so
-        # _on_output_device_changed can resolve a chosen name's host_api
-        # without re-querying the engine (N3).
-        self._output_devices_cache: list = []
-        self._refresh_output_device_combo()
-        tr.bind_item(self._out_device_combo, 0, 'setup_output_default')
-        out_lbl = QLabel()
-        tr.bind(out_lbl.setText, 'setup_output_device')
-        og.addRow(out_lbl, self._out_device_combo)
-        self._cb_prefer_duplex = QCheckBox()
-        tr.bind(self._cb_prefer_duplex.setText, 'setup_prefer_duplex')
-        tr.bind(self._cb_prefer_duplex.setToolTip, 'setup_prefer_duplex_tip')
-        self._cb_prefer_duplex.setChecked(self._cfg.output_prefer_duplex)
-        self._cb_prefer_duplex.toggled.connect(self._on_prefer_duplex_toggled)
-        og.addRow('', self._cb_prefer_duplex)
-        outer.addWidget(out_grp)
-
-        # Drone voice — the full 128-GM picker lives here; the
-        # TUNER drone bar carries the 5-preset quick row. Both drive the same
-        # voice and stay in sync via DroneController.on_state_changed.
-        voice_grp = QGroupBox()
-        tr.bind(voice_grp.setTitle, 'setup_drone_voice_group')
-        vg = QFormLayout(voice_grp)
-        vg.setContentsMargins(12, 10, 12, 10)
-        self._drone_voice_combo = QComboBox()
-        self._drone_voice_combo.setMinimumWidth(260)
-        tr.bind(self._drone_voice_combo.setAccessibleName, 'setup_drone_voice')
-        # Presets, then the desktop-only synth voices (pure sine), then the
-        # full GM catalog. Each item's data is the voice id the controller
-        # resolves. Presets and synth voices have translated names. The GM
-        # voices keep their standard General MIDI names, numbered as in the
-        # GM table: two presets share a GM voice's name (Cello, Tenor Sax),
-        # and the number tells the preset and the raw GM voice apart.
-        named = DRONE_PRESETS + DRONE_SYNTH_VOICES
-        for vid, _label, _program in named:
-            self._drone_voice_combo.addItem('', vid)
-            tr.bind_item(self._drone_voice_combo, self._drone_voice_combo.count() - 1,
-                         f'drone_voice_{vid}')
-        named_ids = {vid for vid, _label, _program in named}
-        for vid, gm_name, program in DRONE_FULL_GM:
-            if vid not in named_ids:
-                self._drone_voice_combo.addItem(f'GM {program + 1} · {gm_name}', vid)
-        sel_id = self._cfg.drone_voice_id
-        for i in range(self._drone_voice_combo.count()):
-            if self._drone_voice_combo.itemData(i) == sel_id:
-                self._drone_voice_combo.setCurrentIndex(i)
-                break
-        self._drone_voice_combo.currentIndexChanged.connect(
-            self._on_drone_voice_changed)
-        voice_lbl = QLabel()
-        tr.bind(voice_lbl.setText, 'setup_drone_voice')
-        vg.addRow(voice_lbl, self._drone_voice_combo)
-        outer.addWidget(voice_grp)
-
-        # Appearance — theme switching (dark / night / light).
-        appear_grp = QGroupBox()
-        tr.bind(appear_grp.setTitle, 'setup_appearance_group')
-        ag = QFormLayout(appear_grp)
-        ag.setContentsMargins(12, 10, 12, 10)
-        self._theme_combo = QComboBox()
-        tr.bind(self._theme_combo.setAccessibleName, 'setup_theme')
-        tr.bind_items(self._theme_combo,
-                      [(f'theme_{name}', name) for name in sax_theme.THEME_ORDER])
-        _cur_theme = sax_theme.active_name()
-        for i in range(self._theme_combo.count()):
-            if self._theme_combo.itemData(i) == _cur_theme:
-                self._theme_combo.setCurrentIndex(i)
-                break
-        self._theme_combo.currentIndexChanged.connect(self._on_theme_changed)
-        theme_lbl = QLabel()
-        tr.bind(theme_lbl.setText, 'setup_theme')
-        ag.addRow(theme_lbl, self._theme_combo)
-        outer.addWidget(appear_grp)
-
-        # Instrument — range-editor link (also reachable via the
-        # toolbar gear). No inline stylesheet: it rides the global themed
-        # QPushButton QSS so it re-themes on a theme switch (avoids adding to
-        # the inline-style tail, task #31).
-        instr_grp = QGroupBox()
-        tr.bind(instr_grp.setTitle, 'setup_instrument_group')
-        ig = QVBoxLayout(instr_grp)
-        ig.setContentsMargins(12, 10, 12, 10)
-        # Horn nickname — promote the existing config field (cfg.last_nickname,
-        # used by CSV per-nickname slicing) to a first-class SETUP editor.
-        # Both editors write the session's nickname and show it.
-        # No inline style — rides the themed QLineEdit QSS (off the #31 tail).
-        nick_row = QHBoxLayout()
-        nick_lbl = QLabel()
-        tr.bind(nick_lbl.setText, 'grp_nickname')
-        nick_row.addWidget(nick_lbl)
-        self._setup_nick_edit = QLineEdit()
-        self._setup_nick_edit.setObjectName('setupNickname')
-        tr.bind(self._setup_nick_edit.setPlaceholderText, 'nickname_tip')
-        tr.bind(self._setup_nick_edit.setAccessibleName, 'grp_nickname')
-        self._setup_nick_edit.setText(self._session.nickname)
-        self._setup_nick_edit.textChanged.connect(self._session.set_nickname)
-        self._setup_nick_edit.editingFinished.connect(self._runs.nickname_committed)
-        nick_row.addWidget(self._setup_nick_edit)
-        ig.addLayout(nick_row)
-        self._btn_setup_range = QPushButton()
-        tr.bind(self._btn_setup_range.setText, 'setup_range_edit')
-        self._btn_setup_range.setObjectName('setupRangeEdit')
-        self._btn_setup_range.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._btn_setup_range.clicked.connect(self._open_range_editor)
-        ig.addWidget(self._btn_setup_range)
-        outer.addWidget(instr_grp)
-
-        # Concert pitch (A4) — mirrors the toolbar Kammerton combo.
-        # Both combos drive the (heavy) measurement recalc via the shared
-        # _apply_a4 and follow the session's A4 under blockSignals, so the
-        # re-derive runs exactly once. Items are language-independent
-        # ("NNN Hz"). No inline style — themed QSS (off the #31 tail).
-        a4_grp = QGroupBox()
-        tr.bind(a4_grp.setTitle, 'grp_a4')
-        a4g = QVBoxLayout(a4_grp)
-        a4g.setContentsMargins(12, 10, 12, 10)
-        self._setup_a4_combo = QComboBox()
-        self._setup_a4_combo.setObjectName('setupA4')
-        self._setup_a4_combo.setMinimumWidth(160)
-        tr.bind(self._setup_a4_combo.setAccessibleName, 'grp_a4')
-        for hz in range(430, 451):
-            self._setup_a4_combo.addItem(f'{hz} Hz', hz)
-        self._setup_a4_combo.setCurrentIndex(
-            self._setup_a4_combo.findData(int(self._session.a4)))
-        self._setup_a4_combo.currentIndexChanged.connect(
-            self._on_setup_a4_changed)
-        a4g.addWidget(self._setup_a4_combo)
-        outer.addWidget(a4_grp)
-
-        # Response — pitch-detection smoothing preset (Fast / Normal / Slow).
-        # Mirrors the toolbar Response combo: both drive
-        # cfg.filter_mode + the engine through _apply_filter_mode and stay
-        # mirrored (blockSignals) so changing one updates the other without
-        # double-routing. No inline stylesheet — rides the themed QComboBox
-        # QSS, keeping it off the inline-style tail (#31).
-        resp_grp = QGroupBox()
-        tr.bind(resp_grp.setTitle, 'grp_filter')
-        rg = QVBoxLayout(resp_grp)
-        rg.setContentsMargins(12, 10, 12, 10)
-        self._setup_filter_combo = QComboBox()
-        self._setup_filter_combo.setObjectName('setupResponse')
-        self._setup_filter_combo.setMinimumWidth(220)
-        tr.bind(self._setup_filter_combo.setAccessibleName, 'grp_filter')
-        self._populate_filter_combo(self._setup_filter_combo)
-        self._setup_filter_combo.currentIndexChanged.connect(
-            self._on_setup_filter_mode_changed)
-        rg.addWidget(self._setup_filter_combo)
-        outer.addWidget(resp_grp)
-
-        # Mic gain — boost a quiet mic (in dB) so it clears the detection
-        # floor; default 0 dB is a no-op. Drives engine.set_mic_gain, which
-        # scales ONLY the silence gate + level meter (not the signal), so the
-        # cents readout is unchanged. Persisted as cfg.mic_gain_db. dB labels
-        # are language-independent → no retranslate. No inline style (#31 tail).
-        mic_grp = QGroupBox()
-        tr.bind(mic_grp.setTitle, 'setup_mic_gain')
-        mg = QVBoxLayout(mic_grp)
-        mg.setContentsMargins(12, 10, 12, 10)
-        self._setup_mic_gain_combo = QComboBox()
-        self._setup_mic_gain_combo.setObjectName('setupMicGain')
-        self._setup_mic_gain_combo.setMinimumWidth(160)
-        tr.bind(self._setup_mic_gain_combo.setAccessibleName, 'setup_mic_gain')
-        tr.bind(self._setup_mic_gain_combo.setToolTip, 'setup_mic_gain_tip')
-        for _db in MIC_GAIN_DB_STEPS:
-            self._setup_mic_gain_combo.addItem(
-                '0 dB' if _db == 0 else f'{_db:+d} dB', _db)
-        # Snap the display to the nearest offered step (the engine already uses
-        # the exact persisted dB; the user can only pick a discrete step).
-        _cur_db = self._cfg.mic_gain_db
-        _best_i = min(range(self._setup_mic_gain_combo.count()),
-                      key=lambda i: abs(self._setup_mic_gain_combo.itemData(i)
-                                        - _cur_db))
-        self._setup_mic_gain_combo.setCurrentIndex(_best_i)
-        self._setup_mic_gain_combo.currentIndexChanged.connect(
-            self._on_mic_gain_changed)
-        mg.addWidget(self._setup_mic_gain_combo)
-        # Live plain-language confirmation of what the current gain does — so the
-        # control gives a VISIBLE result even though the cents readout is, by
-        # design, unaffected by gain. Updated on every change + on a
-        # language switch.
-        self._setup_mic_gain_status = QLabel('')
-        self._setup_mic_gain_status.setObjectName('setupMicGainStatus')
-        self._setup_mic_gain_status.setWordWrap(True)
-        self._setup_mic_gain_status.setObjectName('dimLabel')   # themed dim hint
-        self._update_mic_gain_status()
-        mg.addWidget(self._setup_mic_gain_status)
-        outer.addWidget(mic_grp)
-
-        # Test tone — proves the output path end to end.
-        tone_grp = QGroupBox()
-        tr.bind(tone_grp.setTitle, 'setup_testtone_group')
-        tg = QVBoxLayout(tone_grp)
-        tg.setContentsMargins(12, 10, 12, 10)
-        self._btn_test_tone = QPushButton()
-        tr.bind(self._btn_test_tone.setText, 'setup_testtone_play')
-        self._btn_test_tone.setCheckable(True)
-        tr.bind(self._btn_test_tone.setToolTip, 'setup_testtone_tip')
-        self._btn_test_tone.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._btn_test_tone.setStyleSheet("""
-            QPushButton{background:#16a085;color:#fff;border:none;
-                         border-radius:5px;padding:8px 14px;font-size:13px;}
-            QPushButton:hover{background:#1abc9c;}
-            QPushButton:checked{background:#b7770d;}
-        """)
-        self._btn_test_tone.toggled.connect(self._on_test_tone_toggled)
-        tg.addWidget(self._btn_test_tone)
-        # Inline feedback when the tone can't start (no output device yet, or
-        # the engine output mirror isn't available). Hidden until needed so
-        # the button never silently lies about playing (N2).
-        self._test_tone_status = QLabel('')
-        self._test_tone_status.setWordWrap(True)
-        self._test_tone_status.setObjectName('errorLabel')   # QLabel#errorLabel
-        self._test_tone_status.setVisible(False)
-        tg.addWidget(self._test_tone_status)
-        outer.addWidget(tone_grp)
-        outer.addStretch()
-        return w
-
     def _current_output_selection(self) -> 'DeviceSelection':
         """The persisted output device as a DeviceSelection (mirrors the
         input path's _device_selection_from_cfg). Empty name = system
@@ -1064,56 +817,6 @@ class MainWindow(QMainWindow):
         """Ask for the chosen output to be opened. The answer comes back as
         an OutputStatus (_on_output_status)."""
         self._engine.request_open_output(self._current_output_selection())
-
-    def _refresh_output_device_combo(self) -> None:
-        """Fill the SETUP output combo when it is built. Later changes to the
-        device list arrive from the engine's hot-plug poll
-        (_on_output_devices_changed). Only enumerates; opens nothing."""
-        try:
-            devices = query_output_devices()
-        except Exception:
-            devices = []
-        self._fill_output_combo(devices)
-
-    def _fill_output_combo(self, devices) -> None:
-        """System default first, then the output devices, with the saved one
-        selected when it is present."""
-        combo = self._out_device_combo
-        was_blocked = combo.blockSignals(True)
-        combo.clear()
-        combo.addItem(self._t('setup_output_default'), '')
-        self._output_devices_cache = list(devices)
-        saved_name = self._cfg.output_device_name
-        select_idx = 0
-        for d in devices:
-            combo.addItem(f'{d.name} · {d.host_api}', d.name)
-            if saved_name and d.name == saved_name:
-                select_idx = combo.count() - 1
-        combo.setCurrentIndex(select_idx)
-        combo.blockSignals(was_blocked)
-
-    def _on_output_devices_changed(self, devices) -> None:
-        """An output was plugged in or out: offer the current list."""
-        self._fill_output_combo(devices)
-
-    def _on_output_device_changed(self, _idx: int) -> None:
-        name = self._out_device_combo.currentData() or ''
-        host_api = ''
-        # Resolve host_api from the cache captured at combo population (N3) —
-        # no re-query of the engine.
-        if name:
-            for d in self._output_devices_cache:
-                if d.name == name:
-                    host_api = d.host_api
-                    break
-        self._cfg.output_device_name = name
-        self._cfg.output_device_host_api = host_api
-        self._cfg.output_device_samplerate = 0   # auto-negotiate
-        self._save_settings()
-        # Re-open on the new device. Whatever is sounding carries over: the
-        # mixer re-rates every source for the new stream and keeps the
-        # metronome's next beat where it was due.
-        self._request_output_open()
 
     # ── Output state ──────────────────────────────────────────────────────────
     def _on_output_status(self, status) -> None:
@@ -1147,10 +850,7 @@ class MainWindow(QMainWindow):
         # Nothing renders now, so sources are dropped at once rather than
         # faded: a fade would only play when the output is back, over the
         # source started afresh.
-        if self._test_tone_handle is not None:
-            self._stop_test_tone(fade=False)
-            self._show_test_tone_on(False)
-            users.park('tone', self._test_tone_on, self._test_tone_failed)
+        self._setup_tab.park_output()
         if self._metro_ctrl.is_running():
             self._metro_ctrl.stop()
             users.park('metro', self._metro_ctrl.start, self._metro_revert_start)
@@ -1164,48 +864,6 @@ class MainWindow(QMainWindow):
             self._pipes_ctrl.silence()
         if self._deck_state() == 'playing':
             self._deck_ctrl.stop()
-
-    def _output_reason(self, status) -> str:
-        """Why an output open failed, naming the device (and the rates it
-        refused), in the player's language. '' when there is nothing to add."""
-        if status is None:
-            return ''
-        name = status.device
-        err = status.error
-        if err == AudioEngineError.UNSUPPORTED_RATE and name and status.rates:
-            return self._t('output_err_rate', name=name,
-                           rates=format_rates(status.rates))
-        if err == AudioEngineError.DEVICE_BUSY and name:
-            return self._t('output_err_busy', name=name)
-        if err in (AudioEngineError.NO_DEVICE,
-                   AudioEngineError.DEVICE_DISCONNECTED):
-            if name:
-                return self._t('output_err_missing', name=name)
-            return self._t('output_err_none')
-        if name:
-            return self._t('output_err_failed', name=name)
-        return ''
-
-    def _with_reason(self, text: str, status) -> str:
-        reason = self._output_reason(status)
-        return f'{text} {reason}' if reason else text
-
-    def _show_with_reason(self, label: QLabel, key: str, status) -> None:
-        """Show the message ``key`` on ``label``, followed by why the output
-        could not open, in whatever language is current, now and later."""
-        self._tr.bind_text(label.setText,
-                           lambda: self._with_reason(self._t(key), status))
-
-    def _on_prefer_duplex_toggled(self, checked: bool) -> None:
-        # Persist the preference; it's consumed the next time the output
-        # device opens. We don't re-open mid-tone — that would chop a
-        # playing test tone for a setting that costs nothing to defer.
-        self._cfg.output_prefer_duplex = bool(checked)
-        self._save_settings()
-
-    def _on_theme_changed(self, _idx: int) -> None:
-        name = self._theme_combo.currentData() or sax_theme.DEFAULT_THEME
-        self._apply_theme(str(name))
 
     def _apply_theme(self, name: str) -> None:
         """Switch the live UI theme: set the active palette, re-render the
@@ -1248,56 +906,6 @@ class MainWindow(QMainWindow):
         pal.setColor(QPalette.ColorRole.ToolTipBase, QColor(p.base_bg))
         pal.setColor(QPalette.ColorRole.ToolTipText, QColor(p.text))
         app.setPalette(pal)
-
-    def _on_test_tone_toggled(self, on: bool) -> None:
-        """Start/stop a 440 Hz test tone through the mixer. The tuner is
-        deliberately NOT muted — D3 says the readout stays live while output
-        sounds; this is the manual proof of that path."""
-        if on:
-            self._test_tone_status.setVisible(False)
-            self._output_users.want('tone', self._test_tone_on,
-                                    self._test_tone_failed)
-        else:
-            self._output_users.drop('tone')
-            self._test_tone_status.setVisible(False)
-            self._stop_test_tone()
-            self._show_test_tone_on(False)
-
-    def _test_tone_on(self) -> None:
-        """The output runs: sound the tone (the engine builds it at the
-        output's format; the mixer keeps it in tune across later switches)."""
-        try:
-            handle = self._engine.start_test_tone(440.0)
-        except Exception:
-            handle = None
-        if handle is None:
-            self._test_tone_failed(None)
-            return
-        self._test_tone_handle = handle
-        self._show_test_tone_on(True)
-
-    def _test_tone_failed(self, status) -> None:
-        """Nothing is sounding — don't let the button claim "Stop"; say why
-        (N2), naming the output when an open failed."""
-        self._show_test_tone_on(False)
-        self._show_with_reason(self._test_tone_status, 'setup_testtone_failed', status)
-        self._test_tone_status.setVisible(True)
-
-    def _stop_test_tone(self, fade: bool = True) -> None:
-        if self._test_tone_handle is not None:
-            try:
-                self._engine.stop_test_tone(self._test_tone_handle, fade=fade)
-            except Exception:
-                pass
-        self._test_tone_handle = None
-
-    def _show_test_tone_on(self, on: bool) -> None:
-        """Paint the button without re-entering its toggled handler."""
-        blocked = self._btn_test_tone.blockSignals(True)
-        self._btn_test_tone.setChecked(on)
-        self._btn_test_tone.blockSignals(blocked)
-        self._tr.bind(self._btn_test_tone.setText,
-                      'setup_testtone_stop' if on else 'setup_testtone_play')
 
     def _install_tab_indicators(self) -> None:
         """Attach status-dot widgets to the METRO and DECK tabs, hidden
@@ -1548,7 +1156,7 @@ class MainWindow(QMainWindow):
         self._btn_metro_start.setChecked(False)
         self._btn_metro_start.blockSignals(blocked)
         self._tr.bind(self._btn_metro_start.setText, 'metro_start')
-        self._show_with_reason(self._metro_status, 'metro_unavailable', status)
+        show_with_reason(self._tr, self._metro_status, 'metro_unavailable', status)
         self._metro_status.setVisible(True)
 
     def _on_metro_toggle(self, on: bool) -> None:
@@ -1766,7 +1374,7 @@ class MainWindow(QMainWindow):
         self._deck_status.setStyleSheet(
             'color:%s;font-size:12px;padding-top:4px;'
             % ('#c0392b' if error else '#2ecc71'))
-        self._show_with_reason(self._deck_status, key, output_status)
+        show_with_reason(self._tr, self._deck_status, key, output_status)
         self._deck_status.setVisible(True)
 
     def _on_deck_state_changed(self) -> None:
@@ -2012,12 +1620,7 @@ class MainWindow(QMainWindow):
         ctrl = self._drone_ctrl
         if not ctrl.synth_fallback:
             return
-        combo = self._drone_voice_combo
-        idx = combo.findData(ctrl.voice_id)
-        if idx >= 0:
-            blocked = combo.blockSignals(True)
-            combo.setCurrentIndex(idx)
-            combo.blockSignals(blocked)
+        self._setup_tab.show_drone_voice(ctrl.voice_id)
         self._tr.bind(self._drone_status.setText, 'drone_sine_fallback')
         self._drone_status.setVisible(True)
 
@@ -2025,7 +1628,7 @@ class MainWindow(QMainWindow):
         blocked = self._btn_drone_on.blockSignals(True)
         self._btn_drone_on.setChecked(False)
         self._btn_drone_on.blockSignals(blocked)
-        self._show_with_reason(self._drone_status, 'drone_unavailable', status)
+        show_with_reason(self._tr, self._drone_status, 'drone_unavailable', status)
         self._drone_status.setVisible(True)
 
     def _on_drone_preset(self, voice_id: str) -> None:
@@ -2052,13 +1655,7 @@ class MainWindow(QMainWindow):
             blocked = b.blockSignals(True)
             b.setChecked(vid == self._drone_voice_id)
             b.blockSignals(blocked)
-        combo = self._drone_voice_combo
-        for i in range(combo.count()):
-            if combo.itemData(i) == self._drone_voice_id:
-                blocked = combo.blockSignals(True)
-                combo.setCurrentIndex(i)
-                combo.blockSignals(blocked)
-                break
+        self._setup_tab.show_drone_voice(self._drone_voice_id)
 
     def _on_drone_state_changed(self) -> None:
         """Zero-arg slot for DroneController.on_state_changed. The controller is
@@ -2074,14 +1671,6 @@ class MainWindow(QMainWindow):
             self._drone_voice_id = vid
             self._cfg.drone_voice_id = vid
         self._refresh_drone_voice_widgets()
-
-    def _on_drone_voice_changed(self, _idx: int) -> None:
-        """SETUP 128-GM picker handler — routes through the same path as the
-        TUNER preset row."""
-        combo = self._drone_voice_combo
-        vid = combo.currentData()
-        if vid:
-            self._on_drone_preset(str(vid))
 
     def _open_pitch_pipes(self) -> None:
         """Pitch-pipes modal: 12 chromatic pads (C4–B4). Pads route to
@@ -2158,7 +1747,7 @@ class MainWindow(QMainWindow):
             self._pipes_ctrl.toggle(midi)
 
     def _pipes_failed(self, status) -> None:
-        self._show_with_reason(self._pipes_status, 'pipes_unavailable', status)
+        show_with_reason(self._tr, self._pipes_status, 'pipes_unavailable', status)
         self._pipes_status.setVisible(True)
         self._sync_pipe_btns()
 
@@ -2425,12 +2014,7 @@ class MainWindow(QMainWindow):
         restore): show it in both A4 combos and hand it to everything that
         measures or sounds against it — the detection engine, the drone and
         the pitch pipes — so they can never disagree about the reference."""
-        for combo in (self._a4_combo, self._setup_a4_combo):
-            idx = combo.findData(int(a4))
-            if idx >= 0 and combo.currentIndex() != idx:
-                blocked = combo.blockSignals(True)
-                combo.setCurrentIndex(idx)
-                combo.blockSignals(blocked)
+        show_data(self._a4_combo, int(a4))
         self._engine.set_a4(a4)
         self._drone_ctrl.set_a4(a4)
         if self._pipes_ctrl is not None:      # built on first open
@@ -2447,11 +2031,11 @@ class MainWindow(QMainWindow):
     def _on_session_nickname(self, text: str) -> None:
         """Both nickname editors show the session's nickname. The one being
         typed in already does; touching it would move its cursor."""
-        for edit in (self._nick_edit, self._setup_nick_edit):
-            if edit.text() != text:
-                blocked = edit.blockSignals(True)
-                edit.setText(text)
-                edit.blockSignals(blocked)
+        edit = self._nick_edit
+        if edit.text() != text:
+            blocked = edit.blockSignals(True)
+            edit.setText(text)
+            edit.blockSignals(blocked)
 
     def _on_session_recording(self, on: bool) -> None:
         self._update_record_btn_style()
@@ -2535,82 +2119,18 @@ class MainWindow(QMainWindow):
             self._save_settings()
             self._refresh_table()
 
-    def _populate_filter_combo(self, combo) -> None:
-        """Fill a Response combo with Fast / Normal / Slow in the current
-        language (and every later one) and select the mode the engine uses:
-        it ignores an unknown mode, so it holds the mode actually in use.
-        Shared by the toolbar Response combo and the SETUP-tab response combo
-        so the two never drift in contents."""
-        self._tr.bind_items(combo, [('filter_fast', 'fast'),
-                                    ('filter_normal', 'normal'),
-                                    ('filter_slow', 'slow')])
-        self._tr.bind(combo.setToolTip, 'filter_tip')
-        cur = self._engine.filter_mode
-        if cur not in FILTER_PRESETS:
-            cur = FILTER_MODE_DEFAULT
-        idx = combo.findData(cur)
-        if idx >= 0:
-            blocked = combo.blockSignals(True)
-            combo.setCurrentIndex(idx)
-            combo.blockSignals(blocked)
-
-    def _on_filter_mode_changed(self, _idx: int = 0) -> None:
-        """Toolbar Response combo changed → apply + mirror into SETUP."""
-        self._apply_filter_mode(self._filter_combo.currentData(),
-                                source=self._filter_combo)
-
-    def _on_setup_filter_mode_changed(self, _idx: int = 0) -> None:
-        """SETUP Response combo changed → apply + mirror into the toolbar.
-        Mirrors the toolbar Response control (Fast / Normal / Slow)."""
-        self._apply_filter_mode(self._setup_filter_combo.currentData(),
-                                source=self._setup_filter_combo)
-
-    def _apply_filter_mode(self, mode, source=None) -> None:
-        """Single source of truth for a Response/filter-mode change from
-        EITHER the toolbar or the SETUP combo. Mirror the *other* combo
-        (signals blocked so the change does not re-enter), persist
-        cfg.filter_mode, and reroute the live engine. No-op on an unknown
-        preset. Idempotent: re-applying the active mode changes nothing."""
+    def _apply_response(self, mode) -> None:
+        """A Response (filter mode) pick from the toolbar or the SETUP combo:
+        show it in both (without emitting, so it is applied once), save it
+        and route the live engine. Unknown modes are ignored."""
         if mode not in FILTER_PRESETS:
             return
-        for combo in (self._filter_combo, self._setup_filter_combo):
-            if combo is source:
-                continue
-            idx = combo.findData(mode)
-            if idx >= 0 and combo.currentIndex() != idx:
-                combo.blockSignals(True)
-                combo.setCurrentIndex(idx)
-                combo.blockSignals(False)
+        show_data(self._filter_combo, mode)
+        self._setup_tab.show_response(mode)
         self._cfg.filter_mode = mode
         self._save_settings()
         if AUDIO_OK:
             self._engine.set_filter_mode(mode)
-
-    def _on_mic_gain_changed(self, _idx: int = 0) -> None:
-        """SETUP mic-gain combo changed. Persist the dB and push the linear
-        gain to the engine (which scales only the silence gate + level meter,
-        never the signal). 0 dB = no-op."""
-        db = self._setup_mic_gain_combo.currentData()
-        if db is None:
-            return
-        db = float(db)
-        self._cfg.mic_gain_db = db
-        self._save_settings()
-        self._engine.set_mic_gain(10.0 ** (db / 20.0))
-        self._update_mic_gain_status()
-
-    def _update_mic_gain_status(self) -> None:
-        """Refresh the plain-language mic-gain effect label, so the control
-        gives a visible result even though the cents readout is (by design)
-        unaffected by gain."""
-        lbl = self._setup_mic_gain_status
-        db = int(round(self._cfg.mic_gain_db))
-        if db == 0:
-            self._tr.bind(lbl.setText, 'setup_mic_gain_off')
-        elif db > 0:
-            self._tr.bind(lbl.setText, 'setup_mic_gain_boost', db=db)
-        else:
-            self._tr.bind(lbl.setText, 'setup_mic_gain_cut', db=db)
 
     def _on_min_n_changed(self, value: int) -> None:
         """User adjusted the min-N filter. Persist + redraw the table.
@@ -2673,11 +2193,6 @@ class MainWindow(QMainWindow):
     def _on_a4_changed(self, idx):
         """Toolbar concert-pitch (A4) combo changed → apply + mirror SETUP."""
         self._apply_a4(float(self._a4_combo.itemData(idx)))
-
-    def _on_setup_a4_changed(self, idx):
-        """SETUP concert-pitch (A4) combo changed → apply + mirror the toolbar.
-        Mirrors the toolbar Kammerton selector."""
-        self._apply_a4(float(self._setup_a4_combo.itemData(idx)))
 
     def _apply_a4(self, new_a4) -> None:
         """Apply a concert-pitch (A4) change from EITHER the toolbar or the
@@ -2906,7 +2421,7 @@ class MainWindow(QMainWindow):
         (or the engine shutdown after them) from running."""
         steps = (
             lambda: self._output_users.drop_prefix(''),
-            self._stop_test_tone,
+            self._setup_tab.shut_down,
             self._metro_ctrl.stop,
             self._drone_ctrl.shutdown,
             self._stop_pitch_pipes,

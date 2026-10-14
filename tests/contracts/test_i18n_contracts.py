@@ -122,8 +122,10 @@ _KEY_CARRIERS = {'mode_note_key', '_row_keys'}
 _KEY_ARGS = {'_t': (0,)}
 _TRANSLATOR_KEY_ARGS = {'t': (0,), 'msg': (0,), 'bind': (1,), 'bind_item': (2,),
                         'bind_tab': (2, 3)}
-# Helpers that take a message key and show it (with a reason appended) later.
-_KEY_TAKING_HELPERS = {'_deck_show_status': 0, '_show_with_reason': 1}
+# Helpers that take a message key and show it (with a reason appended) later:
+# call name -> position of the key argument.
+_KEY_TAKING_HELPERS = {'_deck_show_status': 0, '_show_status': 0,
+                       'show_with_reason': 2}
 
 
 def _key_items(node: ast.AST | None) -> list[str]:

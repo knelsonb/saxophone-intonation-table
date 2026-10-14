@@ -112,7 +112,7 @@ def test_first_run_carries_restored_a4_and_nickname(tmp_path):
         out["drone_a4"] = (win._drone_ctrl._a4
                            if win._drone_ctrl is not None else None)
         out["a4_combo"] = win._a4_combo.currentData()
-        out["setup_a4_combo"] = win._setup_a4_combo.currentData()
+        out["setup_a4_combo"] = win._setup_tab._a4_combo.currentData()
     ''', config={"last_a4_hz": 442, "last_nickname": "MarkVI"})
     assert out["engine_a4"] == 442.0
     assert out["a4_combo"] == 442
@@ -406,7 +406,7 @@ def test_window_restores_saved_drone_settings(tmp_path):
         out["slider"] = win._drone_vol_slider.value()
         out["semitones"] = win._drone_semitones
         out["voice"] = win._drone_voice_id
-        out["setup_voice"] = win._drone_voice_combo.currentData()
+        out["setup_voice"] = win._setup_tab._voice_combo.currentData()
     ''', config={"drone_voice_id": "cello", "drone_volume": 0.0,
                  "drone_semitones": -3})
     assert out["volume"] == 0.0 and out["slider"] == 0
@@ -789,15 +789,14 @@ def test_filter_mode_values_match_engine_presets():
 @requires_qt
 def test_response_combo_shows_the_engine_mode(tmp_path):
     out = _run_gui(tmp_path, '''
-        from PyQt6.QtWidgets import QComboBox
+        from sax_controls import response_combo
         out["engine"] = win._engine.filter_mode
         out["toolbar"] = win._filter_combo.currentData()
-        out["setup"] = win._setup_filter_combo.currentData()
+        out["setup"] = win._setup_tab._response_combo.currentData()
         # Even with a bad value in memory, a freshly filled combo shows the
         # mode the engine runs.
         win._cfg.filter_mode = "turbo"
-        combo = QComboBox()
-        win._populate_filter_combo(combo)
+        combo = response_combo(win._tr, win._engine.filter_mode)
         out["fresh"] = combo.currentData()
     ''', config={"filter_mode": "turbo"})
     assert out["engine"] == "normal"

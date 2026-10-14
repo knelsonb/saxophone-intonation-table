@@ -60,7 +60,7 @@ the list below is the contract the rewrite must keep or update here:
       ``_metro_bpm`` ``_metro_time_sig`` ``_metro_status`` ``_metro_vol_slider``
       ``_btn_metro_tap``.
   Drone / pitch pipes
-    * ``_drone_voice_combo`` ``_drone_semitone_nudge()`` ``_drone_semitones``
+    * SETUP's ``_voice_combo`` (see below) ``_drone_semitone_nudge()`` ``_drone_semitones``
       ``_btn_drone_on`` ``_drone_ctrl`` ``_drone_status``; ``_btn_pipes``
       ``_pipes_dlg`` ``_pipe_btns`` ``_pipes_ctrl`` (pads C4..B4);
       ``sax_drone`` imports ``tinysoundfont`` lazily (hidden to simulate a
@@ -69,9 +69,9 @@ the list below is the contract the rewrite must keep or update here:
     * ``_btn_deck_record`` ``_btn_deck_stop`` ``_btn_deck_play``
       ``_btn_deck_export`` ``_deck_state()`` ``_deck_state_lbl``
       ``_deck_status``.
-  SETUP tab
-    * ``_out_device_combo`` ``_btn_test_tone`` ``_test_tone_status``
-      ``_theme_combo`` ``_setup_mic_gain_combo`` ``_btn_setup_range``.
+  SETUP tab (``_setup_tab``, sax_tab_setup.SetupTab)
+    * ``_output_combo`` ``_btn_test_tone`` ``_test_tone_status``
+      ``_theme_combo`` ``_mic_gain_combo`` ``_btn_range`` ``_voice_combo``.
   Dialogs (recognised in ``_classify``; filled in the ``_fill_*`` methods)
     * welcome (objectName ``welcomeDlg``), maker/model, CSV slice, custom
       instrument (property ``_lang_title_key``), ``RangeEditorDialog``
@@ -829,7 +829,7 @@ class AppDriver:
     def drone_on(self, note: str, voice: Optional[str]) -> None:
         w = self.win
         if voice is not None:
-            self._combo_select(w._drone_voice_combo, voice, "drone voice")
+            self._combo_select(w._setup_tab._voice_combo, voice, "drone voice")
         # The UI has no absolute-note picker: the drone sounds A4 shifted by up
         # to a +/-12 semitone stepper.
         want = note_to_midi(note) - 69
@@ -935,7 +935,7 @@ class AppDriver:
 
     # =============================================================== settings
     def set_theme(self, name: str) -> None:
-        self._combo_select(self.win._theme_combo, name, "theme")
+        self._combo_select(self.win._setup_tab._theme_combo, name, "theme")
 
     def set_response(self, mode: str) -> None:
         self._combo_select(self.win._filter_combo, mode, "response mode")
@@ -954,29 +954,30 @@ class AppDriver:
         return self.win._nick_edit.text()
 
     def set_mic_gain(self, db: int) -> None:
-        self._combo_select(self.win._setup_mic_gain_combo, db, "mic gain")
+        self._combo_select(self.win._setup_tab._mic_gain_combo, db, "mic gain")
 
     def select_output_device(self, name: Optional[str]) -> None:
         # The SETUP list is filled when the window is built and refreshed by
-        # the 1 s device poll (``_out_device_combo``).
-        self._combo_select(self.win._out_device_combo, name or "", "output device")
+        # the 1 s device poll (SETUP ``_output_combo``).
+        self._combo_select(self.win._setup_tab._output_combo, name or "", "output device")
 
     def output_device_names(self) -> list[str]:
-        # Item data of ``_out_device_combo``; '' is the system-default entry.
-        c = self.win._out_device_combo
+        # Item data of SETUP ``_output_combo``; '' is the system-default entry.
+        c = self.win._setup_tab._output_combo
         return [str(c.itemData(i)) for i in range(c.count()) if c.itemData(i)]
 
     def test_tone(self, on: bool) -> None:
-        b = self.win._btn_test_tone
+        b = self.win._setup_tab._btn_test_tone
         if b.isChecked() != bool(on):
             b.click()
 
     def test_tone_status(self) -> Optional[str]:
         w = self.win
-        return w._test_tone_status.text() if not w._test_tone_status.isHidden() else None
+        status = w._setup_tab._test_tone_status
+        return status.text() if not status.isHidden() else None
 
     def test_tone_playing(self) -> bool:
-        return self.win._btn_test_tone.isChecked()
+        return self.win._setup_tab._btn_test_tone.isChecked()
 
     def edit_range(self, lo, hi, restore: bool, accept: bool) -> bool:
         """Open the range editor from SETUP. ``lo`` / ``hi`` are in the notation
@@ -991,7 +992,7 @@ class AppDriver:
         self._form_accepted = False
         with self.dialogs.scope():
             self.dialogs.expect("range_editor", "accept" if accept else "reject", **fields)
-            self.win._btn_setup_range.click()
+            self.win._setup_tab._btn_range.click()
         return self._form_accepted
 
     def add_custom_instrument(self, name: str, transpose: int, accept: bool = True):
@@ -1058,7 +1059,7 @@ class AppDriver:
 
     def theme(self) -> str:
         # Internal: SETUP ``_theme_combo`` item data (theme id).
-        return str(self.win._theme_combo.currentData())
+        return str(self.win._setup_tab._theme_combo.currentData())
 
     def response(self) -> str:
         # Internal: toolbar ``_filter_combo`` item data ('fast' / 'normal' / 'slow').

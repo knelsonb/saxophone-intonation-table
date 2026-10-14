@@ -137,10 +137,10 @@ def main() -> int:
     win._session.set_recording(False)
 
     # SETUP controls present.
-    check(win._out_device_combo.count() >= 1,
+    check(win._setup_tab._output_combo.count() >= 1,
           "output device combo has no entries (expected at least System default)")
-    check(hasattr(win, "_cb_prefer_duplex"), "duplex preference checkbox missing")
-    check(hasattr(win, "_btn_test_tone"), "test-tone button missing")
+    check(hasattr(win._setup_tab, "_cb_prefer_duplex"), "duplex preference checkbox missing")
+    check(hasattr(win._setup_tab, "_btn_test_tone"), "test-tone button missing")
 
     # Switch to the SETUP tab first — the real path a user takes, and it makes
     # the page's widgets actually visible (a QTabWidget only shows the current
@@ -152,7 +152,7 @@ def main() -> int:
 
     # SETUP: the instrument range-editor link is reachable from SETUP
     # (also on the toolbar gear) and enabled/wired to the range editor.
-    check(hasattr(win, "_btn_setup_range") and win._btn_setup_range.isEnabled(),
+    check(hasattr(win._setup_tab, "_btn_range") and win._setup_tab._btn_range.isEnabled(),
           "SETUP instrument range-editor button missing or disabled")
 
     # SETUP: the Response (Fast/Normal/Slow) combo is reachable from SETUP
@@ -160,16 +160,16 @@ def main() -> int:
     # shared _apply_filter_mode — signals blocked on the mirrored side so neither
     # change double-routes into the engine. Drive the real handler path (not a
     # stub) in both directions and confirm cfg persists.
-    check(hasattr(win, "_setup_filter_combo")
-          and win._setup_filter_combo.isEnabled(),
+    check(hasattr(win._setup_tab, "_response_combo")
+          and win._setup_tab._response_combo.isEnabled(),
           "SETUP Response (filter-mode) combo missing or disabled")
-    if hasattr(win, "_setup_filter_combo"):
+    if hasattr(win._setup_tab, "_response_combo"):
         _saved = win._filter_combo.currentData()
         _t1 = "slow" if _saved != "slow" else "fast"
         _t2 = "fast" if _t1 != "fast" else "normal"
         # SETUP combo drives → toolbar combo + cfg follow.
-        win._setup_filter_combo.setCurrentIndex(
-            win._setup_filter_combo.findData(_t1))
+        win._setup_tab._response_combo.setCurrentIndex(
+            win._setup_tab._response_combo.findData(_t1))
         app.processEvents()
         check(win._filter_combo.currentData() == _t1,
               "SETUP Response change did not mirror into the toolbar combo")
@@ -178,7 +178,7 @@ def main() -> int:
         # Toolbar combo drives → SETUP combo follows (other direction).
         win._filter_combo.setCurrentIndex(win._filter_combo.findData(_t2))
         app.processEvents()
-        check(win._setup_filter_combo.currentData() == _t2,
+        check(win._setup_tab._response_combo.currentData() == _t2,
               "toolbar Response change did not mirror into the SETUP combo")
         # Restore so later assertions see the original state.
         _ri = win._filter_combo.findData(_saved)
@@ -189,32 +189,32 @@ def main() -> int:
     # SETUP: horn nickname editor mirrors the toolbar nickname field. Both
     # edit the session's nickname and show it, so typing in either one
     # updates the other (and the session) at once.
-    check(hasattr(win, "_setup_nick_edit"), "SETUP nickname editor missing")
-    if hasattr(win, "_setup_nick_edit"):
-        win._setup_nick_edit.setText("Tenor SmokeTest")
+    check(hasattr(win._setup_tab, "_nick_edit"), "SETUP nickname editor missing")
+    if hasattr(win._setup_tab, "_nick_edit"):
+        win._setup_tab._nick_edit.setText("Tenor SmokeTest")
         app.processEvents()
         check(win._nick_edit.text() == "Tenor SmokeTest"
               and win._session.nickname == "Tenor SmokeTest",
               "SETUP nickname did not reach the session and the toolbar field")
         win._nick_edit.setText("Alto SmokeTest")
         app.processEvents()
-        check(win._setup_nick_edit.text() == "Alto SmokeTest",
+        check(win._setup_tab._nick_edit.text() == "Alto SmokeTest",
               "toolbar nickname did not mirror into the SETUP field")
         # Blank both so save-on-close can't persist a smoke value.
-        win._setup_nick_edit.setText("")
+        win._setup_tab._nick_edit.setText("")
         app.processEvents()
 
     # SETUP: concert-pitch (A4) combo mirrors the toolbar Kammerton combo
     # through the shared _apply_a4 — the heavy measurement recalc runs once,
     # never double-fired by the sibling (blockSignals). Drive both directions
     # and confirm the engine A4 follows.
-    check(hasattr(win, "_setup_a4_combo")
-          and win._setup_a4_combo.count() == 21,
+    check(hasattr(win._setup_tab, "_a4_combo")
+          and win._setup_tab._a4_combo.count() == 21,
           "SETUP A4 combo missing or wrong item count (expected 430..450)")
-    if hasattr(win, "_setup_a4_combo"):
+    if hasattr(win._setup_tab, "_a4_combo"):
         _a4_saved = win._a4_combo.currentIndex()
         # SETUP drives → toolbar + engine follow.
-        win._setup_a4_combo.setCurrentIndex(win._setup_a4_combo.findData(442))
+        win._setup_tab._a4_combo.setCurrentIndex(win._setup_tab._a4_combo.findData(442))
         app.processEvents()
         check(win._a4_combo.currentData() == 442,
               "SETUP A4 change did not mirror into the toolbar combo")
@@ -223,7 +223,7 @@ def main() -> int:
         # Toolbar drives → SETUP follows (other direction).
         win._a4_combo.setCurrentIndex(win._a4_combo.findData(437))
         app.processEvents()
-        check(win._setup_a4_combo.currentData() == 437,
+        check(win._setup_tab._a4_combo.currentData() == 437,
               "toolbar A4 change did not mirror into the SETUP combo")
         check(int(win._engine.a4) == 437,
               "toolbar A4 change did not reach the engine")
@@ -234,22 +234,22 @@ def main() -> int:
     # SETUP: mic-gain combo wires to cfg.mic_gain_db + the engine
     # (set_mic_gain, dB->linear). Default 0 dB = unity gain. Drive the real
     # handler and confirm both the persisted dB and the engine's linear gain.
-    check(hasattr(win, "_setup_mic_gain_combo"), "SETUP mic-gain combo missing")
-    if hasattr(win, "_setup_mic_gain_combo"):
-        _mg_saved = win._setup_mic_gain_combo.currentIndex()
-        win._setup_mic_gain_combo.setCurrentIndex(
-            win._setup_mic_gain_combo.findData(12))
+    check(hasattr(win._setup_tab, "_mic_gain_combo"), "SETUP mic-gain combo missing")
+    if hasattr(win._setup_tab, "_mic_gain_combo"):
+        _mg_saved = win._setup_tab._mic_gain_combo.currentIndex()
+        win._setup_tab._mic_gain_combo.setCurrentIndex(
+            win._setup_tab._mic_gain_combo.findData(12))
         app.processEvents()
         check(win._cfg.mic_gain_db == 12,
               "SETUP mic-gain change did not persist cfg.mic_gain_db")
         check(abs(win._engine.mic_gain - 10.0 ** (12 / 20.0)) < 1e-6,
               "SETUP mic-gain change did not reach the engine (dB->linear)")
-        win._setup_mic_gain_combo.setCurrentIndex(
-            win._setup_mic_gain_combo.findData(0))
+        win._setup_tab._mic_gain_combo.setCurrentIndex(
+            win._setup_tab._mic_gain_combo.findData(0))
         app.processEvents()
         check(abs(win._engine.mic_gain - 1.0) < 1e-9,
               "0 dB mic-gain did not restore unity engine gain")
-        win._setup_mic_gain_combo.setCurrentIndex(_mg_saved)
+        win._setup_tab._mic_gain_combo.setCurrentIndex(_mg_saved)
         app.processEvents()
 
     # Restore-mirror: start-up restore sets the session's A4 and nickname;
@@ -258,28 +258,28 @@ def main() -> int:
     win._session.set_nickname("MarkVI")
     win._session.set_a4(443.0)
     app.processEvents()
-    check(win._nick_edit.text() == "MarkVI" and win._setup_nick_edit.text() == "MarkVI",
+    check(win._nick_edit.text() == "MarkVI" and win._setup_tab._nick_edit.text() == "MarkVI",
           "a session nickname did not reach both nickname editors")
-    check(win._a4_combo.currentData() == 443 and win._setup_a4_combo.currentData() == 443,
+    check(win._a4_combo.currentData() == 443 and win._setup_tab._a4_combo.currentData() == 443,
           "a session A4 did not reach both A4 combos")
     win._session.set_nickname("")            # don't let close-save persist it
     win._a4_combo.setCurrentIndex(win._a4_combo.findData(440))
     app.processEvents()
 
-    # _apply_a4 must fire EXACTLY once per change — the sibling combo's mirrored
-    # index update is blockSignals'd, so no second recalc.
-    if hasattr(win, "_apply_a4"):
-        _a4_calls = [0]
-        _orig_apply = win._apply_a4
-        win._apply_a4 = lambda hz: (_a4_calls.__setitem__(0, _a4_calls[0] + 1),
-                                    _orig_apply(hz))[1]
-        win._setup_a4_combo.setCurrentIndex(win._setup_a4_combo.findData(438))
-        app.processEvents()
-        check(_a4_calls[0] == 1,
-              f"_apply_a4 fired {_a4_calls[0]}x for one change (expected 1 — double recalc)")
-        del win._apply_a4                    # revert to the bound method
-        win._a4_combo.setCurrentIndex(win._a4_combo.findData(440))
-        app.processEvents()
+    # The table re-derive behind an A4 change must run EXACTLY once per change —
+    # the sibling combo follows the session without emitting, so no second
+    # recalc.
+    _a4_calls = [0]
+    _orig_rederive = win._session.rederive_stats
+    win._session.rederive_stats = lambda hz: (
+        _a4_calls.__setitem__(0, _a4_calls[0] + 1), _orig_rederive(hz))[1]
+    win._setup_tab._a4_combo.setCurrentIndex(win._setup_tab._a4_combo.findData(438))
+    app.processEvents()
+    check(_a4_calls[0] == 1,
+          f"A4 re-derive ran {_a4_calls[0]}x for one change (expected 1 — double recalc)")
+    del win._session.rederive_stats         # revert to the bound method
+    win._a4_combo.setCurrentIndex(win._a4_combo.findData(440))
+    app.processEvents()
 
     # The autotune path sets the session's A4 directly: BOTH combos + the
     # engine must follow, and an A4 the combos do not offer must leave them
@@ -287,7 +287,7 @@ def main() -> int:
     win._session.set_a4(445.0)
     app.processEvents()
     check(win._a4_combo.currentData() == 445
-          and win._setup_a4_combo.currentData() == 445
+          and win._setup_tab._a4_combo.currentData() == 445
           and int(win._engine.a4) == 445,
           "a session A4 did not sync both combos + engine")
     win._session.set_a4(9999.0)              # out of 430..450 → combos stay
@@ -299,11 +299,11 @@ def main() -> int:
 
     # Test tone with no engine mirror (headless): must NOT claim to be playing.
     # The button reverts to unchecked and surfaces a failure status (N2).
-    win._btn_test_tone.setChecked(True)
+    win._setup_tab._btn_test_tone.setChecked(True)
     app.processEvents()
-    check(not win._btn_test_tone.isChecked(),
+    check(not win._setup_tab._btn_test_tone.isChecked(),
           "test-tone button stayed checked with no output path (button lies)")
-    check(win._test_tone_status.isVisible(),
+    check(win._setup_tab._test_tone_status.isVisible(),
           "test-tone failure status not shown when start failed")
 
     # METRO panel — built inert (no controller in headless). Verify
@@ -347,7 +347,7 @@ def main() -> int:
     app.processEvents()
     check(len(win._drone_preset_btns) == 5,
           f"expected 5 drone preset buttons, got {len(win._drone_preset_btns)}")
-    check(win._drone_voice_combo.count() >= 5,
+    check(win._setup_tab._voice_combo.count() >= 5,
           "SETUP drone voice combo has no entries")
     win._btn_drone_on.setChecked(True)
     app.processEvents()
@@ -405,7 +405,7 @@ def main() -> int:
     if win._drone_ctrl is not None:
         win._engine.output_running = True
         win._engine.output_samplerate = 44100
-        combo = win._drone_voice_combo
+        combo = win._setup_tab._voice_combo
         sine_ix = next((i for i in range(combo.count())
                         if combo.itemData(i) == "sine"), -1)
         check(sine_ix >= 0, "SETUP picker has no 'Pure Sine' entry")
@@ -540,10 +540,10 @@ def main() -> int:
     # the global stylesheet live without raising. Drives the real handler path
     # (mirrors the drone duck-attach lock), not a stub.
     import sax_theme as _TH
-    check(hasattr(win, "_theme_combo"),
+    check(hasattr(win._setup_tab, "_theme_combo"),
           "SETUP theme picker (_theme_combo) missing")
-    check(win._theme_combo.count() == len(_TH.THEME_ORDER),
-          f"theme combo has {win._theme_combo.count()} items, "
+    check(win._setup_tab._theme_combo.count() == len(_TH.THEME_ORDER),
+          f"theme combo has {win._setup_tab._theme_combo.count()} items, "
           f"expected {len(_TH.THEME_ORDER)}")
     _start_theme = _TH.active_name()
     for _name in ("night", "light", "dark"):
@@ -560,8 +560,8 @@ def main() -> int:
     # ── SETUP live re-translation + mic-gain status ──────────────────────────
     # The SETUP tab is built once; switching language must re-label its group
     # titles + the mic-gain status line, not leave them stale until restart.
-    check(hasattr(win, "_setup_mic_gain_status")
-          and win._setup_mic_gain_status.text().strip() != "",
+    check(hasattr(win._setup_tab, "_mic_gain_status")
+          and win._setup_tab._mic_gain_status.text().strip() != "",
           "mic-gain status label missing or empty (no visible gain feedback)")
     from PyQt6.QtWidgets import QGroupBox as _QGroupBox
     _setup_page = win._tabs.widget(win._tab_keys.index("setup"))
@@ -578,7 +578,7 @@ def main() -> int:
     check(_title_after != _title_before,
           f"SETUP group title did not re-translate on language switch "
           f"({_title_before!r} == {_title_after!r})")
-    check(win._setup_mic_gain_status.text().strip() != "",
+    check(win._setup_tab._mic_gain_status.text().strip() != "",
           "mic-gain status went blank after language switch")
     # Restore original language.
     for _i in range(win._lang_combo.count()):
@@ -595,19 +595,35 @@ def main() -> int:
     def _acc_name(w):
         return (w.accessibleName() or "").strip()
 
-    for _attr in ("_out_device_combo", "_drone_voice_combo", "_theme_combo",
-                  "_setup_filter_combo", "_setup_a4_combo",
-                  "_setup_mic_gain_combo", "_setup_nick_edit", "_metro_slider"):
-        _w = getattr(win, _attr, None)
-        check(_w is not None and _acc_name(_w) != "",
-              f"new control {_attr} has no accessibleName (screen-reader anonymous)")
+    _setup = win._setup_tab
+    _textless = {
+        "SETUP output device": _setup._output_combo,
+        "SETUP drone voice": _setup._voice_combo,
+        "SETUP theme": _setup._theme_combo,
+        "SETUP response": _setup._response_combo,
+        "SETUP A4": _setup._a4_combo,
+        "SETUP mic gain": _setup._mic_gain_combo,
+        "SETUP nickname": _setup._nick_edit,
+        "METRO BPM slider": win._metro_slider,
+    }
+    for _name, _w in _textless.items():
+        check(_acc_name(_w) != "",
+              f"control {_name} has no accessibleName (screen-reader anonymous)")
 
-    for _attr in ("_btn_test_tone", "_btn_setup_range", "_btn_metro_start",
-                  "_btn_metro_tap", "_btn_drone_on", "_btn_deck_record",
-                  "_btn_deck_stop", "_btn_deck_play", "_btn_deck_export"):
-        _w = getattr(win, _attr, None)
-        check(_w is not None and bool(_acc_name(_w) or _w.text().strip()),
-              f"new button {_attr} has neither accessibleName nor text")
+    _buttons = {
+        "SETUP test tone": _setup._btn_test_tone,
+        "SETUP range editor": _setup._btn_range,
+        "METRO start": win._btn_metro_start,
+        "METRO tap": win._btn_metro_tap,
+        "drone on": win._btn_drone_on,
+        "DECK record": win._btn_deck_record,
+        "DECK stop": win._btn_deck_stop,
+        "DECK play": win._btn_deck_play,
+        "DECK export": win._btn_deck_export,
+    }
+    for _name, _w in _buttons.items():
+        check(bool(_acc_name(_w) or _w.text().strip()),
+              f"button {_name} has neither accessibleName nor text")
 
     win.close()
 
