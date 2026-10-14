@@ -92,3 +92,26 @@ def test_an_edited_range_moves_the_guide_rows_but_keeps_altissimo_in_range(make_
     app.play(Tone(note="G#6", seconds=2.0))     # fingered F7
     assert app.table.row("G#6", by="sounding").n >= 10
     assert app.audio.notice is None
+
+
+def test_the_generic_c_instrument_counts_every_note_as_in_range(make_app):
+    """'C Instrument' has no instrument behind it, so a flute or violin player
+    using it is never told a note is out of range: high notes are kept by the
+    filter and raise no hint."""
+    app = make_app(config=on("c", **FILTER_ON))
+    app.launch()
+    for note in ("A6", "B6", "C#7"):
+        app.play(Tone(note=note, seconds=1.0))
+    assert len(app.table.rows()) == 3
+    assert app.audio.notice is None
+
+
+def test_a_custom_instrument_without_a_range_counts_every_note_as_in_range(make_app):
+    app = make_app(config=on("eb_alto", **FILTER_ON))
+    app.launch()
+    key = app.settings.add_custom_instrument("Test Horn", transpose=0)
+    assert key and app.instrument == key
+    for note in ("C2", "A6", "C#7"):
+        app.play(Tone(note=note, seconds=1.0))
+    assert len(app.table.rows()) == 3
+    assert app.audio.notice is None

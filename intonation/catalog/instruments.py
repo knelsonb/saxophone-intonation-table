@@ -19,6 +19,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
 
+from intonation.core.pitch import SAX_MIDI
 from intonation.persistence.atomic import atomic_write_json
 from intonation.persistence.paths import AppPaths
 
@@ -396,13 +397,25 @@ _EXTENDED_RANGES: dict[str, tuple[int, int]] = {
     'harp':                   ( 23, 104),   # harp
     # Voice / Concert
     'voice':                  ( 38,  84),   # voice
-    'c':                      ( 48,  79),   # hand-set
+    'c':                      ( 21, 108),   # detector window
     'piano':                  ( 21, 108),   # piano
 }
 
-# A generic two-and-a-half-octave middle range for keys without baked data
-# (user-defined custom instruments).
+# A generic two-and-a-half-octave middle range: the guide rows for keys without
+# baked data (user-defined custom instruments).
 _FALLBACK_RANGE: tuple[int, int] = (48, 79)
+
+
+def detector_window_fingered(transp: int) -> tuple[int, int]:
+    """Every note the detector reads (sounding A0..C8), as fingered (lo, hi)
+    for an instrument transposing by ``transp``, kept within MIDI 0..127.
+
+    The extended tier of an entry with no instrument data behind it: the
+    generic 'C Instrument' and custom instruments without an override. Their
+    guide rows are a placeholder, so no played note can be judged wrong."""
+    lo = SAX_MIDI.start - transp
+    hi = SAX_MIDI.stop - 1 - transp
+    return (max(0, lo), min(127, hi))
 
 
 def keyed_range(instrument_key: str) -> tuple[int, int]:
@@ -423,12 +436,13 @@ def extended_range(instrument_key: str) -> tuple[int, int]:
     A user override widens it: the result spans both the override and the
     baked extended range, so editing the guide rows never makes notes a
     skilled player reaches count as wrong. Keys without baked data (custom
-    instruments) have nothing to widen; there the override, or the fallback,
-    is the whole range."""
+    instruments) have nothing to widen: there the override is the whole range,
+    and without one every note the detector reads counts, since the fallback
+    guide rows say nothing about the instrument."""
     ov = range_overrides().get(instrument_key)
     baked = _EXTENDED_RANGES.get(instrument_key)
     if ov is None:
-        return baked if baked is not None else _FALLBACK_RANGE
+        return baked if baked is not None else _custom_window(instrument_key)
     if baked is None:
         return ov
     # One span from the lower start to the higher end, including any gap
@@ -443,8 +457,14 @@ def baked_keyed_range(instrument_key: str) -> tuple[int, int]:
 
 
 def baked_extended_range(instrument_key: str) -> tuple[int, int]:
-    """The baked extended range, ignoring user overrides."""
-    return _EXTENDED_RANGES.get(instrument_key, _FALLBACK_RANGE)
+    """The baked extended range, ignoring user overrides (the whole detector
+    window for keys without baked data)."""
+    baked = _EXTENDED_RANGES.get(instrument_key)
+    return baked if baked is not None else _custom_window(instrument_key)
+
+
+def _custom_window(instrument_key: str) -> tuple[int, int]:
+    return detector_window_fingered(transp_map().get(instrument_key, 0))
 
 
 def fingered_range(instrument_key: str) -> tuple[int, int]:

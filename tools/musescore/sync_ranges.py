@@ -138,11 +138,13 @@ MUSESCORE_ID = {
 }
 
 
-# Catalogue keys with no MuseScore counterpart: one hand-set range used for
-# both tiers, with the reason.
+# Catalogue keys with no MuseScore counterpart: a hand-set keyed range, with
+# the reason. With no instrument behind them there is nothing a played note
+# could be wrong about, so their extended tier is the whole detector window
+# (see detector_window_fingered).
 HAND_SET: dict[str, tuple[Range, str]] = {
     'c': ((48, 79), 'generic concert-pitch entry with no instrument to look up; '
-                    'a two-and-a-half-octave middle range'),
+                    'a two-and-a-half-octave middle range seeds the guide rows'),
 }
 
 
@@ -231,6 +233,13 @@ def to_fingered(sounding: Range, transp: int) -> Range:
     return (sounding[0] - transp, sounding[1] - transp)
 
 
+def detector_window_fingered(transp: int) -> Range:
+    """Every note the detector reads, as fingered (lo, hi) for ``transp``."""
+    catalogue_families()                    # puts the repo on sys.path
+    from intonation.catalog import instruments
+    return instruments.detector_window_fingered(transp)
+
+
 def hull(a: Range, b: Range) -> Range:
     """The smallest range containing both."""
     return (min(a[0], b[0]), max(a[1], b[1]))
@@ -272,8 +281,10 @@ def generate_ranges(musescore: dict[str, dict] | None = None,
     extended_src: dict[str, str] = {}
     for key, transp in _transpositions(families).items():
         if key in HAND_SET:
-            keyed[key] = extended[key] = HAND_SET[key][0]
-            keyed_src[key] = extended_src[key] = 'hand-set'
+            keyed[key] = HAND_SET[key][0]
+            keyed_src[key] = 'hand-set'
+            extended[key] = detector_window_fingered(transp)
+            extended_src[key] = 'detector window'
             continue
         ms_id = MUSESCORE_ID[key]
         entry = musescore[ms_id]

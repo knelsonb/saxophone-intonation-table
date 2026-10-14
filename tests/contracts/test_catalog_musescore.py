@@ -123,9 +123,14 @@ def test_extended_range_is_musescore_professional_or_a_recorded_extension(key: s
 
 
 @pytest.mark.parametrize('key', sorted(HAND_SET))
-def test_hand_set_keys_use_one_range_for_both_tiers(key: str) -> None:
+def test_hand_set_keys_judge_nothing_out_of_range(key: str) -> None:
+    """A hand-set key has no instrument behind it: its guide rows are the
+    recorded range, and every note the detector reads counts as in range."""
     value, reason = HAND_SET[key]
-    assert si.baked_keyed_range(key) == si.baked_extended_range(key) == value
+    assert si.baked_keyed_range(key) == value
+    lo, hi = si.baked_extended_range(key)
+    transp = CATALOG_TRANSP[key]
+    assert (lo + transp, hi + transp) == SOUNDING_WINDOW
     assert reason.strip()
 
 

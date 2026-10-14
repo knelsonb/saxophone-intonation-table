@@ -73,11 +73,20 @@ def test_the_legacy_names_follow_the_keyed_tier(overrides):
     assert si.baked_fingered_range('eb_bari') == si.baked_keyed_range('eb_bari')
 
 
-def test_a_custom_instrument_uses_the_fallback_for_both_tiers(overrides, custom):
+def test_a_custom_instrument_without_an_override_judges_nothing_out_of_range(
+        overrides, custom):
+    """The fallback guide rows are a placeholder, so the extended tier is every
+    note the detector reads (sounding A0..C8), here fingered for a -5 horn."""
     overrides({})
     assert not si.has_baked_range(custom)
-    assert si.keyed_range(custom) == si.extended_range(custom) == (48, 79)
-    assert si.baked_keyed_range(custom) == si.baked_extended_range(custom) == (48, 79)
+    assert si.keyed_range(custom) == si.baked_keyed_range(custom) == (48, 79)
+    assert si.extended_range(custom) == si.baked_extended_range(custom) == (26, 113)
+
+
+def test_the_detector_window_stays_inside_midi():
+    assert si.detector_window_fingered(0) == (21, 108)
+    assert si.detector_window_fingered(-36) == (57, 127)
+    assert si.detector_window_fingered(36) == (0, 72)
 
 
 def test_a_custom_instrument_override_is_its_whole_range(overrides, custom):
